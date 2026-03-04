@@ -73,6 +73,9 @@ r1cs = [
     "educe",
 ]
 print-trace = ["ark-std/print-trace"]
+# UniGroth-specific features
+universal = []  # Enable universal setup
+sap = []        # Enable SAP arithmetization
 
 [[bench]]
 name = "groth16-benches"

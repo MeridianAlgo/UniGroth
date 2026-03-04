@@ -99,10 +99,40 @@ pub mod verifier;
 #[cfg(feature = "r1cs")]
 pub mod constraints;
 
+/// KZG polynomial commitment scheme for universal setup.
+pub mod kzg;
+
+/// Square Arithmetic Programs (SAP) - more efficient than R1CS.
+pub mod sap;
+
+/// Universal trusted setup - one ceremony for all circuits.
+pub mod universal_setup;
+
+/// ProtoStar-style folding / IVC for recursion and scalability.
+pub mod folding;
+
+/// Security upgrades: simulation-extractability, subversion ZK, AGM+ROM.
+pub mod security;
+
+/// Prover optimizations: Dynark 4-FFT, parallel MSM, proof compression.
+pub mod optimizations;
+
+/// Plonkish arithmetization: custom gates, lookups, copy constraints.
+pub mod plonkish;
+
 #[cfg(test)]
 mod test;
 
 pub use self::{data_structures::*, verifier::*};
+pub use self::kzg::{Commitment, KZG, Opening, UniversalSRS};
+pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
+pub use self::universal_setup::UniversalParams;
+pub use self::folding::{FoldingAccumulator, FoldingEngine, FoldingInstance, IVC};
+pub use self::security::{SecurityParams, SecurityReport, SEConfig, SimExtractableProof};
+pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile};
+pub use self::plonkish::{
+    CustomGateRegistry, LookupTable, PlonkishConstraintSystem, PlonkishStats, PlonkSelectors,
+};
 
 use ark_ec::pairing::Pairing;
 use ark_relations::gr1cs::{ConstraintSynthesizer, SynthesisError};

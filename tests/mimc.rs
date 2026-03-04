@@ -16,8 +16,8 @@ use ark_std::rand::{Rng, RngCore, SeedableRng};
 // For benchmarking
 use std::time::{Duration, Instant};
 
-// Bring in some tools for using pairing-friendly curves
-// We're going to use the BLS12-377 pairing-friendly elliptic curve.
+
+// we're going to use the BLS12-377 pairing-friendly elliptic curve.
 use ark_bls12_377::{Bls12_377, Fr};
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{
@@ -34,8 +34,7 @@ const MIMC_ROUNDS: usize = 322;
 
 /// This is an implementation of MiMC, specifically a
 /// variant named `LongsightF322p3` for BLS12-377.
-/// See http://eprint.iacr.org/2016/492 for more
-/// information about this construction.
+
 ///
 /// ```
 /// function LongsightF322p3(xL ⦂ Fp, xR ⦂ Fp) {
@@ -62,8 +61,7 @@ fn mimc<F: Field>(mut xl: F, mut xr: F, constants: &[F]) -> F {
     xl
 }
 
-/// This is our demo circuit for proving knowledge of the
-/// preimage of a MiMC hash invocation.
+/// This is our demo circuit for proving knowledge of the preimage of a MiMC hash invocation.
 #[derive(Copy, Clone)]
 struct MiMCDemo<'a, F: Field> {
     xl: Option<F>,
@@ -72,9 +70,7 @@ struct MiMCDemo<'a, F: Field> {
     constants: &'a [F],
 }
 
-/// Our demo circuit implements this `Circuit` trait which
-/// is used during paramgen and proving in order to
-/// synthesize the constraint system.
+/// Our demo circuit implements this `Circuit` trait which is used during paramgen and proving in order to synthesize the constraint system.
 impl<'a, F: PrimeField> ConstraintSynthesizer<F> for MiMCDemo<'a, F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         assert_eq!(self.constants.len(), MIMC_ROUNDS);
@@ -117,10 +113,9 @@ impl<'a, F: PrimeField> ConstraintSynthesizer<F> for MiMCDemo<'a, F> {
 #[test]
 fn test_mimc_groth16() {
     // We're going to use the Groth16 proving system.
-    use ark_groth16::Groth16;
+    use unigroth::Groth16;
 
-    // This may not be cryptographically safe, use
-    // `OsRng` (for example) in production software.
+    // This may not be cryptographically safe, use `OsRng` (for example) in production software.
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
     // Generate the MiMC round constants
@@ -150,9 +145,7 @@ fn test_mimc_groth16() {
     let mut total_proving = Duration::new(0, 0);
     let mut total_verifying = Duration::new(0, 0);
 
-    // Just a place to put the proof data, so we can
-    // benchmark deserialization.
-    // let mut proof_vec = vec![];
+    // Just a place to put the proof data, so we can benchmark deserialization. let mut proof_vec = vec![];
 
     for _ in 0..SAMPLES {
         // Generate a random preimage and compute the image

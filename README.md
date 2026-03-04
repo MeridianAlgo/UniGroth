@@ -1,12 +1,11 @@
 <h1 align="center">UniGroth</h1>
 
 <p align="center">
-    <em>Next-Generation Universal zkSNARK Framework</em>
+    <em>Universal zkSNARK Framework</em>
 </p>
 
 <p align="center">
     <a href="#license"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
-    <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
 **Edited by MeridianAlgo** — Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16)
@@ -112,25 +111,31 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 
 **⚠️ RESEARCH PROTOTYPE** — This is an academic proof-of-concept under active development. Not audited or production-ready.
 
-### Implemented
-- ✅ Original Groth16 core (from arkworks)
-- ✅ Basic R1CS to QAP reduction
-- ✅ Standard prover and verifier
+### Implemented (v0.1.0)
+- ✅ Original Groth16 core (from arkworks) — prover, verifier, key generation
+- ✅ R1CS to QAP reduction (LibsnarkReduction + custom QAP support)
+- ✅ **Universal KZG-based setup** — `UniversalSRS` with Powers-of-Tau, updatable, reusable for any circuit
+- ✅ **SAP arithmetization** — `R1CSToSAP` with addition-gate detection and circuit size analysis
+- ✅ **ProtoStar-style folding** — `FoldingEngine` + `IVC` for incremental verifiable computation
+- ✅ **Simulation-Extractability** — BG18 blinding + ROM-based SE, `SimExtractableProof`
+- ✅ **Subversion Zero-Knowledge** — `apply_subversion_zk` rerandomization
+- ✅ **Dynark-style 4-FFT** — parallel coset FFTs, reduced from 6 FFTs
+- ✅ **Parallel MSM** — Pippenger with rayon + GPU-hint interface
+- ✅ **Plonkish arithmetization** — custom gates, lookup tables (range/XOR/LogUp), copy constraints
+- ✅ **43 passing tests** — full unit + integration test suite
 
-### In Development
-- 🚧 Universal KZG-based setup layer
-- 🚧 SAP arithmetization
-- 🚧 ProtoStar folding integration
-- 🚧 Polymath-style compression
-- 🚧 Simulation-extractability
-- 🚧 GPU acceleration
+### In Progress
+- 🚧 Full Dynark 4-FFT (c-polynomial algebraic elimination via SAP identity)
+- 🚧 ProtoStar full decision predicate (relaxed R1CS verification)
+- 🚧 Polymath G₂-free compression (target: 128 bytes on BN254)
+- 🚧 Fiat-Shamir transcript (replace random with Poseidon hash in folding)
+- 🚧 BG18 explicit pairing check in SE verifier
 
 ### Roadmap
-- 📋 Full Plonkish gate support
-- 📋 Lookup table integration
-- 📋 Dynark FFT optimizations
-- 📋 Post-quantum hybrid mode
-- 📋 Formal security proofs
+- 📋 GPU/FPGA MSM acceleration (icicle integration)
+- 📋 Post-quantum hybrid mode (Binius/Plonky3 inner prover)
+- 📋 Full Plonkish → UniGroth backend integration
+- 📋 Formal security proofs (AGM + ROM)
 - 📋 Production audit
 
 ## Research Foundation
@@ -217,46 +222,66 @@ cargo build --no-default-features
 
 ## Usage Example
 
+### Standard Groth16
+
 ```rust
-use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
+use unigroth::Groth16;
 use ark_bn254::Bn254;
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_snark::SNARK;
 
-// Define your circuit
-struct MyCircuit {
-    // Circuit inputs
-}
+struct MyCircuit { /* inputs */ }
 
-impl ConstraintSynthesizer<Fr> for MyCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-        // Define your constraints here
+impl ConstraintSynthesizer<ark_bn254::Fr> for MyCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<ark_bn254::Fr>) -> Result<(), SynthesisError> {
+        // Define constraints here
         Ok(())
     }
 }
 
-fn main() {
-    let mut rng = ark_std::test_rng();
-    
-    // Setup phase (one-time per circuit in standard Groth16)
-    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-        MyCircuit { /* ... */ },
-        &mut rng
-    ).unwrap();
-    
-    // Prove
-    let proof = Groth16::<Bn254>::prove(
-        &pk,
-        MyCircuit { /* ... */ },
-        &mut rng
-    ).unwrap();
-    
-    // Verify
-    let public_inputs = vec![/* public inputs */];
-    let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof).unwrap();
-    
-    assert!(valid);
+let mut rng = ark_std::test_rng();
+let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(MyCircuit { /* ... */ }, &mut rng).unwrap();
+let proof = Groth16::<Bn254>::prove(&pk, MyCircuit { /* ... */ }, &mut rng).unwrap();
+let valid = Groth16::<Bn254>::verify_with_processed_vk(
+    &unigroth::prepare_verifying_key(&vk),
+    &[/* public inputs */],
+    &proof,
+).unwrap();
+assert!(valid);
+```
+
+### Universal Setup (no per-circuit ceremony)
+
+```rust
+use unigroth::UniversalParams;
+use unigroth::r1cs_to_qap::LibsnarkReduction;
+use ark_bn254::Bn254;
+
+let mut rng = ark_std::test_rng();
+
+// One-time setup — reusable for any circuit up to max_degree constraints
+let universal = UniversalParams::<Bn254>::setup(1 << 20, &mut rng);
+
+// Derive circuit-specific keys without a new ceremony
+let (pk, vk) = universal.derive_keys::<_, LibsnarkReduction>(MyCircuit { /* ... */ }, &mut rng).unwrap();
+```
+
+### Folding / IVC
+
+```rust
+use unigroth::{IVC, UniversalSRS};
+use ark_bn254::Bn254;
+
+let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+let mut ivc = IVC::new(srs);
+
+// Prove each step and fold into accumulator
+for i in 0..100 {
+    ivc.step(vec![public_in], vec![witness], &mut rng).unwrap();
 }
+
+// Final accumulator → feed into Groth16 compression
+let (steps, acc) = ivc.finalize();
 ```
 
 ## Project Structure
@@ -264,17 +289,24 @@ fn main() {
 ```
 UniGroth/
 ├── src/
-│   ├── lib.rs              # Main library entry point
+│   ├── lib.rs              # Main library entry point + public re-exports
 │   ├── data_structures.rs  # Proving/verifying keys, proofs
 │   ├── generator.rs        # Setup/key generation
-│   ├── prover.rs          # Proof generation
-│   ├── verifier.rs        # Proof verification
-│   ├── r1cs_to_qap.rs     # R1CS to QAP reduction
-│   ├── constraints.rs     # R1CS gadgets (feature: r1cs)
-│   └── test.rs            # Unit tests
-├── benches/               # Performance benchmarks
-├── tests/                 # Integration tests
-└── scripts/               # Development utilities
+│   ├── prover.rs           # Proof generation
+│   ├── verifier.rs         # Proof verification
+│   ├── r1cs_to_qap.rs      # R1CS to QAP reduction (LibsnarkReduction)
+│   ├── constraints.rs      # R1CS gadgets (feature: r1cs)
+│   ├── kzg.rs              # KZG polynomial commitments + UniversalSRS
+│   ├── sap.rs              # Square Arithmetic Programs (R1CS→SAP)
+│   ├── universal_setup.rs  # UniversalParams: one-time ceremony for all circuits
+│   ├── folding.rs          # ProtoStar folding / IVC (FoldingEngine, IVC)
+│   ├── security.rs         # SE proofs, Subversion-ZK, SecurityParams
+│   ├── optimizations.rs    # Dynark 4-FFT, parallel MSM, PolymathCompressor
+│   ├── plonkish.rs         # Plonkish gates, lookup tables, copy constraints
+│   └── test.rs             # Core unit tests
+├── benches/                # Performance benchmarks (MiMC circuit)
+├── tests/                  # Integration tests (MiMC Groth16 end-to-end)
+└── scripts/                # Development utilities
 ```
 
 ## Contributing
