@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## UniGroth v0.1.0 (March 2026)
+
+### Project Fork & Rebranding
+
+- **Forked from arkworks-rs/groth16** - UniGroth is built on the excellent Groth16 implementation from the arkworks ecosystem
+- **Renamed to UniGroth** - Reflecting the vision of a universal, next-generation zkSNARK framework
+- **New project identity** - Updated package name to `unigroth`, new repository structure, comprehensive documentation
+
+### Documentation
+
+- [\#INIT] Complete README overhaul with UniGroth vision, architecture, and roadmap
+- [\#INIT] Added comprehensive comparison with related work (Polymath, Pari, Dynark, Plonk, STARKs)
+- [\#INIT] Created ROADMAP.md with detailed 24-month development plan
+- [\#INIT] Enhanced library documentation with UniGroth context and future features
+- [\#INIT] Added research paper references and implementation resources
+
+### Project Structure
+
+- [\#INIT] Updated Cargo.toml with UniGroth metadata and authorship
+- [\#INIT] Maintained compatibility with arkworks ecosystem
+- [\#INIT] Preserved dual MIT/Apache-2.0 licensing
+- [\#INIT] Set minimum Rust version to 1.70
+
+### Current Status
+
+⚠️ **RESEARCH PROTOTYPE** - This release contains the baseline Groth16 implementation. Universal setup, SAP arithmetization, folding, and other UniGroth features are under active development.
+
+### Acknowledgements
+
+Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16). Extended by MeridianAlgo (2026).
+
+---
+
+## Upstream Changes (from arkworks-rs/groth16)
+
+The following changes are from the original arkworks Groth16 implementation that UniGroth is based on:
+
 ## Pending
 
 ### Breaking changes

@@ -1,6 +1,71 @@
-//! An implementation of the [`Groth16`] zkSNARK.
+//! # UniGroth: Next-Generation Universal zkSNARK Framework
+//!
+//! UniGroth is an evolutionary zkSNARK framework that addresses the fundamental
+//! limitations of Groth16 while preserving its legendary proof size and verification speed.
+//!
+//! ## Overview
+//!
+//! Built on the foundation of [`Groth16`](https://eprint.iacr.org/2016/260.pdf),
+//! UniGroth aims to provide:
+//!
+//! - **Universal Setup**: One-time ceremony, reusable for any circuit
+//! - **Flexible Arithmetization**: SAP/Plonkish with custom gates and lookups
+//! - **Groth16-Level Performance**: 192-256 byte proofs, 3-5 pairing verification
+//! - **Enhanced Security**: Simulation-extractable, subversion-resistant
+//! - **Folding & Recursion**: ProtoStar/Nova integration for IVC
+//!
+//! ## Current Status
+//!
+//! ⚠️ **RESEARCH PROTOTYPE** - This implementation currently provides the original
+//! Groth16 protocol. Universal setup, SAP arithmetization, and folding features
+//! are under active development.
+//!
+//! ## Example Usage
+//!
+//! ```rust,ignore
+//! use unigroth::{Groth16, ProvingKey, VerifyingKey};
+//! use ark_bn254::Bn254;
+//! use ark_relations::r1cs::ConstraintSynthesizer;
+//! use ark_snark::SNARK;
+//!
+//! // Define your circuit
+//! struct MyCircuit { /* ... */ }
+//!
+//! impl ConstraintSynthesizer<Fr> for MyCircuit {
+//!     fn generate_constraints(/* ... */) -> Result<(), SynthesisError> {
+//!         // Define constraints
+//!         Ok(())
+//!     }
+//! }
+//!
+//! // Setup (currently circuit-specific, universal setup coming soon)
+//! let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng)?;
+//!
+//! // Prove
+//! let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)?;
+//!
+//! // Verify
+//! let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)?;
+//! ```
+//!
+//! ## Architecture
+//!
+//! UniGroth is organized into several key modules:
+//!
+//! - [`data_structures`]: Core types (proving keys, verifying keys, proofs)
+//! - [`generator`]: Setup and key generation
+//! - [`prover`]: Proof generation
+//! - [`verifier`]: Proof verification
+//! - [`r1cs_to_qap`]: R1CS to QAP reduction (SAP support coming)
+//! - [`constraints`]: R1CS gadgets for recursive verification (feature: `r1cs`)
+//!
+//! ## Acknowledgements
+//!
+//! Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16).
+//! Extended by MeridianAlgo (2026).
 //!
 //! [`Groth16`]: https://eprint.iacr.org/2016/260.pdf
+
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(
     unused,
