@@ -12,7 +12,7 @@
 
 ## Overview
 
-UniGroth is an evolutionary zkSNARK framework that addresses the fundamental limitations of Groth16 while preserving its legendary proof size and verification speed. This project represents a research-driven approach to building the next generation of zero-knowledge proof systems.
+UniGroth is an newer zkSNARK framework that addresses the fundamental limitations of Groth16 while preserving its legendary proof size and verification speed. This project represents a research-driven approach to building the next generation of zero-knowledge proof systems.
 
 ### The Evolution Beyond Groth16
 
@@ -68,27 +68,27 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Application Layer                     │
+│                    Application Layer                    │
 │         (zkEVM, zkML, Private Transactions, etc.)       │
 └─────────────────────────────────────────────────────────┘
                             │
 ┌─────────────────────────────────────────────────────────┐
-│              Flexible Arithmetization Layer              │
-│    SAP / Plonkish with Custom Gates & Lookup Tables    │
+│              Flexible Arithmetization Layer             │
+│    SAP / Plonkish with Custom Gates & Lookup Tables     │
 └─────────────────────────────────────────────────────────┘
                             │
 ┌─────────────────────────────────────────────────────────┐
-│              Folding & Recursion Engine                  │
+│              Folding & Recursion Engine                 │
 │         ProtoStar / Nova for Incremental Proofs         │
 └─────────────────────────────────────────────────────────┘
                             │
 ┌─────────────────────────────────────────────────────────┐
-│           Universal Polynomial Commitment Layer          │
+│           Universal Polynomial Commitment Layer         │
 │        KZG / Equifficient Commitments (Universal)       │
 └─────────────────────────────────────────────────────────┘
                             │
 ┌─────────────────────────────────────────────────────────┐
-│              Groth16-Style Compression Core              │
+│              Groth16-Style Compression Core             │
 │      Linear Interactive Proof + Pairing Encoding        │
 │           (192-256 byte final proof output)             │
 └─────────────────────────────────────────────────────────┘
@@ -101,52 +101,49 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 | Proof Size | 192 bytes | 192-256 bytes | ≈ Same |
 | Verification | 3 pairings (~5ms) | 3-5 pairings (~5-7ms) | ≈ Same |
 | Prover Time | Baseline | 2-5× faster* | 2-5× faster |
-| Setup | Circuit-specific MPC | One universal ceremony | ∞ better |
+| Setup | Circuit-specific MPC | One universal ceremony | 3-5x faster |
 | Flexibility | R1CS only | Plonkish + lookups | Full |
 | Security | Basic | SE + Subversion-resistant | Stronger |
 
-*On real-world circuits with lookups and custom gates
+> *On real-world circuits with lookups and custom gates*
 
 ## Current Status
 
-**⚠️ RESEARCH PROTOTYPE** — This is an academic proof-of-concept under active development. Not audited or production-ready.
+**RESEARCH PROTOTYPE** — This is an academic proof-of-concept under active development. Not audited or production-ready.
 
-### Implemented (v0.1.0)
-- ✅ Original Groth16 core (from arkworks) — prover, verifier, key generation
-- ✅ R1CS to QAP reduction (LibsnarkReduction + custom QAP support)
-- ✅ **Universal KZG-based setup** — `UniversalSRS` with Powers-of-Tau, updatable, reusable for any circuit
-- ✅ **SAP arithmetization** — `R1CSToSAP` with addition-gate detection and circuit size analysis
-- ✅ **ProtoStar-style folding** — `FoldingEngine` + `IVC` for incremental verifiable computation
-- ✅ **Simulation-Extractability** — BG18 blinding + ROM-based SE, `SimExtractableProof`
-- ✅ **Subversion Zero-Knowledge** — `apply_subversion_zk` rerandomization
-- ✅ **Dynark-style 4-FFT** — parallel coset FFTs, reduced from 6 FFTs
-- ✅ **Parallel MSM** — Pippenger with rayon + GPU-hint interface
-- ✅ **Plonkish arithmetization** — custom gates, lookup tables (range/XOR/LogUp), copy constraints
-- ✅ **43 passing tests** — full unit + integration test suite
+### Implemented
+- Original Groth16 core (from arkworks)
+- Basic R1CS to QAP reduction
+- Standard prover and verifier
 
-### In Progress
-- 🚧 Full Dynark 4-FFT (c-polynomial algebraic elimination via SAP identity)
-- 🚧 ProtoStar full decision predicate (relaxed R1CS verification)
-- 🚧 Polymath G₂-free compression (target: 128 bytes on BN254)
-- 🚧 Fiat-Shamir transcript (replace random with Poseidon hash in folding)
-- 🚧 BG18 explicit pairing check in SE verifier
+### In Development
+- Universal KZG-based setup layer
+- SAP arithmetization
+- ProtoStar folding integration
+- Polymath-style compression
+- Simulation-extractability
+- GPU acceleration
 
 ### Roadmap
-- 📋 GPU/FPGA MSM acceleration (icicle integration)
-- 📋 Post-quantum hybrid mode (Binius/Plonky3 inner prover)
-- 📋 Full Plonkish → UniGroth backend integration
-- 📋 Formal security proofs (AGM + ROM)
-- 📋 Production audit
+- Full Plonkish gate support
+- Lookup table integration
+- Dynark FFT optimizations
+- Post-quantum hybrid mode
+- Formal security proofs
+- Production audit
 
 ## Research Foundation
 
-UniGroth builds on breakthrough research from 2024-2026:
+UniGroth builds on research from 2024-2026:
 
 - **Polymath** (CRYPTO 2024) — SAP-based proofs with 1408-bit size on BLS12-381
 - **Pari/Garuda** (2024) — Equifficient commitments, 1280-bit proofs
 - **Dynark** (2025) — Dynamic witness updates, 1400× faster incremental proving
 - **ProtoStar** (2023) — Non-uniform IVC with efficient folding
 - **Nova** (2022) — Recursive SNARKs without trusted setup
+
+With the original Groth16 protocol being:
+
 - **Groth16** (2016) — The foundational protocol
 
 ### Why Not Just Use Existing Systems?
@@ -160,11 +157,11 @@ UniGroth builds on breakthrough research from 2024-2026:
 | Polymath | 176 bytes | 3 pairings | Circuit-specific | SAP only | Still needs setup |
 | Dynark | 192 bytes | 3 pairings | Circuit-specific | R1CS only | Still needs setup |
 
-**UniGroth combines the best of all worlds** — Groth16's performance with universal setup and modern flexibility.
+**UniGroth combines the best of all worlds** with it having the performance of Groth16 with universal setup and modern flexibility.
 
 ## Practical Use: Recursive Wrapper Pattern
 
-While UniGroth is under development, the industry already uses a "recursive Groth16 wrapper" pattern (deployed by zkSync, Polygon zkEVM, RISC Zero, Scroll):
+The industry already uses a "recursive Groth16 wrapper" pattern (deployed by zkSync, Polygon zkEVM, RISC Zero, Scroll):
 
 1. Run a universal/transparent inner system (Plonk, Halo2, STARK, Binius) for arbitrary logic
 2. Recursively aggregate everything into one fixed Groth16 proof over a tiny "verifier circuit"
@@ -172,9 +169,7 @@ While UniGroth is under development, the industry already uses a "recursive Grot
 4. Setup is one-time and fixed (for the recursive verifier)
 5. Whole system is effectively universal
 
-This is "Groth16 evolved" in practice today. UniGroth aims to make this pattern native and more efficient.
-
-**WARNING:** This is an academic proof-of-concept prototype, and in particular has not received careful code review. This implementation is NOT ready for production use.
+This is Groth16 "evolved" in practice today. UniGroth aims to make this pattern native and more efficient.
 
 ## Build Guide
 
@@ -222,66 +217,46 @@ cargo build --no-default-features
 
 ## Usage Example
 
-### Standard Groth16
-
 ```rust
-use unigroth::Groth16;
+use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
 use ark_bn254::Bn254;
-use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_snark::SNARK;
 
-struct MyCircuit { /* inputs */ }
+// Define your circuit
+struct MyCircuit {
+    // Circuit inputs
+}
 
-impl ConstraintSynthesizer<ark_bn254::Fr> for MyCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<ark_bn254::Fr>) -> Result<(), SynthesisError> {
-        // Define constraints here
+impl ConstraintSynthesizer<Fr> for MyCircuit {
+    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+        // Define your constraints here
         Ok(())
     }
 }
 
-let mut rng = ark_std::test_rng();
-let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(MyCircuit { /* ... */ }, &mut rng).unwrap();
-let proof = Groth16::<Bn254>::prove(&pk, MyCircuit { /* ... */ }, &mut rng).unwrap();
-let valid = Groth16::<Bn254>::verify_with_processed_vk(
-    &unigroth::prepare_verifying_key(&vk),
-    &[/* public inputs */],
-    &proof,
-).unwrap();
-assert!(valid);
-```
-
-### Universal Setup (no per-circuit ceremony)
-
-```rust
-use unigroth::UniversalParams;
-use unigroth::r1cs_to_qap::LibsnarkReduction;
-use ark_bn254::Bn254;
-
-let mut rng = ark_std::test_rng();
-
-// One-time setup — reusable for any circuit up to max_degree constraints
-let universal = UniversalParams::<Bn254>::setup(1 << 20, &mut rng);
-
-// Derive circuit-specific keys without a new ceremony
-let (pk, vk) = universal.derive_keys::<_, LibsnarkReduction>(MyCircuit { /* ... */ }, &mut rng).unwrap();
-```
-
-### Folding / IVC
-
-```rust
-use unigroth::{IVC, UniversalSRS};
-use ark_bn254::Bn254;
-
-let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
-let mut ivc = IVC::new(srs);
-
-// Prove each step and fold into accumulator
-for i in 0..100 {
-    ivc.step(vec![public_in], vec![witness], &mut rng).unwrap();
+fn main() {
+    let mut rng = ark_std::test_rng();
+    
+    // Setup phase (one-time per circuit in standard Groth16)
+    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
+        MyCircuit { /* ... */ },
+        &mut rng
+    ).unwrap();
+    
+    // Prove
+    let proof = Groth16::<Bn254>::prove(
+        &pk,
+        MyCircuit { /* ... */ },
+        &mut rng
+    ).unwrap();
+    
+    // Verify
+    let public_inputs = vec![/* public inputs */];
+    let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof).unwrap();
+    
+    assert!(valid);
 }
-
-// Final accumulator → feed into Groth16 compression
-let (steps, acc) = ivc.finalize();
 ```
 
 ## Project Structure
@@ -289,24 +264,17 @@ let (steps, acc) = ivc.finalize();
 ```
 UniGroth/
 ├── src/
-│   ├── lib.rs              # Main library entry point + public re-exports
+│   ├── lib.rs              # Main library entry point
 │   ├── data_structures.rs  # Proving/verifying keys, proofs
 │   ├── generator.rs        # Setup/key generation
-│   ├── prover.rs           # Proof generation
-│   ├── verifier.rs         # Proof verification
-│   ├── r1cs_to_qap.rs      # R1CS to QAP reduction (LibsnarkReduction)
-│   ├── constraints.rs      # R1CS gadgets (feature: r1cs)
-│   ├── kzg.rs              # KZG polynomial commitments + UniversalSRS
-│   ├── sap.rs              # Square Arithmetic Programs (R1CS→SAP)
-│   ├── universal_setup.rs  # UniversalParams: one-time ceremony for all circuits
-│   ├── folding.rs          # ProtoStar folding / IVC (FoldingEngine, IVC)
-│   ├── security.rs         # SE proofs, Subversion-ZK, SecurityParams
-│   ├── optimizations.rs    # Dynark 4-FFT, parallel MSM, PolymathCompressor
-│   ├── plonkish.rs         # Plonkish gates, lookup tables, copy constraints
-│   └── test.rs             # Core unit tests
-├── benches/                # Performance benchmarks (MiMC circuit)
-├── tests/                  # Integration tests (MiMC Groth16 end-to-end)
-└── scripts/                # Development utilities
+│   ├── prover.rs          # Proof generation
+│   ├── verifier.rs        # Proof verification
+│   ├── r1cs_to_qap.rs     # R1CS to QAP reduction
+│   ├── constraints.rs     # R1CS gadgets (feature: r1cs)
+│   └── test.rs            # Unit tests
+├── benches/               # Performance benchmarks
+├── tests/                 # Integration tests
+└── scripts/               # Development utilities
 ```
 
 ## Contributing
@@ -323,40 +291,40 @@ Areas where we especially need help:
 
 ## Security
 
-**⚠️ This is research software. Do not use in production.**
+**This is research software. Do not use in production.**
 
 If you discover a security vulnerability, please email security@meridianalgo.com (or open a private security advisory on GitHub).
 
 ## Comparison with Related Work
 
 ### vs. Original Groth16
-- ✅ Same proof size and verification speed
-- ✅ Universal setup (no per-circuit ceremonies)
-- ✅ Flexible arithmetization (custom gates, lookups)
-- ✅ Faster prover on complex circuits
+- Same proof size and verification speed
+- Universal setup (no per-circuit ceremonies)
+- Flexible arithmetization (custom gates, lookups)
+- Faster prover on complex circuits
 
 ### vs. Plonk/Marlin
-- ✅ 5-10× smaller proofs
-- ✅ 2-3× faster verification
+- 5-10× smaller proofs
+- 2-3× faster verification
 - ≈ Similar setup (universal)
 - ≈ Similar flexibility
 
 ### vs. STARKs
-- ✅ 100-500× smaller proofs
-- ✅ Faster verification (pairings vs. hashing)
-- ❌ Requires trusted setup (vs. transparent)
+- 100-500× smaller proofs
+- Faster verification (pairings vs. hashing)
+- Requires trusted setup (vs. transparent)
 - ≈ Similar prover speed
 
 ### vs. Polymath/Pari
 - ≈ Similar proof size
 - ≈ Same verification speed
-- ✅ Universal setup (vs. circuit-specific)
-- ✅ More flexible arithmetization
+- Universal setup (vs. circuit-specific)
+- More flexible arithmetization
 
 ### vs. Dynark
 - ≈ Same proof size and verification
-- ✅ Universal setup (vs. circuit-specific)
-- ✅ Incorporates Dynark's FFT optimizations
+- Universal setup (vs. circuit-specific)
+- Incorporates Dynark's FFT optimizations
 - ≈ Similar dynamic update capabilities
 
 ## References & Further Reading
@@ -382,7 +350,6 @@ If you discover a security vulnerability, please email security@meridianalgo.com
 
 This library is licensed under either of the following licenses, at your discretion.
 
- * Apache License Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 Unless you explicitly state otherwise, any contribution submitted for inclusion in this library by you shall be dual licensed as above (as defined in the Apache v2 License), without any additional terms or conditions.

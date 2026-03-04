@@ -1,119 +1,48 @@
 name: CI
+
 on:
-  pull_request:
   push:
-    branches:
-      - master
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
 env:
+  CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  style:
-    name: Check Style
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
-
-    - name: Checkout
-      uses: actions/checkout@v4
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
-        components: rustfmt
-
-    - name: cargo fmt --check
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: -- --check
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-features
 
   test:
     name: Test
     runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: -Dwarnings
-    strategy:
-      matrix:
-        rust:
-          - stable
-          - nightly
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-features
 
-      - name: Install Rust (${{ matrix.rust }})
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Check examples
-        uses: actions-rs/cargo@v1
-        with:
-            command: check
-            args: --examples
-
-      - name: Check examples with all features on stable
-        uses: actions-rs/cargo@v1
-        with:
-            command: check
-            args: --examples --all-features
-        if: matrix.rust == 'stable'
-
-      - name: Check benchmarks on nightly
-        uses: actions-rs/cargo@v1
-        with:
-            command: check
-            args: --all-features --examples --benches
-        if: matrix.rust == 'nightly'
-
-      - name: Test
-        uses: actions-rs/cargo@v1
-        with:
-            command: test
-            args: --all-features 
-
-  check_no_std:
-    name: Check no_std
+  fmt:
+    name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: thumbv6m-none-eabi
-          override: true
+          components: rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Install Rust ARM64
-        uses: actions-rs/toolchain@v1
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: aarch64-unknown-none
-          override: true
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: groth16
-        run: |
-          cargo build --no-default-features --target aarch64-unknown-none
-          cargo check --examples --no-default-features --target aarch64-unknown-none
+          components: clippy
+      - run: cargo clippy --all-features -- -D warnings

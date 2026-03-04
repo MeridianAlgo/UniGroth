@@ -1,6 +1,6 @@
 [package]
 name = "unigroth"
-version = "0.1.0"
+version = "0.1.1"
 authors = [ "MeridianAlgo", "arkworks contributors" ]
 description = "UniGroth: Next-generation universal zkSNARK framework built on Groth16 - combining universal setup, flexible arithmetization, and Groth16-level performance"
 homepage = "https://github.com/MeridianAlgo/UniGroth"

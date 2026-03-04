@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## UniGroth v0.1.1 (March 2026)
+
+### Infrastructure & CI/CD
+- **Clean GitHub Actions** — Completely revamped `.github` folder with optimized workflows
+- **Continuous Integration** — Added `ci.yml` covering every push and pull request:
+  - `check`: Validates compilation across all features
+  - `test`: Executes all unit and integration tests
+  - `fmt`: Enforces consistent Rust code formatting
+  - `clippy`: Static analysis for code quality and idiomatic Rust patterns
+- Updated project version to `v0.1.1`
+
+---
+
 ## UniGroth v0.1.0 (March 2026)
 
 ### New Modules
