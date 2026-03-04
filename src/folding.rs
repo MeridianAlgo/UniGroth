@@ -48,8 +48,7 @@
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_poly::{
-    univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain,
-    GeneralEvaluationDomain,
+    univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
 };
 use ark_serialize::*;
 use ark_std::{rand::RngCore, vec, vec::Vec};
@@ -102,10 +101,7 @@ pub struct FoldingAccumulator<E: Pairing> {
 
 impl<E: Pairing> FoldingAccumulator<E> {
     /// Initialize accumulator with the first instance.
-    pub fn init(
-        srs: &UniversalSRS<E>,
-        instance: &FoldingInstance<E::ScalarField>,
-    ) -> Self {
+    pub fn init(srs: &UniversalSRS<E>, instance: &FoldingInstance<E::ScalarField>) -> Self {
         // Witness polynomial commitment
         let witness_poly = witness_to_poly::<E>(&instance.witness);
         let acc_w = if instance.witness.is_empty() {
@@ -192,14 +188,14 @@ impl<E: Pairing> FoldingEngine<E> {
                     t1: E::G1Affine::zero(),
                     higher_order: vec![],
                 })
-            }
+            },
             Some(acc) => {
                 // Subsequent instances: fold into existing accumulator
                 let (new_acc, cross_terms) = self.fold_step(acc.clone(), &instance, rng)?;
                 self.accumulator = Some(new_acc);
                 end_timer!(fold_time);
                 Ok(cross_terms)
-            }
+            },
         }
     }
 
@@ -234,7 +230,9 @@ impl<E: Pairing> FoldingEngine<E> {
         };
 
         let folded_w_value = match &acc.acc_w {
-            Some(commit) => (commit.value.into_group() + new_w_commit.into_group() * r).into_affine(),
+            Some(commit) => {
+                (commit.value.into_group() + new_w_commit.into_group() * r).into_affine()
+            },
             None => new_w_commit,
         };
 
@@ -251,7 +249,9 @@ impl<E: Pairing> FoldingEngine<E> {
 
         let new_acc = FoldingAccumulator {
             acc_x: folded_x,
-            acc_w: Some(Commitment { value: folded_w_value }),
+            acc_w: Some(Commitment {
+                value: folded_w_value,
+            }),
             acc_e: folded_e,
             acc_mu: folded_mu,
             fold_count: acc.fold_count + 1,
@@ -311,17 +311,14 @@ pub fn verify_accumulator<E: Pairing>(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Convert a witness vector to a polynomial (for KZG commitment).
-fn witness_to_poly<E: Pairing>(
-    witness: &[E::ScalarField],
-) -> DensePolynomial<E::ScalarField> {
+fn witness_to_poly<E: Pairing>(witness: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
     if witness.is_empty() {
         return DensePolynomial::from_coefficients_vec(vec![E::ScalarField::zero()]);
     }
     // Interpolate witness values as polynomial over evaluation domain
     // w(X) such that w(ωⁱ) = wᵢ for the canonical domain
     let domain_size = witness.len().next_power_of_two();
-    let domain =
-        GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
+    let domain = GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
 
     let mut evals = witness.to_vec();
     evals.resize(domain_size, E::ScalarField::zero());
@@ -432,7 +429,10 @@ mod tests {
     use super::*;
     use ark_bn254::Bn254;
     use ark_poly::Polynomial;
-    use ark_std::{rand::{RngCore, SeedableRng}, test_rng};
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
 
     type Fr = <Bn254 as Pairing>::ScalarField;
 
@@ -527,7 +527,12 @@ mod tests {
 
     #[test]
     fn test_witness_to_poly() {
-        let witness: Vec<Fr> = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64)];
+        let witness: Vec<Fr> = vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+            Fr::from(3u64),
+            Fr::from(4u64),
+        ];
         let poly = witness_to_poly::<Bn254>(&witness);
 
         // Polynomial should be non-trivial

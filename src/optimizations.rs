@@ -42,9 +42,7 @@
 
 use ark_ec::{pairing::Pairing, VariableBaseMSM};
 use ark_ff::PrimeField;
-use ark_poly::{
-    EvaluationDomain, GeneralEvaluationDomain,
-};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_std::{cfg_iter, vec::Vec};
 
 #[cfg(feature = "parallel")]
@@ -202,7 +200,11 @@ pub fn parallel_msm<E: Pairing>(
     bases: &[E::G1Affine],
     scalars: &[E::ScalarField],
 ) -> (E::G1, MSMStats) {
-    assert_eq!(bases.len(), scalars.len(), "Bases and scalars must have same length");
+    assert_eq!(
+        bases.len(),
+        scalars.len(),
+        "Bases and scalars must have same length"
+    );
 
     let msm_time = start_timer!(|| format!("MSM n={}", bases.len()));
 
@@ -368,10 +370,7 @@ impl ProverProfile {
     /// - 2-4× from SAP (fewer constraints)
     /// - 1.33× from Dynark FFT (4 vs 6)
     /// - 1.2× from parallel MSM (rayon + cache effects)
-    pub fn estimate_speedup(
-        sap_reduction_factor: f64,
-        dynark_fft: bool,
-    ) -> f64 {
+    pub fn estimate_speedup(sap_reduction_factor: f64, dynark_fft: bool) -> f64 {
         let fft_factor = if dynark_fft { 6.0 / 4.0 } else { 1.0 };
         let msm_factor = 1.2; // Parallel MSM improvement
         sap_reduction_factor * fft_factor * msm_factor
@@ -386,7 +385,10 @@ mod tests {
     use ark_bn254::{Bn254, Fr, G1Affine};
     use ark_ec::CurveGroup;
     use ark_ff::{UniformRand, Zero};
-    use ark_std::{rand::{RngCore, SeedableRng}, test_rng};
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
 
     #[test]
     fn test_dynark_4fft() {

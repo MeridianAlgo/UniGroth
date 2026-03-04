@@ -330,7 +330,7 @@ where
             let pvk = pvk.borrow();
             let alpha_g1_beta_g2 = P::GTVar::new_variable(
                 ark_relations::ns!(cs, "alpha_g1_beta_g2"),
-                || Ok(pvk.alpha_g1_beta_g2.clone()),
+                || Ok(pvk.alpha_g1_beta_g2),
                 mode,
             )?;
 

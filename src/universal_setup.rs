@@ -24,10 +24,7 @@
 //! ```
 
 use crate::{
-    kzg::UniversalSRS,
-    r1cs_to_qap::R1CSToQAP,
-    sap::R1CSToSAP,
-    ProvingKey, VerifyingKey, Vec,
+    kzg::UniversalSRS, r1cs_to_qap::R1CSToQAP, sap::R1CSToSAP, ProvingKey, Vec, VerifyingKey,
 };
 use ark_ec::{pairing::Pairing, scalar_mul::BatchMulPreprocessing, AffineRepr, CurveGroup};
 use ark_ff::{Field, UniformRand, Zero};
@@ -37,7 +34,10 @@ use ark_relations::gr1cs::{
     SynthesisError, SynthesisMode,
 };
 use ark_serialize::*;
-use ark_std::{cfg_into_iter, cfg_iter, rand::{CryptoRng, RngCore}};
+use ark_std::{
+    cfg_into_iter, cfg_iter,
+    rand::{CryptoRng, RngCore},
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -309,14 +309,14 @@ impl<E: Pairing> UniversalParams<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{r1cs_to_qap::LibsnarkReduction, Groth16};
     use ark_bn254::{Bn254, Fr};
     use ark_relations::{
-        lc,
         gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+        lc,
     };
     use ark_snark::SNARK;
     use ark_std::{rand::rngs::StdRng, rand::SeedableRng, test_rng};
-    use crate::{Groth16, r1cs_to_qap::LibsnarkReduction};
 
     #[derive(Clone)]
     struct TestCircuit {
@@ -324,10 +324,7 @@ mod tests {
     }
 
     impl ConstraintSynthesizer<Fr> for TestCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             let x = cs.new_witness_variable(|| self.x.ok_or(SynthesisError::AssignmentMissing))?;
             let x_squared = cs.new_input_variable(|| {
                 let x_val = self.x.ok_or(SynthesisError::AssignmentMissing)?;

@@ -305,13 +305,13 @@ impl SecurityParams {
     pub fn security_report(&self) -> SecurityReport {
         SecurityReport {
             lambda: self.lambda,
-            knowledge_soundness_agm: true,    // Always: Groth16 is KS in AGM
-            zero_knowledge: true,             // Always: Groth16 is ZK
+            knowledge_soundness_agm: true, // Always: Groth16 is KS in AGM
+            zero_knowledge: true,          // Always: Groth16 is ZK
             simulation_extractable: self.sim_extractable,
             subversion_zk: self.subversion_zk,
             post_quantum: false, // NOT post-quantum (pairing-based)
-            // PQ: Would require switching to lattice-based or hash-based inner prover
-            // See "Lattice-Based SNARKs" (2025) for a designated-verifier PQ path
+                                 // PQ: Would require switching to lattice-based or hash-based inner prover
+                                 // See "Lattice-Based SNARKs" (2025) for a designated-verifier PQ path
         }
     }
 }
@@ -333,7 +333,11 @@ impl SecurityReport {
         println!("Security level: {}-bit", self.lambda);
         println!(
             "Knowledge soundness (AGM): {}",
-            if self.knowledge_soundness_agm { "✓" } else { "✗" }
+            if self.knowledge_soundness_agm {
+                "✓"
+            } else {
+                "✗"
+            }
         );
         println!(
             "Zero-knowledge: {}",
@@ -341,7 +345,11 @@ impl SecurityReport {
         );
         println!(
             "Simulation-extractable: {}",
-            if self.simulation_extractable { "✓" } else { "✗" }
+            if self.simulation_extractable {
+                "✓"
+            } else {
+                "✗"
+            }
         );
         println!(
             "Subversion zero-knowledge: {}",
@@ -441,11 +449,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(5u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -470,11 +476,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, _vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, _vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(7u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -499,11 +503,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(9u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -530,11 +532,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, _vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, _vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(3u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(

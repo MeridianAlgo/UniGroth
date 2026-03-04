@@ -14,11 +14,13 @@
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{One, UniformRand};
-use ark_poly::{
-    univariate::DensePolynomial, DenseUVPolynomial, Polynomial,
-};
+use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 use ark_serialize::*;
-use ark_std::{cfg_iter, rand::{CryptoRng, RngCore}, vec::Vec};
+use ark_std::{
+    cfg_iter,
+    rand::{CryptoRng, RngCore},
+    vec::Vec,
+};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -211,8 +213,9 @@ impl<E: Pairing> KZG<E> {
 
         // Compute witness polynomial w(X) = (p(X) - p(z)) / (X - z)
         let numerator = polynomial - &DensePolynomial::from_coefficients_vec(vec![value]);
-        let denominator = DensePolynomial::from_coefficients_vec(vec![-*point, E::ScalarField::one()]);
-        
+        let denominator =
+            DensePolynomial::from_coefficients_vec(vec![-*point, E::ScalarField::one()]);
+
         // Perform polynomial division
         let witness = &numerator / &denominator;
 
@@ -224,9 +227,12 @@ impl<E: Pairing> KZG<E> {
 
         end_timer!(open_time);
 
-        (value, Opening {
-            proof: proof.into_affine(),
-        })
+        (
+            value,
+            Opening {
+                proof: proof.into_affine(),
+            },
+        )
     }
 
     /// Verify a KZG opening proof.
@@ -246,7 +252,8 @@ impl<E: Pairing> KZG<E> {
         let c_minus_v = (commitment.value.into_group() - srs.powers_of_g[0] * value).into_affine();
 
         // Compute τH - zH
-        let tau_h_minus_z = (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
+        let tau_h_minus_z =
+            (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
 
         // Check pairing equation: e(C - vG, H) = e(π, τH - zH)
         let lhs = E::pairing(c_minus_v, srs.powers_of_h[0]);
@@ -276,7 +283,7 @@ impl<E: Pairing> KZG<E> {
         let challenges: Vec<_> = (0..commitments.len())
             .map(|i| E::ScalarField::from((i + 1) as u64))
             .collect();
-        
+
         // Compute batched commitment: Σ rⁱCᵢ
         let batched_commitment = cfg_iter!(commitments)
             .zip(&challenges)
@@ -297,7 +304,8 @@ impl<E: Pairing> KZG<E> {
 
         // Verify batched opening
         let c_minus_v = (batched_commitment - srs.powers_of_g[0] * batched_value).into_affine();
-        let tau_h_minus_z = (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
+        let tau_h_minus_z =
+            (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
 
         let lhs = E::pairing(c_minus_v, srs.powers_of_h[0]);
         let rhs = E::pairing(batched_proof.into_affine(), tau_h_minus_z);
@@ -340,7 +348,13 @@ mod tests {
 
         // Verify with wrong value should fail
         let wrong_value = value + Fr::from(1u64);
-        assert!(!KZG::verify(&srs, &commitment, &point, &wrong_value, &proof));
+        assert!(!KZG::verify(
+            &srs,
+            &commitment,
+            &point,
+            &wrong_value,
+            &proof
+        ));
     }
 
     #[test]
@@ -362,16 +376,19 @@ mod tests {
 
         // Open all at the same point
         let point = Fr::rand(&mut rng);
-        let openings: Vec<_> = polys
-            .iter()
-            .map(|p| KZG::open(&srs, p, &point))
-            .collect();
+        let openings: Vec<_> = polys.iter().map(|p| KZG::open(&srs, p, &point)).collect();
 
         let values: Vec<_> = openings.iter().map(|(v, _)| *v).collect();
         let proofs: Vec<_> = openings.iter().map(|(_, p)| p.clone()).collect();
 
         // Batch verify
-        assert!(KZG::batch_verify(&srs, &commitments, &point, &values, &proofs));
+        assert!(KZG::batch_verify(
+            &srs,
+            &commitments,
+            &point,
+            &values,
+            &proofs
+        ));
     }
 
     #[test]

@@ -16,7 +16,6 @@ use ark_std::rand::{Rng, RngCore, SeedableRng};
 // For benchmarking
 use std::time::{Duration, Instant};
 
-
 // we're going to use the BLS12-377 pairing-friendly elliptic curve.
 use ark_bls12_377::{Bls12_377, Fr};
 use ark_ff::{Field, PrimeField};

@@ -231,9 +231,7 @@ pub struct LookupTable<F: PrimeField> {
 impl<F: PrimeField> LookupTable<F> {
     /// Create a range check table: T = {(0,0), (1,1), ..., (2^k - 1, 2^k - 1)}
     pub fn range_check(k: usize) -> Self {
-        let entries: Vec<(F, F)> = (0u64..(1 << k))
-            .map(|i| (F::from(i), F::from(i)))
-            .collect();
+        let entries: Vec<(F, F)> = (0u64..(1 << k)).map(|i| (F::from(i), F::from(i))).collect();
         Self {
             entries,
             name: format!("range_2^{}", k),
@@ -395,7 +393,11 @@ impl<F: PrimeField> PlonkishConstraintSystem<F> {
     /// Add a range check using lookup.
     pub fn add_range_check(&mut self, value: F, k: usize) {
         // Ensure table exists
-        if !self.lookup_tables.iter().any(|t| t.name == format!("range_2^{}", k)) {
+        if !self
+            .lookup_tables
+            .iter()
+            .any(|t| t.name == format!("range_2^{}", k))
+        {
             self.lookup_tables.push(LookupTable::range_check(k));
         }
 
@@ -466,7 +468,11 @@ impl<F: PrimeField> PlonkishConstraintSystem<F> {
 
     /// Count statistics of the constraint system.
     pub fn stats(&self) -> PlonkishStats {
-        let mul_gates = self.rows.iter().filter(|r| !r.selectors.q_m.is_zero()).count();
+        let mul_gates = self
+            .rows
+            .iter()
+            .filter(|r| !r.selectors.q_m.is_zero())
+            .count();
         let add_gates = self
             .rows
             .iter()
@@ -477,7 +483,11 @@ impl<F: PrimeField> PlonkishConstraintSystem<F> {
                     && r.lookup_query.is_none()
             })
             .count();
-        let lookup_rows = self.rows.iter().filter(|r| r.lookup_query.is_some()).count();
+        let lookup_rows = self
+            .rows
+            .iter()
+            .filter(|r| r.lookup_query.is_some())
+            .count();
         let custom_gates = self.rows.iter().filter(|r| r.custom_gate.is_some()).count();
 
         PlonkishStats {
@@ -526,7 +536,10 @@ impl PlonkishStats {
         println!("=== Plonkish Circuit Statistics ===");
         println!("Total rows:            {}", self.total_rows);
         println!("  Multiplication gates: {}", self.mul_gates);
-        println!("  Addition gates:       {} (free in Plonkish!)", self.add_gates);
+        println!(
+            "  Addition gates:       {} (free in Plonkish!)",
+            self.add_gates
+        );
         println!("  Lookup rows:          {} (very cheap!)", self.lookup_rows);
         println!("  Custom gates:         {}", self.custom_gates);
         println!("Copy constraints:      {}", self.copy_constraints);
@@ -638,11 +651,11 @@ mod tests {
         let b = Fr::from(4u64);
         let c = Fr::from(5u64);
 
-        let ab = cs.add_add_gate(a, b);  // ab = a + b = 7
+        let ab = cs.add_add_gate(a, b); // ab = a + b = 7
         assert_eq!(ab, Fr::from(7u64));
 
         let out = ab * c;
-        cs.add_mul_gate(ab, c, out);     // ab * c = 35
+        cs.add_mul_gate(ab, c, out); // ab * c = 35
 
         cs.add_public_input(out);
 

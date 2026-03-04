@@ -123,16 +123,16 @@ pub mod plonkish;
 #[cfg(test)]
 mod test;
 
-pub use self::{data_structures::*, verifier::*};
-pub use self::kzg::{Commitment, KZG, Opening, UniversalSRS};
-pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
-pub use self::universal_setup::UniversalParams;
 pub use self::folding::{FoldingAccumulator, FoldingEngine, FoldingInstance, IVC};
-pub use self::security::{SecurityParams, SecurityReport, SEConfig, SimExtractableProof};
+pub use self::kzg::{Commitment, Opening, UniversalSRS, KZG};
 pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile};
 pub use self::plonkish::{
-    CustomGateRegistry, LookupTable, PlonkishConstraintSystem, PlonkishStats, PlonkSelectors,
+    CustomGateRegistry, LookupTable, PlonkSelectors, PlonkishConstraintSystem, PlonkishStats,
 };
+pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
+pub use self::security::{SEConfig, SecurityParams, SecurityReport, SimExtractableProof};
+pub use self::universal_setup::UniversalParams;
+pub use self::{data_structures::*, verifier::*};
 
 use ark_ec::pairing::Pairing;
 use ark_relations::gr1cs::{ConstraintSynthesizer, SynthesisError};
@@ -185,7 +185,7 @@ impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
         x: &[E::ScalarField],
         proof: &Self::Proof,
     ) -> Result<bool, Self::Error> {
-        Ok(Self::verify_proof(&circuit_pvk, proof, &x)?)
+        Self::verify_proof(circuit_pvk, proof, x)
     }
 }
 
