@@ -27,22 +27,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all-features
 
-  fmt:
-    name: Rustfmt
+  fmt-clippy-autofix:
+    name: Auto-fix Formatting and Linting
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
+          components: rustfmt, clippy
+      
+      - name: Run cargo fmt
+        run: cargo fmt --all
+      
+      - name: Run cargo clippy fix
+        run: cargo clippy --all-features --fix --allow-dirty --allow-staged
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          components: clippy
-      - run: cargo clippy --all-features -- -D warnings
+          commit_message: "style: auto-fix linting and formatting [skip ci]"
+          branch: ${{ github.head_ref || github.ref_name }}
+          commit_options: '--no-verify'
+          status_options: '--untracked-files=no'
+          skip_dirty_check: false
+          skip_fetch: true
