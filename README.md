@@ -1,81 +1,60 @@
-# UniGroth ⚡
+# UniGroth
 
-**UniGroth** is a high-performance, simulation-extractable (SE) implementation of the Groth16 SNARK. It combines state-of-the-art prover optimizations (like Dynark 4-FFT and parallel MSMs) with advanced security wrappers to provide a fast and secure zero-knowledge proof system.
-
----
-
-## 🔥 Key Features
-
-### 🚀 Performance Optimizations
-- **Dynark 4-FFT**: Proof generation requires only **4 FFTs** instead of the standard 6, significantly reducing computation overhead.
-- **Parallel MSM**: Prover Multi-Scalar Multiplications (MSMs) for $H, L, A, B_{G1},$ and $B_{G2}$ follow a concurrent execution path using `rayon`.
-- **$O(n)$ Setup**: Optimized `h_query` scalar computation from $O(n \log n)$ to $O(n)$ using successive multiplication.
-- **Zero-Allocation Prover**: Modified `calculate_coeff` logic to process assignments through slices, eliminating redundant memory copies.
-
-### 🛡️ Security & Arithmetization
-- **Simulation-Extractability (SE)**: Integrated BG18 and ROM blinding techniques to prevent proof malleability.
-- **Square Arithmetic Programs (SAP)**: Optional arithmetization that is more efficient than standard R1CS for certain circuit types.
-- **Updatable Setup**: Supports universal trusted setups compatible with powers-of-tau ceremonies.
+UniGroth is a specialized implementation of the Groth16 SNARK designed for high-performance and simulation-extractable (SE) security. It integrates modern prover optimizations like Dynark 4-FFT and parallel multi-scalar multiplications (MSM) with robust security wrappers, providing a fast and reliable zero-knowledge proof system for production environments.
 
 ---
 
-## 🏗️ Project Structure
+## Core Features
 
-- `/UniGroth`: The core Rust implementation of the SNARK.
-- `/src`: Node.js logic for proof generation, commitment schemes, and field arithmetic.
-- `phrase.circom`: A sample circuit demonstrating the "secret phrase" proof of knowledge.
-- `verifier.sol`: A performance-optimized Solidity contract for on-chain verification.
+### Performance Improvements
+- **Optimized FFT Execution**: We use the Dynark 4-FFT approach, allowing proof generation in 4 FFT steps rather than the standard 6, reducing the computational bottleneck.
+- **Concurrent MSM Operations**: Major Multi-Scalar Multiplications (H, L, A, B_G1, and B_G2) are executed in parallel using Rayon, maximizing CPU utilization during proof generation.
+- **Linear-Time Setup**: The h-query scalar computation has been optimized from $O(n \log n)$ to $O(n)$, speeding up trusted setup and pre-processing for large circuits.
+- **Allocation Efficiency**: The prover's internal logic has been refactored to use slices for assignments, avoiding redundant memory copies and lowering the memory footprint.
+
+### Security and Flexibility
+- **Simulation-Extractability (SE)**: Built-in support for BG18 and ROM blinding techniques helps prevent malleable proof attacks.
+- **Square Arithmetic Programs (SAP)**: Provides an alternative arithmetization that can outperform standard R1CS in specific use cases.
+- **Universal Setup Support**: Designed to work with updatable trusted setups, making it compatible with modern powers-of-tau ceremonies.
 
 ---
 
-## 🛠️ Getting Started
+## Project Structure
+
+- **UniGroth**: The core Rust library where the SNARK logic lives.
+- **src**: Node.js implementation for proof handling, commitment schemes, and field arithmetic.
+- **phrase.circom**: An example circuit for "secret phrase" proofs.
+- **verifier.sol**: A gas-optimized Solidity verifier for on-chain proof validation.
+
+---
+
+## Getting Started
 
 ### Prerequisites
+- **Rust**: Latest stable or nightly (nightly recommended for peak performance).
+- **Node.js**: Long-term support (LTS) version.
+- **Circom**: Required for compiling the arithmetic circuits.
 
-- **Rust**: `cargo` (nightly recommended for best performance)
-- **Node.js**: `npm`
-- **Circom**: To compile `.circom` files
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/MeridianAlgo/UniGroth.git
-cd UniGroth
-
-# Install JS dependencies
-npm install
-
-# Build the Rust core
-cd UniGroth
-cargo build --release
-```
-
-### Running Tests
-
-```bash
-# Run all Rust integration tests
-cargo test --release
-```
-
----
-
-## 📜 Usage Example
-
-To generate a proof for the `phrase` circuit:
-
-1. **Compile the circuit**:
+### Setup and Testing
+1. Clone the project and install dependencies:
    ```bash
-   circom phrase.circom --r1cs --wasm --sym
+   git clone https://github.com/MeridianAlgo/UniGroth.git
+   cd UniGroth
+   npm install
    ```
-2. **Generate Witness**: Use the provided `src/prover.js` or `snarkjs`.
-3. **Generate Proof**:
-   ```rust
-   let proof = Groth16::<Bn254>::create_proof_with_reduction(circuit, pk, r, s)?;
+2. Build and test the Rust implementation:
+   ```bash
+   cd UniGroth
+   cargo build --release
+   cargo test --release
    ```
 
 ---
 
-## ⚖️ License
+## Contributions and Development
+We focus on maintaining a balance between cutting-edge SNARK research and practical, high-speed implementations. If you are interested in zero-knowledge optimizations or security hardening, feel free to dive into the codebase.
 
-This project is licensed under the Apache License 2.0 or the MIT License.
+---
+
+## License
+This project is available under the Apache License 2.0 or the MIT License.
