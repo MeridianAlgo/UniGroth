@@ -1,0 +1,15 @@
+node_modules/
+circomlib/
+circom-build/
+phrase_js/
+target/
+**/*.zkey
+**/*.ptau
+**/*.r1cs
+**/*.sym
+**/*.wtns
+proof.json
+public.json
+verification_key.json
+.DS_Store
+*.log
