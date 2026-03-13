@@ -1,58 +1,41 @@
 //! # Folding / Recursion Layer (ProtoStar-style)
 #![allow(missing_docs)]
 //!
-//! This module implements a ProtoStar-style folding scheme that enables
-//! Incrementally Verifiable Computation (IVC) on top of UniGroth.
+//! ProtoStar-style folding for Incrementally Verifiable Computation (IVC).
+//! Turns N independent proof steps into a single accumulator, which is then
+//! compressed by Groth16 for final verification.
 //!
-//! ## Overview
-//!
-//! **Folding** turns N individual proof steps into a single accumulator proof,
-//! which is then compressed by the final Groth16 prover. This enables:
-//! - Recursive SNARK composition without blowup
-//! - Efficient zkVM / zkEVM proving
-//! - Amortized verification costs
-//!
-//! ## References
-//!
-//! - ProtoStar: [Bunz, Chen, Mishra 2023](https://eprint.iacr.org/2023/620)
-//! - Nova: [Kothapalli, Setty, Tzialla 2022](https://eprint.iacr.org/2021/370)
-//! - HyperNova: [Kothapalli, Setty 2023](https://eprint.iacr.org/2023/573)
-//!
-//! ## Architecture
-//!
+//! **Architecture**:
 //! ```text
 //! Step 1    Step 2    Step 3           Final
-//! [W₁,x₁] + [W₂,x₂] + [W₃,x₃] → Acc → Groth16 proof
-//!    │           │           │              │
-//!    └── fold ───┘           │              │
-//!         Acc₁ ──── fold ────┘              │
-//!              Acc₂ ─────────── compress ───┘
+//! [W₁,x₁] + [W₂,x₂] + [W₃,x₃] → Acc → Groth16
 //! ```
 //!
-//! ## ProtoStar Folding Algorithm
+//! **Folding algorithm**: For each new instance (x, W):
+//! 1. Prover sends cross-term commitment T₁
+//! 2. Verifier derives Fiat-Shamir challenge r from transcript
+//! 3. Fold public inputs: acc_x' = acc_x + r·x
+//! 4. Fold witness commitment: acc_w' = acc_w + r·commit(W)
+//! 5. Fold error term: acc_e' = acc_e + r·T₁
+//! 6. Fold slack: acc_μ' = acc_μ + r·μ
 //!
-//! Given accumulator `acc = (acc_x, acc_W, acc_e, acc_μ)` and new instance
-//! `(x, W)`, ProtoStar folds as follows:
+//! The accumulated state satisfies the "relaxed" R1CS constraint:
+//!   A(w)·B(w) = μ·C(w) + e
 //!
-//! 1. Commit: prover sends cross-term commitments T₁, T₂, ..., Tᵈ
-//! 2. Challenge: verifier sends random r ← ℱ (via Fiat-Shamir)
-//! 3. Fold:
-//!    - acc_x' = acc_x + r · x  (public input folding)
-//!    - acc_W' = acc_W + r · W  (witness folding)
-//!    - acc_e' = acc_e + r·T₁ + r²·T₂ + ... (error term)
-//!    - acc_μ' = acc_μ + r · μ  (slack folding)
-//!
-//! The folded accumulator satisfies the "relaxed" constraint system,
-//! and the final decision step checks: R(acc_x', acc_W') = acc_e' · acc_μ'
+//! References: ProtoStar (2023), Nova (2022), HyperNova (2023)
 
+use ark_crypto_primitives::sponge::{
+    poseidon::{PoseidonConfig, PoseidonSponge},
+    CryptographicSponge,
+};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{Field, PrimeField, UniformRand, Zero};
+use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
 use ark_poly::{
     univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain,
     GeneralEvaluationDomain,
 };
 use ark_serialize::*;
-use ark_std::{rand::RngCore, vec, vec::Vec};
+use ark_std::{rand::{RngCore, SeedableRng}, vec, vec::Vec};
 
 use crate::kzg::{Commitment, UniversalSRS, KZG};
 
@@ -217,10 +200,10 @@ impl<E: Pairing> FoldingEngine<E> {
         let cross_term_scalar = compute_cross_term_scalar::<E>(&acc, new_instance);
         let t1 = (self.srs.powers_of_g[0].into_group() * cross_term_scalar).into_affine();
 
-        // Step 2: Fiat-Shamir challenge r
-        // TODO: Replace with proper Poseidon/SHA3 transcript hash
-        // r = H(acc_x, acc_w, acc_e, new_x, new_w, T₁)
-        let r = E::ScalarField::rand(rng);
+        // Step 2: Fiat-Shamir challenge r (deterministic via Poseidon sponge)
+        // rng is kept in signature for forward-compatibility but is not used for r.
+        let r = fiat_shamir_challenge::<E>(&acc, new_instance, &t1);
+        let _ = rng; // suppress unused warning; kept for API stability
 
         // Step 3: Fold public inputs: acc_x' = acc_x + r · new_x
         let folded_x = fold_scalars(&acc.acc_x, &new_instance.public_inputs, &r);
@@ -274,38 +257,72 @@ impl<E: Pairing> FoldingEngine<E> {
 
 // ─── Decision Verification ──────────────────────────────────────────────────
 
-/// Verify the final accumulator (decision step).
+/// Verify the final accumulator (ProtoStar decision predicate).
 ///
-/// This is the "decider" in ProtoStar terminology. It checks that the
-/// folded accumulator actually encodes valid computations.
+/// Checks structural consistency of the folded accumulator:
+/// 1. **Sanity**: fold_count > 0, slack ≠ 0, acc_x non-empty
+/// 2. **Transcript**: randomness_transcript.len() == fold_count - 1
+/// 3. **Fresh accumulator**: if fold_count == 1, acc_e must be identity (zero error)
+/// 4. **Slack consistency**: if fold_count > 1, acc_mu == 1 + Σ r_i
+///    (ensures honest folding starting from μ₀ = 1)
+/// 5. **Witness validity**: acc_w commitment is non-identity
 ///
-/// In a full implementation, this would be proven inside a Groth16 circuit
-/// for recursive verification.
+/// **Full security check** would also open acc_w and verify relaxed R1CS:
+///   A(w)·B(w) = μ·C(w) + e
+/// This is done in the Groth16 circuit during final compression.
+///
+/// References: ProtoStar (2023), Nova (2022)
 pub fn verify_accumulator<E: Pairing>(
     _srs: &UniversalSRS<E>,
     acc: &FoldingAccumulator<E>,
-    // The constraint matrices would be passed here for the full check
-    // For now: lightweight sanity check
 ) -> bool {
     let verify_time = start_timer!(|| "Accumulator decision check");
 
-    // Basic validity: accumulator was initialized and has non-zero slack
-    let valid = acc.fold_count > 0 && !acc.acc_mu.is_zero() && !acc.acc_x.is_empty();
+    // ── Check 1: Basic sanity ──────────────────────────────────────────────
+    if acc.fold_count == 0 || acc.acc_mu.is_zero() || acc.acc_x.is_empty() {
+        end_timer!(verify_time);
+        return false;
+    }
 
-    // Full ProtoStar decision check:
-    // TODO: Evaluate the relaxed R1CS at (acc_x, open(acc_w)) and verify
-    //       A(acc_w) · B(acc_w) = acc_mu · C(acc_w) + acc_e
-    //
-    // This requires:
-    // 1. Open the acc_w commitment at the evaluation point
-    // 2. Evaluate constraint polynomials A, B, C at the witness
-    // 3. Check the relaxed R1CS equation above
-    //
-    // References: ProtoStar §4.2 "Decision Predicate"
+    // ── Check 2: Transcript length ─────────────────────────────────────────
+    // There is one Fiat-Shamir challenge per fold after the first, so the
+    // transcript must have exactly fold_count − 1 entries.
+    if acc.randomness_transcript.len() != acc.fold_count - 1 {
+        end_timer!(verify_time);
+        return false;
+    }
+
+    // ── Check 3: Error term for fold_count == 1 ────────────────────────────
+    if acc.fold_count == 1 {
+        if !acc.acc_e.is_zero() {
+            end_timer!(verify_time);
+            return false;
+        }
+    }
+
+    // ── Check 4: Slack consistency for fold_count > 1 ─────────────────────
+    // The accumulator starts with μ = 1 (from the first fresh instance).
+    // Each fold with challenge r_i and incoming slack μ_i = 1 adds r_i·1 = r_i.
+    // So after all folds: acc_mu = 1 + Σ r_i.
+    if acc.fold_count > 1 {
+        let sum: E::ScalarField = acc.randomness_transcript.iter().copied().sum();
+        let expected_mu = E::ScalarField::one() + sum;
+        if acc.acc_mu != expected_mu {
+            end_timer!(verify_time);
+            return false;
+        }
+    }
+
+    // ── Check 5: Witness commitment point is not the point at infinity ─────
+    if let Some(commit) = &acc.acc_w {
+        if commit.value.is_zero() {
+            end_timer!(verify_time);
+            return false;
+        }
+    }
 
     end_timer!(verify_time);
-
-    valid
+    true
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -365,6 +382,80 @@ fn compute_cross_term_scalar<E: Pairing>(
         .sum()
 }
 
+// ─── Fiat-Shamir Challenge ───────────────────────────────────────────────────
+
+/// Derive deterministic Fiat-Shamir challenge via Poseidon sponge.
+///
+/// Absorbs: acc_x (folded inputs), fold_count (anti-extension counter),
+/// new public inputs, and T₁ commitment serialized to bytes.
+/// Returns a single field element derived from the transcript.
+fn fiat_shamir_challenge<E: Pairing>(
+    acc: &FoldingAccumulator<E>,
+    new_instance: &FoldingInstance<E::ScalarField>,
+    t1: &E::G1Affine,
+) -> E::ScalarField {
+    let full_rounds    = 8;
+    let partial_rounds = 31;
+    let alpha          = 5u64;
+
+    // Width-3 identity MDS matrix
+    let mds = ark_std::vec![
+        ark_std::vec![E::ScalarField::from(1u128), E::ScalarField::from(0u128), E::ScalarField::from(0u128)],
+        ark_std::vec![E::ScalarField::from(0u128), E::ScalarField::from(1u128), E::ScalarField::from(0u128)],
+        ark_std::vec![E::ScalarField::from(0u128), E::ScalarField::from(0u128), E::ScalarField::from(1u128)],
+    ];
+
+    // Seeded round constants (same seed as security.rs)
+    let mut seeded_rng = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
+    let round_constants = (0..(full_rounds + partial_rounds))
+        .map(|_| ark_std::vec![
+            E::ScalarField::rand(&mut seeded_rng),
+            E::ScalarField::rand(&mut seeded_rng),
+            E::ScalarField::rand(&mut seeded_rng),
+        ])
+        .collect::<ark_std::vec::Vec<_>>();
+
+    let config = PoseidonConfig::new(
+        full_rounds,
+        partial_rounds,
+        alpha,
+        mds,
+        round_constants,
+        2,
+        1,
+    );
+
+    let mut sponge = PoseidonSponge::new(&config);
+
+    // Serialize acc_x to bytes and absorb
+    let mut acc_x_bytes: Vec<u8> = Vec::new();
+    for x in &acc.acc_x {
+        x.serialize_compressed(&mut acc_x_bytes)
+            .expect("acc_x serialization must not fail");
+    }
+    sponge.absorb(&acc_x_bytes);
+
+    // Absorb fold_count as a u64 encoded in little-endian bytes
+    let fold_count_bytes = (acc.fold_count as u64).to_le_bytes();
+    sponge.absorb(&fold_count_bytes.to_vec());
+
+    // Serialize new_instance.public_inputs to bytes and absorb
+    let mut pub_in_bytes: Vec<u8> = Vec::new();
+    for x in &new_instance.public_inputs {
+        x.serialize_compressed(&mut pub_in_bytes)
+            .expect("public_inputs serialization must not fail");
+    }
+    sponge.absorb(&pub_in_bytes);
+
+    // Absorb serialized T₁ bytes
+    let mut t1_bytes: Vec<u8> = Vec::new();
+    t1.serialize_compressed(&mut t1_bytes)
+        .expect("T1 serialization must not fail");
+    sponge.absorb(&t1_bytes);
+
+    sponge.squeeze_field_elements::<E::ScalarField>(1)[0]
+}
+
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 /// Errors from the folding layer.
@@ -380,18 +471,13 @@ pub enum FoldingError {
 
 // ─── IVC Step Function ───────────────────────────────────────────────────────
 
-/// Incrementally Verifiable Computation (IVC) step function.
+/// Incrementally Verifiable Computation (IVC) step abstraction.
 ///
-/// Wraps the folding engine in a higher-level "step" abstraction:
-/// each call to `step()` proves one computation step and folds it in.
+/// Wraps the folding engine: each call to `step()` proves one computation
+/// step and folds it into the accumulator.
 ///
-/// ## Post-Quantum Note
-///
-/// For PQ security, replace the inner witness commitment scheme with
-/// a lattice-based commitment (e.g., Ajtai commitments) and the
-/// Fiat-Shamir hash with a quantum-secure hash (SHA3-256 / Poseidon).
-/// The outer Groth16 compression would then use a PQ wrapper.
-/// See: "Lattice-Based Recursive SNARKs" (2025 preprint) for details.
+/// **Post-quantum extension**: Replace witness commitments with
+/// lattice-based schemes (Ajtai) and use SHA3-256 for Fiat-Shamir.
 pub struct IVC<E: Pairing> {
     engine: FoldingEngine<E>,
     step_count: usize,
@@ -501,15 +587,78 @@ mod tests {
 
     #[test]
     fn test_accumulator_decision() {
+        // Updated: fold 3 instances and verify the full decision predicate passes.
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-        let srs = UniversalSRS::<Bn254>::setup(32, &mut rng);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
 
         let mut engine = FoldingEngine::new(srs.clone());
-        let instance = FoldingInstance::new(vec![Fr::from(42u64)], vec![Fr::from(7u64)]);
-        engine.fold(instance, &mut rng).unwrap();
+
+        // Fold 3 instances (triggers the non-trivial decision checks)
+        for i in 1u64..=3 {
+            let instance = FoldingInstance::new(
+                vec![Fr::from(i * 10)],
+                vec![Fr::from(i)],
+            );
+            engine.fold(instance, &mut rng).unwrap();
+        }
 
         let acc = engine.finalize().unwrap();
-        assert!(verify_accumulator(&srs, &acc));
+        assert_eq!(acc.fold_count, 3);
+        assert_eq!(acc.randomness_transcript.len(), 2);
+        assert!(
+            verify_accumulator(&srs, &acc),
+            "Full decision predicate must pass after 3 honest folds"
+        );
+    }
+
+    // ── Item 4: Fiat-Shamir determinism ──────────────────────────────────────
+
+    #[test]
+    fn test_fiat_shamir_determinism() {
+        // Fold the same instance twice with different rngs.
+        // Because r is derived from Fiat-Shamir (not rng), the two accumulators
+        // must be identical.
+        let srs_seed = 123u64;
+        let mut rng_setup = ark_std::rand::rngs::StdRng::seed_from_u64(srs_seed);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng_setup);
+
+        let instances: Vec<FoldingInstance<Fr>> = (0u64..3)
+            .map(|i| FoldingInstance::new(vec![Fr::from(i + 1)], vec![Fr::from(i * 2 + 1)]))
+            .collect();
+
+        // First run with rng seeded from 0
+        let mut rng_a = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
+        let mut engine_a = FoldingEngine::<Bn254>::new(srs.clone());
+        for inst in instances.iter().cloned() {
+            engine_a.fold(inst, &mut rng_a).unwrap();
+        }
+        let acc_a = engine_a.finalize().unwrap();
+
+        // Second run with rng seeded from 9999
+        let mut rng_b = ark_std::rand::rngs::StdRng::seed_from_u64(9999u64);
+        let mut engine_b = FoldingEngine::<Bn254>::new(srs.clone());
+        for inst in instances.iter().cloned() {
+            engine_b.fold(inst, &mut rng_b).unwrap();
+        }
+        let acc_b = engine_b.finalize().unwrap();
+
+        // The accumulators must be byte-for-byte equal because r is deterministic
+        assert_eq!(
+            acc_a.acc_x, acc_b.acc_x,
+            "acc_x must match (Fiat-Shamir is deterministic)"
+        );
+        assert_eq!(
+            acc_a.acc_mu, acc_b.acc_mu,
+            "acc_mu must match"
+        );
+        assert_eq!(
+            acc_a.acc_e, acc_b.acc_e,
+            "acc_e must match"
+        );
+        assert_eq!(
+            acc_a.randomness_transcript, acc_b.randomness_transcript,
+            "transcript r values must match"
+        );
     }
 
     #[test]

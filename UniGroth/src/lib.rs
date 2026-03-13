@@ -120,6 +120,9 @@ pub mod optimizations;
 /// Plonkish arithmetization: custom gates, lookups, copy constraints.
 pub mod plonkish;
 
+/// Post-quantum inner prover interface (Binius, Plonky3, Hybrid).
+pub mod pq_inner;
+
 #[cfg(test)]
 mod test;
 

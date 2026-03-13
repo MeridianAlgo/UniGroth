@@ -1,56 +1,23 @@
-//! # Security Upgrades for UniGroth
+//! # Security Enhancements for UniGroth
 #![allow(missing_docs)]
 //!
-//! This module implements enhanced security properties beyond standard Groth16:
+//! Implements enhanced security beyond standard Groth16:
 //!
-//! 1. **Simulation-Extractability (SE)** – Prevents proof forgery even after
-//!    seeing simulated proofs (BG18 / ABPR19 style).
+//! 1. **Simulation-Extractability (SE)** – Prevents proof forgery after seeing
+//!    simulated proofs. Uses BG18 blinding (explicit G₂ element) or ROM-based
+//!    blinding (proof hash). Costs +96 bytes or near-zero overhead.
 //!
-//! 2. **Subversion Zero-Knowledge (S-ZK)** – ZK holds even if the trusted
-//!    setup was subverted (within certain bounds).
+//! 2. **Subversion Zero-Knowledge (S-ZK)** – ZK holds even if setup was
+//!    maliciously generated. Uses proof rerandomization at proving time.
 //!
-//! 3. **Knowledge Soundness in AGM+ROM** – Provably secure in the Algebraic
-//!    Group Model + Random Oracle Model.
+//! 3. **Knowledge Soundness in AGM+ROM** – Groth16 is knowledge-sound in the
+//!    Algebraic Group Model with Random Oracle.
 //!
-//! ## References
+//! **BG18 SE**: Blind A with random ρ, add D = ρ·δG₂ to proof.
+//! **ROM SE**: Use proof hash H(A,B,x) as blinding factor (cheaper, ROM-based).
+//! **S-ZK**: Rerandomize proof via scalar ρ' to hide witness from malicious setup.
 //!
-//! - BG18: Bellare-Garay "Simulation-Extractable SNARKs Revisited"
-//!   <https://eprint.iacr.org/2018/136>
-//! - ABPR19: Abdolmaleki, Baghery, Parisot, Raza
-//!   "A Sub-Vector Commitment Scheme with Applications to Leakage-Resilient SNARKs"
-//! - BCFGRS16: Bellare et al, "Subversion-Resistant Simulation (Knowledge-Sound) NIZKs"
-//!   <https://eprint.iacr.org/2016/511>
-//! - AGM: Fuchsbauer, Kiltz, Loss "The Algebraic Group Model and its Applications"
-//!   <https://eprint.iacr.org/2017/620>
-//!
-//! ## Simulation-Extractability
-//!
-//! Standard Groth16 is NOT simulation-extractable by default. To add SE:
-//!
-//! **BG18 Construction** (costs +1 G₂ element in the proof):
-//! - Pick random ρ ← ℱ at proving time
-//! - Blind A with ρ: A' = A + ρ·B  (where B is already in the proof)
-//! - Add SE proof element: D = ρ · δG₂
-//!
-//! This ensures that even an adversary who sees many simulated proofs
-//! cannot output a valid proof for a new statement without knowing the witness.
-//!
-//! **Optimized SE** (via random-oracle blinding, costs ~0 extra):
-//! - Use the proof hash H(A, B, x) as a blinding factor
-//! - Cheaper but requires ROM assumption
-//!
-//! ## Subversion Zero-Knowledge
-//!
-//! In Groth16, ZK relies on the trusted setup being honestly generated.
-//! S-ZK ensures ZK holds even if the setup was maliciously constructed,
-//! by adding an extra randomization layer at proving time.
-//!
-//! **S-ZK Construction**:
-//! - At prove time, pick σ ← ℱ and rerandomize the proof:
-//!   A'' = A' + σ · G₁
-//!   B'' = B · (σ's effect on B)
-//!   C'' = C + appropriate adjustment
-//! - This rerandomization hides the witness even from a malicious setup
+//! References: BG18 (2018), BCFGRS16 (2016), AGM (2017), ABPR19 (2019)
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{UniformRand, Zero, PrimeField};
@@ -62,13 +29,13 @@ use crate::{Proof, ProvingKey, VerifyingKey, PreparedVerifyingKey};
 
 // ─── Simulation-Extractable Proof ────────────────────────────────────────────
 
-/// Extended proof with simulation-extractability blinding element.
+/// Groth16 proof extended with SE elements.
 ///
-/// The SE element `d` is an extra G₂ point that encodes the blinding
-/// factor ρ used in the BG18 construction. It adds 96 bytes to BLS12-381
-/// proofs (or 64 bytes to BN254 proofs), but provides full SE security.
+/// **se_element** (optional): BG18 blinding D = ρ·δG₂. Adds ~96 bytes (BLS12-381)
+/// or ~64 bytes (BN254) but provides full SE security.
 ///
-/// For minimal overhead, set `se_element` to `None` and use ROM blinding instead.
+/// **proof_hash**: ROM blinding hash H(A,B,C). Computed when se_element is None.
+/// ROM-based SE has near-zero overhead but requires Random Oracle assumption.
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SimExtractableProof<E: Pairing> {
     /// The standard Groth16 proof (A, B, C)
@@ -194,21 +161,16 @@ impl SEConfig {
     }
 }
 
-/// Wrap a standard Groth16 proof with simulation-extractability.
+/// Wrap Groth16 proof with simulation-extractability.
 ///
-/// ## BG18 Construction
+/// **BG18 construction**: Pick random ρ, set A' = A + ρ·δ_g1, D = ρ·δG₂.
+/// Verification: e(A', B)·e(δ_g1, D)⁻¹ = e(α, β)·...
 ///
-/// Given Groth16 proof π = (A, B, C):
-/// 1. Pick ρ ← ℱ uniformly at random
-/// 2. Set A' = A + ρ · δ_g1 (blinded A)
-/// 3. Set D = ρ · δG₂ (the SE element)
-/// 4. Return (A', B, C, D)
+/// **SE guarantee**: Extracting witness requires knowing ρ (uniformly random),
+/// impossible even after seeing simulated proofs.
 ///
-/// The verification equation then checks:
-///   e(A', B) · e(δ_g1, D)⁻¹ = e(α, β) · e(Σ xᵢγᵢ, γ) · e(C, δ)
-///
-/// This is simulation-extractable because extracting the witness from a proof
-/// requires knowing ρ, which is uniformly random.
+/// **ROM alternative**: Use proof hash as blinding ρ, costs near-zero.
+/// Tradeoff: requires Random Oracle assumption instead of explicit D element.
 pub fn make_sim_extractable<E: Pairing, R: RngCore>(
     proof: Proof<E>,
     pk: &ProvingKey<E>,
@@ -255,10 +217,9 @@ pub fn make_sim_extractable<E: Pairing, R: RngCore>(
     }
 }
 
-/// Verify a simulation-extractable proof.
+/// Verify simulation-extractable proof.
 ///
-/// Checks the standard Groth16 verification equation, adjusted for
-/// the BG18 blinding element if present.
+/// Checks Groth16 verification with BG18 correction e(δ_g1, -D) if present.
 pub fn verify_sim_extractable<E: Pairing>(
     pvk: &PreparedVerifyingKey<E>,
     public_inputs: &[E::ScalarField],
@@ -316,22 +277,15 @@ pub fn verify_sim_extractable<E: Pairing>(
 
 // ─── Subversion Zero-Knowledge ───────────────────────────────────────────────
 
-/// Apply subversion zero-knowledge rerandomization to a proof.
+/// Apply subversion zero-knowledge rerandomization to proof.
 ///
-/// Even if the trusted setup was maliciously generated, this rerandomization
-/// ensures the proof does not leak the witness.
+/// Even if setup was maliciously generated, this rerandomization hides
+/// the witness via proof scaling with random σ and blinding with ρ'.
 ///
-/// ## Construction
+/// **Construction**: A'' = σ⁻¹(A + ρ'·B_g1), B'' = σ·B, C'' adjusted.
+/// Uses arkworks builtin rerandomize_proof with S-ZK guarantee.
 ///
-/// Given proof π = (A, B, C) and verifying key VK:
-/// 1. Pick σ ← ℱ uniformly at random
-/// 2. Pick ρ' ← ℱ uniformly at random
-/// 3. A'' = σ⁻¹ · (A + ρ' · B_g1)  (rerandomized)
-/// 4. B'' = σ · B                    (scaled)
-/// 5. C'' = C + ρ' · (α + Σxᵢγᵢ + δ·⁻¹·...)  (adjusted)
-///
-/// This is exactly the arkworks rerandomize_proof but with S-ZK guarantee.
-/// See BCFGRS16 §4 "Subversion-Resistant Groth16".
+/// Reference: BCFGRS16 §4 "Subversion-Resistant Groth16"
 pub fn apply_subversion_zk<E: Pairing, R: RngCore>(
     proof: &Proof<E>,
     vk: &VerifyingKey<E>,
@@ -419,31 +373,30 @@ impl SecurityReport {
         println!("Security level: {}-bit", self.lambda);
         println!(
             "Knowledge soundness (AGM): {}",
-            if self.knowledge_soundness_agm { "✓" } else { "✗" }
+            if self.knowledge_soundness_agm { "[OK]" } else { "[NO]" }
         );
         println!(
             "Zero-knowledge: {}",
-            if self.zero_knowledge { "✓" } else { "✗" }
+            if self.zero_knowledge { "[OK]" } else { "[NO]" }
         );
         println!(
             "Simulation-extractable: {}",
-            if self.simulation_extractable { "✓" } else { "✗" }
+            if self.simulation_extractable { "[OK]" } else { "[NO]" }
         );
         println!(
             "Subversion zero-knowledge: {}",
-            if self.subversion_zk { "✓" } else { "✗" }
+            if self.subversion_zk { "[OK]" } else { "[NO]" }
         );
         println!(
             "Post-quantum: {}",
             if self.post_quantum {
-                "✓"
+                "[OK]"
             } else {
-                "✗ (pairing-based, not PQ)"
+                "[NO] (pairing-based)"
             }
         );
         if !self.post_quantum {
-            println!("  → PQ path: Wrap with Binius/Plonky3 inner prover + aggregate");
-            println!("    See: src/security.rs §Post-Quantum for implementation plan");
+            println!("  -> PQ path: Wrap with Binius/Plonky3 inner prover");
         }
     }
 }

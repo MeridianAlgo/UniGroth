@@ -38,6 +38,10 @@ educe = { version = "0.6.0", default-features = false, features = [ "Clone" ], o
 
 rayon = { version = "1", optional = true }
 
+# Optional dependencies for the compare binary
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ], optional = true }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", default-features = false, features = ["std"], optional = true }
+
 [dev-dependencies]
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
 ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
@@ -46,6 +50,7 @@ ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git", default-feat
 ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve", "r1cs" ] }
 ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", default-features = true }
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", default-features = false, features = [ "snark", "sponge", "constraints" ] }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", default-features = false, features = ["std"] }
 
 
 [features]
@@ -77,6 +82,14 @@ print-trace = ["ark-std/print-trace"]
 # UniGroth-specific features
 universal = []  # Enable universal setup
 sap = []        # Enable SAP arithmetization
+gpu = []        # Enable GPU MSM dispatch via icicle (requires icicle crate)
+# Feature enabling the compare binary's extra dependencies
+compare = ["std", "ark-bn254", "ark-groth16"]
+
+[[bin]]
+name = "compare"
+path = "src/bin/compare.rs"
+required-features = ["compare"]
 
 [[bench]]
 name = "groth16-benches"
@@ -120,3 +133,4 @@ ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git" }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git" }
