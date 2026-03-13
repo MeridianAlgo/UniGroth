@@ -62,117 +62,111 @@ pub struct OptimizedWitnessResult<F: PrimeField> {
     pub fft_count: usize,
 }
 
-/// Compute witness polynomials using the Dynark 4-FFT optimization.
+/// Compute witness polynomials using the true 4-FFT polynomial-multiplication approach.
 ///
-/// Standard Groth16 path uses 6 FFTs. This implementation reduces to 4 by:
-/// 1. `iFFT(a_evals)` → a polynomial  (1 iFFT)
-/// 2. `iFFT(b_evals)` → b polynomial  (1 iFFT)
-/// 3. `FFT_coset(a)` and `FFT_coset(b)` simultaneously  (2 coset FFTs)
+/// Standard Groth16 path uses 7 FFTs. This implementation reduces to 5 by:
+/// 1. `iFFT(a_evals)` → a polynomial coefficients           (1 iFFT, n-domain)
+/// 2. `iFFT(b_evals)` → b polynomial coefficients           (1 iFFT, n-domain)
+/// 3. `coset_FFT_2n(a_poly)` and `coset_FFT_2n(b_poly)`     (2 FFTs, 2n coset-domain, parallel)
+/// 4. Pointwise multiply on 2n coset                        (O(n), no FFT)
+/// 5. `icoset_FFT_2n(ab_product)` → product polynomial      (1 iFFT, 2n coset-domain)
+/// 6. Extract h: `h[k] = (a·b)[k+n]` for k=0..n-2          (O(n), no FFT)
 ///
-/// The c polynomial is handled without an extra FFT by exploiting:
-///   a(X) · b(X) - c(X) = h(X) · z(X)
+/// **Key identity**: since `a(X)·b(X) = c(X) + h(X)·z(X)` and `z = Xⁿ - 1`:
+/// - Coefficients 0..n-1 of a·b give c + lower h terms
+/// - Coefficients n..2n-2 of a·b give h directly: `h[k] = (a·b)[k+n]`
 ///
-/// where z(X) is the vanishing polynomial (precomputed).
+/// This eliminates `iFFT(c)` and `coset_FFT(c)` entirely — c is never needed.
 ///
-/// **Savings**: Skip iFFT(c) and FFT_coset(c) → 2 FFTs saved.
+/// **Savings vs standard**: 7 FFTs → 5 FFTs (−2 FFTs, −28%)
 pub fn compute_witness_4fft<F: PrimeField, D: EvaluationDomain<F>>(
     domain: &D,
-    a_evals: Vec<F>, // A matrix evaluations at domain points
-    b_evals: Vec<F>, // B matrix evaluations at domain points
-    c_evals: Vec<F>, // C matrix evaluations at domain points
+    a_evals: Vec<F>, // A matrix evaluations at domain H
+    b_evals: Vec<F>, // B matrix evaluations at domain H
+    // c_evals removed: derived from upper coefficients of a·b product polynomial
 ) -> OptimizedWitnessResult<F> {
-    let fft_time = start_timer!(|| "Dynark 4-FFT witness computation");
+    let fft_time = start_timer!(|| "5-FFT witness computation (poly-mul approach)");
 
     let domain_size = domain.size();
     assert_eq!(a_evals.len(), domain_size);
     assert_eq!(b_evals.len(), domain_size);
-    assert_eq!(c_evals.len(), domain_size);
 
-    let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
-
-    // Step 1: iFFT(a) → a polynomial coefficients  [1 iFFT]
-    let ifft1 = start_timer!(|| "iFFT(a)");
-    let mut a_poly = a_evals;
-    domain.ifft_in_place(&mut a_poly);
-    end_timer!(ifft1);
-
-    // Step 2: iFFT(b) → b polynomial coefficients  [1 iFFT]
-    let ifft2 = start_timer!(|| "iFFT(b)");
-    let mut b_poly = b_evals;
-    domain.ifft_in_place(&mut b_poly);
-    end_timer!(ifft2);
-
-    // Step 3: coset FFT of both in parallel  [2 coset FFTs, can run in parallel]
-    let coset1 = start_timer!(|| "coset FFT(a) + coset FFT(b)");
+    // Step 1: iFFT(a) and iFFT(b) → coefficient form  [2 iFFTs on n-domain]
+    let ifft_time = start_timer!(|| "iFFT(a) + iFFT(b)");
 
     #[cfg(feature = "parallel")]
-    let (a_coset, b_coset) = rayon::join(
-        || {
-            let mut a = a_poly.clone();
-            a.resize(domain_size, F::zero());
-            coset_domain.fft_in_place(&mut a);
-            a
-        },
-        || {
-            let mut b = b_poly.clone();
-            b.resize(domain_size, F::zero());
-            coset_domain.fft_in_place(&mut b);
-            b
-        },
+    let (mut a_poly, mut b_poly) = rayon::join(
+        || { let mut a = a_evals; domain.ifft_in_place(&mut a); a },
+        || { let mut b = b_evals; domain.ifft_in_place(&mut b); b },
     );
 
     #[cfg(not(feature = "parallel"))]
-    let (a_coset, b_coset) = {
-        let mut a = a_poly.clone();
-        a.resize(domain_size, F::zero());
-        coset_domain.fft_in_place(&mut a);
-
-        let mut b = b_poly.clone();
-        b.resize(domain_size, F::zero());
-        coset_domain.fft_in_place(&mut b);
+    let (mut a_poly, mut b_poly) = {
+        let mut a = a_evals;
+        domain.ifft_in_place(&mut a);
+        let mut b = b_evals;
+        domain.ifft_in_place(&mut b);
         (a, b)
     };
 
-    end_timer!(coset1);
+    end_timer!(ifft_time);
 
-    // Step 4: Compute h(X) = (a·b - c) / z(X) in evaluation domain
-    // The vanishing polynomial on the coset evaluates to a constant:
-    //   z(g·ωⁱ) = z(g) for all i (when using the generator coset)
-    let z_coset_inv = domain
-        .evaluate_vanishing_polynomial(F::GENERATOR)
-        .inverse()
-        .expect("Vanishing polynomial should be non-zero on coset");
+    // Step 2: Polynomial multiplication on 2n coset domain  [2 coset FFTs + 1 icoset FFT]
+    // We need a 2n-sized domain so the degree-2n product doesn't wrap (no aliasing).
+    let double_size = 2 * domain_size;
+    let coset_2n = D::new(double_size)
+        .expect("2n domain must exist")
+        .get_coset(F::GENERATOR)
+        .expect("2n coset domain must exist");
 
-    let h_quotient_time = start_timer!(|| "h = (a*b - c) / z");
+    // Pad coefficient vectors to 2n
+    a_poly.resize(double_size, F::zero());
+    b_poly.resize(double_size, F::zero());
 
-    // iFFT c to poly, then coset FFT
-    let mut c_poly = c_evals;
-    let ifft3 = start_timer!(|| "iFFT(c)");
-    domain.ifft_in_place(&mut c_poly);
-    end_timer!(ifft3);
+    let poly_mul_time = start_timer!(|| "coset_FFT_2n(a) + coset_FFT_2n(b), pointwise mul, icoset_FFT_2n");
 
-    let coset_c = start_timer!(|| "coset FFT(c)");
-    let mut c_coset = c_poly;
-    c_coset.resize(domain_size, F::zero());
-    coset_domain.fft_in_place(&mut c_coset);
-    end_timer!(coset_c);
+    // coset FFT on 2n domain, in parallel  [2 coset FFTs]
+    #[cfg(feature = "parallel")]
+    let (a_coset_2n, b_coset_2n) = rayon::join(
+        || { let mut a = a_poly; coset_2n.fft_in_place(&mut a); a },
+        || { let mut b = b_poly; coset_2n.fft_in_place(&mut b); b },
+    );
 
-    let mut h_coset: Vec<F> = cfg_iter!(a_coset)
-        .zip(&b_coset)
-        .zip(&c_coset)
-        .map(|((a, b), c)| (*a * b - c) * z_coset_inv)
+    #[cfg(not(feature = "parallel"))]
+    let (a_coset_2n, b_coset_2n) = {
+        coset_2n.fft_in_place(&mut a_poly);
+        coset_2n.fft_in_place(&mut b_poly);
+        (a_poly, b_poly)
+    };
+
+    // Pointwise multiply to get (a·b) on 2n coset  [O(n)]
+    let mut ab_coset: Vec<F> = cfg_iter!(a_coset_2n)
+        .zip(&b_coset_2n)
+        .map(|(a, b)| *a * b)
         .collect();
 
-    coset_domain.ifft_in_place(&mut h_coset);
+    // icoset FFT to get (a·b) polynomial coefficients  [1 icoset FFT]
+    coset_2n.ifft_in_place(&mut ab_coset);
+    // ab_coset[j] now holds the j-th coefficient of a(X)·b(X)
 
-    end_timer!(h_quotient_time);
+    end_timer!(poly_mul_time);
+
+    // Step 3: Extract h_poly from upper coefficients  [O(n), no FFT]
+    // Identity: a·b = c + h·z  where z = Xⁿ - 1
+    // => for k = 0..n-2: h[k] = (a·b)[k+n]  (upper half of product polynomial)
+    let extract_time = start_timer!(|| "extract h from upper coefficients");
+    let h_poly: Vec<F> = (0..domain_size - 1)
+        .map(|k| ab_coset[k + domain_size])
+        .collect();
+    end_timer!(extract_time);
+
     end_timer!(fft_time);
 
     OptimizedWitnessResult {
-        a_coset_evals: a_coset,
-        b_coset_evals: b_coset,
-        h_poly: h_coset,
-        fft_count: 4,
+        a_coset_evals: a_coset_2n,
+        b_coset_evals: b_coset_2n,
+        h_poly,
+        fft_count: 5, // 2 iFFT(n) + 2 FFT(2n) + 1 iFFT(2n)
     }
 }
 
@@ -396,10 +390,8 @@ mod tests {
         let a: Vec<Fr> = (0..domain_size).map(|_| Fr::rand(&mut rng)).collect();
         let b: Vec<Fr> = (0..domain_size).map(|_| Fr::rand(&mut rng)).collect();
 
-        // c[i] = a[i] * b[i] (consistent R1CS)
-        let c: Vec<Fr> = a.iter().zip(b.iter()).map(|(ai, bi)| *ai * bi).collect();
-
-        let result = compute_witness_4fft(&domain, a.clone(), b.clone(), c);
+        // c no longer passed — derived internally from polynomial multiplication
+        let result = compute_witness_4fft(&domain, a.clone(), b.clone());
 
         // h_poly should be non-trivial
         println!(
@@ -492,7 +484,7 @@ mod tests {
         let domain = GeneralEvaluationDomain::<Fr>::new(domain_size).unwrap();
 
         let zeros = vec![Fr::zero(); domain_size];
-        let result = compute_witness_4fft(&domain, zeros.clone(), zeros.clone(), zeros);
+        let result = compute_witness_4fft(&domain, zeros.clone(), zeros.clone());
 
         // h_poly should be all-zero for zero witness
         assert!(result.h_poly.iter().all(|x| x.is_zero()));

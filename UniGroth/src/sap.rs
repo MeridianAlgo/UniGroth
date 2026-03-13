@@ -218,15 +218,8 @@ impl R1CSToQAP for R1CSToSAP {
             a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
         }
 
-        // FFT operations
-        let mut c = vec![zero; domain_size];
-        cfg_iter_mut!(c[..num_constraints])
-            .enumerate()
-            .for_each(|(i, c)| {
-                *c = evaluate_constraint(&matrices[2][i], &full_assignment);
-            });
-
-        let result = crate::optimizations::compute_witness_4fft(&domain, a, b, c);
+        // c_evals not needed: compute_witness_4fft derives h from polynomial multiplication
+        let result = crate::optimizations::compute_witness_4fft(&domain, a, b);
         let mut h = result.h_poly;
         h.truncate(domain_size - 1);
         
