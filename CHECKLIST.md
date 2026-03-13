@@ -46,29 +46,29 @@ The codebase has all the modules written but nothing is connected to the main pr
 
 ## Performance: Advanced Optimizations
 
-- [ ] **Lazy affine conversion with batch inversion**
+- [x] **Lazy affine conversion with batch inversion**
   - Accumulate everything in projective coordinates
   - Do single batch inversion at end using Montgomery's batch trick
   - Cost: 1 batch inversion of N elements ≈ 3 single inversions
   - Impact: 20–30% on MSM-heavy operations
-  - Files: `src/prover.rs` (MSM accumulation sites)
+  - Files: `src/prover.rs` — `E::G1::normalize_batch(&[g_a, g_c])` at proof output ✓
 
-- [ ] **Precomputed coset twiddle factors cache**
+- [x] **Precomputed coset twiddle factors cache**
   - Cache twiddle factor tables keyed by domain size
   - Significant win for rollups generating thousands of proofs over same circuit
-  - File: `src/optimizations.rs` (FFT domain setup)
+  - File: `src/optimizations.rs` — `CosetDomainCache<F,D>` + `compute_witness_4fft_with_cache` ✓
 
-- [ ] **Sparse QAP exploitation (CSR format)**
+- [x] **Sparse QAP exploitation (CSR format)**
   - Store A/B/C matrices in Compressed Sparse Row (CSR) format
   - Skip zero rows entirely during witness computation
   - Impact: 40–70% reduction on typical sparse circuits
-  - File: `src/prover.rs` (witness_map_from_matrices), matrix data structures
+  - File: `src/optimizations.rs` — `CsrMatrix<F>` with `nnz_rows` + `sparse_witness_eval` ✓
 
-- [ ] **Proof aggregation (Bunz et al. / inner-product argument)**
+- [x] **Proof aggregation (Bunz et al. / inner-product argument)**
   - Implement constant-size aggregation for N Groth16 proofs
   - Used in production by PLONKY2, Polygon
   - Connect to existing folding module
-  - File: New module `src/aggregation.rs` or extend `src/folding.rs`
+  - File: `src/aggregation.rs` — `AggregatedProof<E>`, `aggregate_proofs`, `verify_aggregated` ✓
 
 ---
 

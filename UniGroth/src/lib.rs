@@ -123,6 +123,10 @@ pub mod plonkish;
 /// Post-quantum inner prover interface (Binius, Plonky3, Hybrid).
 pub mod pq_inner;
 
+/// Proof aggregation: compress N Groth16 proofs into one (SnarkPack-style).
+pub mod aggregation;
+pub use self::aggregation::{AggregatedProof, aggregate_proofs, verify_aggregated};
+
 #[cfg(test)]
 mod test;
 
@@ -132,7 +136,7 @@ pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
 pub use self::universal_setup::UniversalParams;
 pub use self::folding::{FoldingAccumulator, FoldingEngine, FoldingInstance, IVC};
 pub use self::security::{SecurityParams, SecurityReport, SEConfig, SimExtractableProof, SecurityWrapper};
-pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile};
+pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile, CosetDomainCache, CsrMatrix};
 pub use self::plonkish::{
     CustomGateRegistry, LookupTable, PlonkishConstraintSystem, PlonkishStats, PlonkSelectors,
 };

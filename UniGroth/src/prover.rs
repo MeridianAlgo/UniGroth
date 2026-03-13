@@ -1,6 +1,6 @@
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, PrimeField, UniformRand, Zero};
+use ark_ff::{Field, UniformRand, Zero};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::{
     gr1cs::{
@@ -13,8 +13,6 @@ use ark_std::{
     rand::Rng,
 };
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// Create a Groth16 proof using randomness `r` and `s` and
@@ -90,10 +88,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         g_c += &l_aux_acc;
         g_c += &h_acc;
 
+        // Batch-convert both G1 projective points (Montgomery's batch inversion trick)
+        // Reduces 2 independent field inversions to 1 batch inversion (~3N field mults total)
+        let g1_affines = E::G1::normalize_batch(&[g_a, g_c]);
         Ok(Proof {
-            a: g_a.into_affine(),
+            a: g1_affines[0],
             b: g2_b.into_affine(),
-            c: g_c.into_affine(),
+            c: g1_affines[1],
         })
     }
 
