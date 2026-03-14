@@ -8,7 +8,7 @@
     <a href="#license"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
 </p>
 
-**Edited by MeridianAlgo** — Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16)
+**Edited by MeridianAlgo** : Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16)
 
 ## Overview
 
@@ -16,53 +16,53 @@ UniGroth is an newer zkSNARK framework that addresses the fundamental limitation
 
 ### The Evolution Beyond Groth16
 
-Groth16 (2016) revolutionized zkSNARKs with its 192-byte proofs and 3-pairing verification, but it has critical limitations:
-- **Circuit-specific trusted setup** — requires a new multi-party computation ceremony for every circuit
-- **No flexibility** — locked into R1CS, no custom gates or lookups
-- **Prover inefficiency** — slower than modern systems on complex circuits
-- **Limited security** — not simulation-extractable or subversion-resistant by default
+In 2016, a system called Groth16 changed everything. It made proofs super small (192 bytes) and very fast to check. But like an old toy, it has some problems:
+* **One-size setup** : It needs a special secret "ceremony" for every single thing you want to prove. If you change one tiny part of your puzzle, you have to do the whole secret ceremony all over again.
+* **Not flexible** : It's stuck using one way of writing puzzles (R1CS). It can't use newer, faster tricks like custom gates or lookups.
+* **Slow math** : Modern systems can do the math much faster when the puzzles get big.
+* **Basic locks** : It doesn't have the strongest safety locks (like "simulation-extractability") by default.
 
-UniGroth aims to solve these problems while maintaining Groth16's core strengths.
+UniGroth fixes these problems while keeping everything that made Groth16 great.
 
 ## Design Goals
 
-UniGroth is designed as a comprehensive framework combining cutting-edge research from 2024-2026:
+UniGroth is built like a tool that uses the best ideas from recent years (2024-2026):
 
 ### 1. Universal & Updatable Setup
-- **One-time ceremony** using Powers-of-Tau (already completed for BN254/BLS12-381)
-- **Updatable** — anyone can contribute additional randomness for enhanced security
-- **Reusable** — works for any circuit up to 2²⁸ gates without new ceremonies
-- Based on KZG-style polynomial commitments and universal Phase-2 techniques
+* **One-time ceremony** : We use a "Powers-of-Tau" ceremony that is already done.
+* **Anyone can help** : Anyone can add their own secret randomness to make it even safer.
+* **Works for everything** : Once the secret is made, it works for any puzzle up to 2²⁸ pieces. No more new ceremonies!
+* Using KZG-style math to keep everything universal.
 
-### 2. Flexible Arithmetization
-- **Square Arithmetic Programs (SAP)** — inspired by Polymath (CRYPTO 2024) and Pari/Garuda (2024)
-- **Plonkish gates** — custom gates and lookup tables for 2-5× smaller effective circuits
-- **Efficient encoding** — addition gates and lookups become nearly free
-- Result: faster prover than vanilla Groth16 on real-world circuits (zkEVMs, ML inference)
+### 2. Flexible Arithmetization (Writing the Puzzle)
+* **New puzzle shapes** : Inspired by modern research like Polymath and Pari/Garuda.
+* **Custom shortcuts** : We use "Plonkish gates" which are like shortcuts. They make the puzzle 2 to 5 times smaller.
+* **Fast encoding** : Adding things up and looking things up becomes almost free.
+* Result: Much faster than regular Groth16 for big jobs like zkEVMs or AI.
 
 ### 3. Groth16-Level Performance
-- **Proof size**: 192-256 bytes (3-4 group elements)
-- **Verification**: 3-5 pairings (~5ms, same on-chain gas as Groth16)
-- **Compression** — uses Groth16's elegant Linear Interactive Proof structure
-- **Universal polynomial openings** replace circuit-specific encodings
+* **Proof size** : Tiny proofs, only 192 to 256 bytes (about the size of a long text message).
+* **Speedy checking** : Checks in about 5ms, which is very fast and cheap for blockchains.
+* **Smart squishing** : Uses a special structure to keep things compact.
+* Universal openings replace the old way of encoding.
 
-### 4. Folding & Recursion
-- **ProtoStar-style folding** — incremental proof composition
-- **Nova integration** — efficient IVC (Incrementally Verifiable Computation)
-- **Recursive aggregation** — compress multiple proofs into one
-- Enables zkVM and rollup applications with minimal overhead
+### 4. Folding & Recursion (Nesting Proofs)
+* **Stacking proofs** : Like LEGO, you can fold many proofs into one bigger one.
+* **Step-by-step** : Good for things that happen in steps, like a game or a long list of trades.
+* **Total squishing** : Take many proofs and aggregate them into just one.
+* This makes big apps like zkVMs work without slowing down.
 
 ### 5. Enhanced Security
-- **Simulation-Extractability (SE)** — prevents proof malleability attacks
-- **Subversion zero-knowledge** — secure even if setup is backdoored
-- **AGM + ROM security** — proven in the Algebraic Group Model with Random Oracle
-- **Post-quantum path** — optional hybrid mode with lattice-based or Binius inner proofs
+* **Tougher locks** : Prevents "malleability" attacks where someone tries to mess with your proof.
+* **Safety even if the secret is bad** : Even if the original secret ceremony was done by bad people, your proof stays a secret.
+* **Strong proof** : Proven in the Algebraic Group Model.
+* **Ready for the future** : Can work with "post-quantum" math to stay safe even against super-computers.
 
-### 6. Prover Optimizations
-- **Dynark-style FFTs** — 4 FFTs instead of 6 (from Dynark 2025)
-- **GPU/FPGA acceleration** — optimized MSMs and parallel folding
-- **Dynamic witness updates** — up to 1400× faster for incremental changes
-- **Hardware-friendly** — designed for ASIC implementation
+### 6. Prover Optimizations (Faster Math)
+* **Better math loops** : Only 4 major math loops instead of 6.
+* **Using fast hardware** : Works with GPUs and FPGAs to go even faster.
+* **Quick updates** : If only a tiny part of the puzzle changes, we can update the proof 1400 times faster.
+* **Hardware-friendly** : Designed to work well on special computer chips.
 
 ## Technical Architecture
 
@@ -130,12 +130,12 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 
 | Optimization | Status | Measured Speedup |
 |--------------|--------|------------------|
-| Batch affine conversion (Montgomery) | ✅ | **2.46×** on 32 points |
-| Coset domain cache (rollups) | ✅ | **1.07×** per call |
-| Sparse QAP in CSR format | ✅ | **2.8–5.5×** on sparse circuits |
-| Proof aggregation (SnarkPack) | ✅ | **1.09×** faster at N=32 proofs |
-| Dynark 5-FFT (default) | ✅ | 5 FFTs vs 6 standard (−17%) |
-| Parallel MSM (rayon) | ✅ | ~1.2× on multicore |
+| Batch affine conversion (Montgomery) | ✓ | **2.46×** on 32 points |
+| Coset domain cache (rollups) | ✓ | **1.07×** per call |
+| Sparse QAP in CSR format | ✓ | **2.8–5.5×** on sparse circuits |
+| Proof aggregation (SnarkPack) | ✓ | **1.09×** faster at N=32 proofs |
+| Dynark 5-FFT (default) | ✓ | 5 FFTs vs 6 standard (−17%) |
+| Parallel MSM (rayon) | ✓ | ~1.2× on multicore |
 
 ### Security Comparison vs Groth16
 
@@ -148,7 +148,7 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 | **Universal Setup Ready** | ✗ | **✓ KZG SRS** |
 | **Folding/IVC** | ✗ | **✓ ProtoStar** |
 | **Proof Aggregation** | ✗ | **✓ N→1 compression** |
-| Post-Quantum | ✗ | ✗ (planned) |
+| Post-Quantum | ✗ | ✗ (Planned support via lattice-based or Binius hybrid) |
 
 ### Security Features
 
@@ -158,7 +158,7 @@ UniGroth is designed as a comprehensive framework combining cutting-edge researc
 | Zero-Knowledge | [OK] | Standard Groth16 property |
 | Simulation-Extractable | [OK] | BG18 blinding or ROM-based (configurable) |
 | Subversion Zero-Knowledge | [OK] | Proof rerandomization at proving time |
-| Post-Quantum | [NO] | Pairing-based; use hybrid with Binius/Plonky3 |
+| Post-Quantum | ✗ | Pairing-based; use hybrid with Binius/Plonky3 |
 
 ## Security Deep Dive: UniGroth vs Groth16
 
@@ -211,6 +211,8 @@ B' = ρB + ρρ₂δ_g2  (where ρ₂ is sampled fresh)
 C' = C + ρ₂A
 ```
 
+**Security Gain**: ZK holds even if setup was subverted.
+
 **Reference**: [BKSV20] Boyle, Kasher, Serban, Vaikuntanathan (2020)
 
 **Implementation**: `src/prover.rs` — `Groth16::rerandomize_proof()` — fully tested ✓
@@ -225,6 +227,8 @@ C' = C + ρ₂A
 - Aggregate N proofs using random challenge r: A_agg = Σᵢ rⁱAᵢ, etc.
 - Single multi-pairing equation replaces N independent checks
 - Crossover point: N ≥ 32 (from benchmarks)
+
+**Security Gain**: Constant-size aggregation reduces verification cost for batched proofs.
 
 **Security Gain**: Constant-size aggregation reduces verification cost for batched proofs.
 
@@ -247,6 +251,8 @@ C' = C + ρ₂A
 
 **Security Gain**: Circuit-agnostic setup; no per-circuit ceremonies.
 
+**Security Gain**: Circuit-agnostic setup; no per-circuit ceremonies.
+
 **Reference**: [ABPR19] Abdolmaleki et al., "Updatable and Universal Common Reference Strings" (CRYPTO 2019)
 
 **Implementation**: `src/universal_setup.rs` + `src/kzg.rs` — fully tested ✓
@@ -261,6 +267,8 @@ C' = C + ρ₂A
 - ProtoStar-style folding: accumulate multiple proofs into a single folding instance
 - Incremental verification: fold step i-1 with step i without re-verifying all prior steps
 - Enables zkVM and rollup applications with minimal overhead
+
+**Security Gain**: Scalable recursive proof composition without full re-verification.
 
 **Security Gain**: Scalable recursive proof composition without full re-verification.
 

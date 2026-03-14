@@ -1,65 +1,40 @@
 # Contributing
 
-Thank you for considering making contributions to `arkworks-rs/groth16`!
+Thank you for thinking about helping out with `arkworks-rs/groth16`!
 
-Contributing to this repo can be done in several forms, such as participating in discussion or proposing code changes. 
-To ensure a smooth workflow for all contributors, the following general procedure for contributing has been established:
+Helping this project can be done in many ways, like talking in the discussions or suggesting code changes. To keep things easy for everyone, we have a simple plan for helping out:
 
-1) Either open or find an issue you'd like to help with
-2) Participate in thoughtful discussion on that issue
-3) If you would like to contribute:
-    * If the issue is a feature proposal, ensure that the proposal has been accepted
-    * Ensure that nobody else has already begun working on this issue. 
-    If they have, please try to contact them to collaborate
-    * If nobody has been assigned for the issue and you would like to work on it, make a comment on the issue to inform the community of your intentions to begin work. (So we can avoid duplication of efforts)
-    * We suggest using standard Github best practices for contributing: fork the repo, branch from the HEAD of master, make some commits on your branch, and submit a PR from the branch to master.
-    More detail on this is below
-    * Be sure to include a relevant change log entry in the Pending section of CHANGELOG.md (see file for log format)
-        * If the change is breaking, we may add migration instructions.
+1) Find an issue you want to help with.
+2) Talk about it in the discussion for that issue.
+3) If you want to start working:
+    * Make sure the idea has been accepted by others.
+    * Make sure no one else is already working on it. If they are, try to work together!
+    * If no one is assigned, leave a comment saying you want to start. This helps us not do the same work twice.
+    * Use the standard way: fork the project, make a new branch, and send a "Pull Request" (PR) when you're done.
+    * Remember to add a note in the "Pending" part of `CHANGELOG.md`.
 
-Note that for very small or clear problems (such as typos), or well isolated improvements, it is not required to an open issue to submit a PR.
-But be aware that for more complex problems/features touching multiple parts of the codebase, if a PR is opened before an adequate design discussion has taken place in a github issue, that PR runs a larger likelihood of being rejected.
-
-Looking for a good place to start contributing? How about checking out some good first issues
+For tiny things like fixing a typo, you don't need to ask first. Just send the fix! But for big changes, it's always best to talk about it first so your hard work doesn't get rejected.
 
 ## Branch Structure
 
-`groth16` has its default branch as `master`, which is where PRs are merged into. Releases will be periodically made, on no set schedule.
-All other branches should be assumed to be miscellaneous feature development branches.
-
-All downstream users of the library should be using tagged versions of the library pulled from cargo.
+The main part of the project is in the `master` branch. This is where all the finished fixes go. Other branches are for testing new ideas.
 
 ## How to work on a fork
-Please skip this section if you're familiar with contributing to opensource github projects.
 
-First fork the repo from the github UI, and clone it locally.
-Then in the repo, you want to add the repo you forked from as a new remote. You do this as:
+If you are new to this:
+1) "Fork" the project on GitHub to make your own copy.
+2) Download it to your computer.
+3) Add the main project as a "remote" so you can get updates:
 ```bash
 git remote add upstream git@github.com:arkworks-rs/groth16.git
 ```
-
-Then the way you make code contributions is to first think of a branch name that describes your change.
-Then do the following:
-```bash
-git checkout master
-git pull upstream master
-git checkout -b $BRANCH_NAME
-```
-and then work as normal on that branch, and pull request to upstream master when you're done =)
+4) When you want to fix something, make a new branch with a clear name.
+5) Do your work, save it, and send it back to us!
 
 ## Updating documentation
 
-All PRs should aim to leave the code more documented than it started with.
-Please don't assume that its easy to infer what the code is doing, 
-as that is usually not the case for these complex protocols. 
-(Even when you understand the paper!)
-
-Its often very useful to describe what is the high level view of what a code block is doing,
-and either refer to the relevant section of a paper or include a short proof/argument for why it makes sense before the actual logic.
+We love clear explanations! Don't assume the code is easy to understand. It's very helpful to describe what a block of code does in plain English. If you can, mention what part of the research paper you are following.
 
 ## Performance improvements
 
-All performance improvements should be accompanied with benchmarks improving, or otherwise have it be clear that things have improved.
-For some areas of the codebase, performance roughly follows the number of field multiplications, but there are also many areas where
-hard to predict low level system effects such as cache locality and superscalar operations become important for performance. 
-Thus performance can often become very non-intuitive / diverge from minimizing the number of arithmetic operations.
+If you make the code faster, please show us with a test! Sometimes things that seem like they should be faster actually aren't because of how computers work deep down. Always test your speed improvements!
