@@ -139,6 +139,11 @@ pub use self::security::{SecurityParams, SecurityReport, SEConfig, SimExtractabl
 pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile, CosetDomainCache, CsrMatrix};
 pub use self::plonkish::{
     CustomGateRegistry, LookupTable, PlonkishConstraintSystem, PlonkishStats, PlonkSelectors,
+    plonkish_to_r1cs_constraints, PlonkR1CSConstraint, ConstraintType,
+};
+pub use self::pq_inner::{
+    PqScheme, PqConfig, PqProof, PqInnerProver, BiniusProver, Plonky3Prover, HybridProver,
+    prove_pq, verify_pq, aggregate_pq_proofs,
 };
 
 use ark_ec::pairing::Pairing;

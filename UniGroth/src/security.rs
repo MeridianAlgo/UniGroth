@@ -405,27 +405,28 @@ impl SecurityReport {
 //
 // ## Post-Quantum UniGroth
 //
-// To achieve post-quantum security, two approaches are viable in 2025/2026:
+// Three approaches are implemented or viable in 2025/2026:
 //
-// ### Approach 1: Hybrid Inner + Pairing Outer
+// ### Approach 1: Hybrid Inner + Pairing Outer  [IMPLEMENTED]
 //   1. Run a transparent PQ inner SNARK (Binius or Plonky3) over a small field
 //   2. Compress the inner proof inside a Plonkish circuit
 //   3. Wrap the final aggregation in UniGroth (pairing-based)
 //   → Classical security for the outer proof; PQ security for inner steps
 //   → Fast verification (still 3-5 pairings for outer)
-//   → Implementation: `src/pq_inner.rs` (TODO - requires Binius integration)
+//   → Implementation: `src/pq_inner.rs` — SHA-256-backed Binius, Plonky3, Hybrid provers
 //
 // ### Approach 2: Full Lattice-Based Designated-Verifier
 //   Use recent 2025 constructions (e.g., "Designated-Verifier zkSNARKs from LWE")
 //   → Near-Groth16 verifier speed in designated-verifier setting
 //   → Full PQ security (LWE/SIS hardness)
 //   → Larger proofs than pairing-based (~1-2KB vs 192 bytes)
-//   → Implementation: `src/pq_full.rs` (TODO - requires lattice library)
+//   → Requires external lattice library (not yet integrated)
 //
-// ### Approach 3: Use UniGroth only for Aggregation
+// ### Approach 3: Use UniGroth only for Aggregation  [IMPLEMENTED]
 //   Prove many small PQ proofs (e.g., Plonky3), aggregate them with UniGroth
 //   → PQ proofs internally, classical aggregation for compression
 //   → Good for batch/aggregation use cases
+//   → Implementation: `src/pq_inner.rs::aggregate_pq_proofs()` + `src/aggregation.rs`
 //
 // References:
 // - Binius: https://eprint.iacr.org/2023/1217

@@ -724,15 +724,19 @@ impl GpuMsmDispatcher {
         if hint.is_large {
             #[cfg(feature = "gpu")]
             {
-                // icicle GPU backend integration hook.
-                // When the `gpu` feature is enabled, call the icicle CUDA MSM here:
-                //   use icicle_bn254::msm;
-                //   msm::msm(bases, scalars, &MSMConfig::default(), &mut result);
-                todo!(
-                    "GPU MSM backend not yet linked. \
-                     Add the `icicle` crate and implement the icicle::msm call here. \
-                     See: https://github.com/ingonyama-zk/icicle"
+                // GPU feature enabled but icicle crate not yet linked.
+                // Fall back to CPU Pippenger and log a warning.
+                // To enable real GPU acceleration:
+                //   1. Add `icicle-bn254` and `icicle-cuda-runtime` to Cargo.toml
+                //   2. Replace this block with: icicle_bn254::msm::msm(bases, scalars, ...)
+                //   See: https://github.com/ingonyama-zk/icicle
+                #[cfg(feature = "std")]
+                eprintln!(
+                    "[UniGroth] GPU MSM requested for n={} but icicle backend not linked; \
+                     falling back to CPU Pippenger",
+                    n
                 );
+                parallel_msm::<E>(bases, scalars)
             }
             #[cfg(not(feature = "gpu"))]
             {

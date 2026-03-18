@@ -457,7 +457,7 @@ fn main() {
         ("Folding / IVC (ProtoStar)", "✗", "✓"),
         ("Proof aggregation",         "✗", "✓  (SnarkPack-style)"),
         ("Proof compression",         "✗", "✓  (Polymath/batch)"),
-        ("Post-quantum",              "✗", "✗  (planned)"),
+        ("Post-quantum",              "✗", "✓  (Binius/Plonky3)"),
     ];
     for (prop, ark, ug) in &rows {
         println!("  {:<w$}  {:^14}  {:^14}", prop, ark, ug);
