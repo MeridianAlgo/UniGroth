@@ -46,10 +46,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// calculator and group generators
     pub fn generate_parameters_with_qap<C>(
         circuit: C,
-        alpha: E::ScalarField,
-        beta: E::ScalarField,
-        gamma: E::ScalarField,
-        delta: E::ScalarField,
+        mut alpha: E::ScalarField,
+        mut beta: E::ScalarField,
+        mut gamma: E::ScalarField,
+        mut delta: E::ScalarField,
         g1_generator: E::G1,
         g2_generator: E::G2,
         rng: &mut impl Rng,
@@ -107,8 +107,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             .map(|i| usize::from(!b[i].is_zero()))
             .sum();
 
-        let gamma_inverse = gamma.inverse().unwrap();
-        let delta_inverse = delta.inverse().unwrap();
+        let mut gamma_inverse = gamma.inverse().unwrap();
+        let mut delta_inverse = delta.inverse().unwrap();
 
         let gamma_abc = cfg_iter!(a[..num_instance_variables])
             .zip(&b[..num_instance_variables])
@@ -123,6 +123,11 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             .collect::<Vec<_>>();
 
         drop(c);
+
+        // gamma_inverse is no longer needed after gamma_abc is collected.
+        // Zero it immediately. (delta_inverse is still needed for h_query_scalars.)
+        gamma_inverse = E::ScalarField::zero();
+        let _ = core::hint::black_box(&gamma_inverse);
 
         // Compute B window table
         let g2_time = start_timer!(|| "Compute G2 table");
@@ -150,6 +155,15 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let delta_g1 = g1_generator * &delta;
         let delta_g2 = g2_generator * &delta;
 
+        // alpha, beta, delta no longer needed as scalars after this point.
+        // Zero them to prevent toxic waste lingering in stack memory.
+        alpha = E::ScalarField::zero();
+        beta = E::ScalarField::zero();
+        delta = E::ScalarField::zero();
+        let _ = core::hint::black_box(&alpha);
+        let _ = core::hint::black_box(&beta);
+        let _ = core::hint::black_box(&delta);
+
         // Compute the A-query
         let a_time = start_timer!(|| "Calculate A");
         let a_query = g1_table.batch_mul(&a);
@@ -169,6 +183,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let h_query = g1_table.batch_mul(&h_scalars);
         end_timer!(h_time);
 
+        // delta_inverse last used above; zero it now.
+        delta_inverse = E::ScalarField::zero();
+        let _ = core::hint::black_box(&delta_inverse);
+
         // Compute the L-query
         let l_time = start_timer!(|| "Calculate L");
         let l_query = g1_table.batch_mul(&l);
@@ -182,6 +200,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let gamma_g2 = g2_generator * &gamma;
         let gamma_abc_g1 = g1_table.batch_mul(&gamma_abc);
         drop(g1_table);
+
+        // gamma last used above; zero it now.
+        gamma = E::ScalarField::zero();
+        let _ = core::hint::black_box(&gamma);
 
         end_timer!(verifying_key_time);
 

@@ -571,6 +571,202 @@ mod tests {
         assert!(crate::Groth16::<Bn254>::verify_proof(&pvk, &szk_se, &public_inputs).unwrap());
     }
 
+    // ─── SE Rejection Tests ───────────────────────────────────────────────────
+    //
+    // These tests verify that the SE verifier correctly *rejects* tampered proofs,
+    // wrong public inputs, and corrupted SE elements.  A verifier that accepts
+    // everything is not a verifier.
+
+    #[test]
+    fn test_se_rejects_tampered_proof_a() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(3u64);
+        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        // Tamper: replace proof.a with the generator (random point)
+        let mut tampered = proof.clone();
+        use ark_ec::PrimeGroup;
+        tampered.groth16_proof.a =
+            (ark_bn254::G1Projective::generator() * Fr::from(77u64)).into_affine();
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let public_inputs = vec![x * x];
+
+        let valid = crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs).unwrap();
+        let invalid = crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap();
+
+        assert!(valid, "original proof must verify");
+        assert!(!invalid, "proof with tampered A must be rejected");
+    }
+
+    #[test]
+    fn test_se_rejects_tampered_proof_c() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(4u64);
+        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        let mut tampered = proof.clone();
+        use ark_ec::PrimeGroup;
+        tampered.groth16_proof.c =
+            (ark_bn254::G1Projective::generator() * Fr::from(99u64)).into_affine();
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let public_inputs = vec![x * x];
+
+        assert!(
+            crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs).unwrap(),
+            "original proof must verify"
+        );
+        assert!(
+            !crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap(),
+            "proof with tampered C must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_se_rejects_wrong_public_inputs() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(6u64);
+        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let correct_inputs = vec![x * x];
+        let wrong_inputs = vec![Fr::from(9999u64)]; // not x²
+
+        assert!(
+            crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &correct_inputs).unwrap(),
+            "correct public input must verify"
+        );
+        assert!(
+            !crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &wrong_inputs).unwrap(),
+            "wrong public input must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_se_forged_bg18_element_on_rom_proof_rejected() {
+        // A valid ROM SE proof (se_element = None) uses the 3-pairing check.
+        // If an attacker forges an se_element and attaches it, the verifier
+        // switches to the 4-pairing check which includes e(delta_g1, -D).
+        // With a random D this check cannot pass, so the forged proof must be rejected.
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(8u64);
+        let raw_proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        // Wrap with ROM blinding (se_element = None)
+        let se_config = SEConfig::rom_se();
+        let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
+        assert!(se_proof.se_element.is_none(), "ROM proof must NOT have BG18 element");
+
+        // Attacker forges a BG18-style se_element on top of a valid ROM proof
+        let mut forged = se_proof.clone();
+        use ark_ec::PrimeGroup;
+        forged.se_element = Some(
+            (ark_bn254::G2Projective::generator() * Fr::from(123u64)).into_affine(),
+        );
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let public_inputs = vec![x * x];
+
+        assert!(
+            verify_sim_extractable(&pvk, &public_inputs, &se_proof),
+            "original ROM SE proof must verify"
+        );
+        assert!(
+            !verify_sim_extractable(&pvk, &public_inputs, &forged),
+            "ROM proof with forged BG18 se_element must be rejected by 4-pairing check"
+        );
+    }
+
+    #[test]
+    fn test_se_rom_rejects_tampered_proof_elements() {
+        // Verify that ROM-blinded SE proofs also reject tampering.
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(13u64);
+        let raw_proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        let se_config = SEConfig::rom_se();
+        let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
+        assert!(se_proof.se_element.is_none(), "ROM SE proof must NOT have BG18 element");
+
+        let mut tampered = se_proof.clone();
+        use ark_ec::PrimeGroup;
+        tampered.groth16_proof.a =
+            (ark_bn254::G1Projective::generator() * Fr::from(55u64)).into_affine();
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let public_inputs = vec![x * x];
+
+        assert!(
+            verify_sim_extractable(&pvk, &public_inputs, &se_proof),
+            "original ROM SE proof must verify"
+        );
+        assert!(
+            !verify_sim_extractable(&pvk, &public_inputs, &tampered),
+            "ROM SE proof with tampered A must be rejected"
+        );
+    }
+
     #[test]
     fn test_proof_size() {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());

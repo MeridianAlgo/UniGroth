@@ -8,7 +8,9 @@ async function main() {
     const poseidon = await buildPoseidon();
     
     // your secret phrase as a big integer
-    const secretPhrase = BigInt("12345678901234567890");
+    const sentence = "UniGroth is a highly secure zero knowledge framework";
+    const hex = Buffer.from(sentence).toString('hex');
+    const secretPhrase = BigInt('0x' + hex);
     
     // compute poseidon hash
     const hash = poseidon([secretPhrase]);

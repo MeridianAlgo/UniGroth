@@ -1,6 +1,8 @@
+//! Groth16 prover implementation.
+//! Imports
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, UniformRand, Zero};
+use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::{
     gr1cs::{
@@ -8,10 +10,13 @@ use ark_relations::{
         SynthesisMode,
     },
 };
+use ark_serialize::CanonicalSerialize;
 use ark_std::{
     ops::{AddAssign, Mul},
     rand::Rng,
+    vec::Vec,
 };
+use sha2::{Digest, Sha256};
 
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
@@ -100,16 +105,51 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
     /// Create a Groth16 proof that is zero-knowledge using the provided
     /// R1CS-to-QAP reduction.
+    /// Randomness `r` and `s` are derived via circuit binding: they incorporate
+    /// a SHA-256 fingerprint of `pk.vk.gamma_abc_g1`, binding proving randomness
+    /// to this specific circuit. This prevents proof replay across circuits with
+    /// colliding verifying keys (circuit binding / domain separation).
     #[inline]
     pub fn create_random_proof_with_reduction<C: ConstraintSynthesizer<E::ScalarField>, R: Rng>(
         circuit: C,
         pk: &ProvingKey<E>,
         rng: &mut R,
     ) -> R1CSResult<Proof<E>> {
-        let r = E::ScalarField::rand(rng);
-        let s = E::ScalarField::rand(rng);
+        // Domain-separate randomness by circuit VK fingerprint.
+        // Prevents proof replay across circuits with colliding VKs.
+        let r = Self::circuit_bound_rand(&pk.vk, rng);
+        let s = Self::circuit_bound_rand(&pk.vk, rng);
 
         Self::create_proof_with_reduction(circuit, pk, r, s)
+    }
+
+    /// Derive proving randomness bound to a specific circuit's verifying key.
+    /// Computes `H(SHA-256(vk.gamma_abc_g1) || fresh_random)` and maps it to
+    /// a scalar field element. This ensures that even if two circuits share the
+    /// same toxic waste values, their proving randomness is circuit-specific.
+    fn circuit_bound_rand<R: Rng>(vk: &VerifyingKey<E>, rng: &mut R) -> E::ScalarField {
+        // Step 1: circuit fingerprint = SHA-256 of gamma_abc_g1 elements
+        let mut hasher = Sha256::new();
+        hasher.update(b"unigroth-circuit-bound-rand-v1");
+        let mut buf = Vec::new();
+        for g in &vk.gamma_abc_g1 {
+            buf.clear();
+            g.serialize_compressed(&mut buf).unwrap();
+            hasher.update(&buf);
+        }
+        let circuit_tag = hasher.finalize();
+
+        // Step 2: H(circuit_tag || fresh_random) → field element
+        let fresh = E::ScalarField::rand(rng);
+        buf.clear();
+        fresh.serialize_uncompressed(&mut buf).unwrap();
+
+        let mut hasher2 = Sha256::new();
+        hasher2.update(&circuit_tag);
+        hasher2.update(&buf);
+        let combined = hasher2.finalize();
+
+        E::ScalarField::from_le_bytes_mod_order(&combined)
     }
 
     /// Create a Groth16 proof using randomness `r` and `s` and

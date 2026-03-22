@@ -127,6 +127,10 @@ pub mod pq_inner;
 pub mod aggregation;
 pub use self::aggregation::{AggregatedProof, aggregate_proofs, verify_aggregated};
 
+/// Schnorr proof-of-knowledge binding the prover to their public input choices.
+pub mod public_input_pok;
+pub use self::public_input_pok::{PublicInputPoK, prove_public_input_pok, verify_public_input_pok};
+
 #[cfg(test)]
 mod test;
 
