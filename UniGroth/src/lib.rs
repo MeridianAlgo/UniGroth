@@ -131,6 +131,36 @@ pub use self::aggregation::{AggregatedProof, aggregate_proofs, verify_aggregated
 pub mod public_input_pok;
 pub use self::public_input_pok::{PublicInputPoK, prove_public_input_pok, verify_public_input_pok};
 
+/// Memory-efficient streaming prover for large circuits (>2^20 constraints).
+pub mod streaming;
+pub use self::streaming::{StreamingConfig, StreamingMSMResult, streaming_msm, estimate_peak_memory};
+
+/// Batch prover: parallel multi-circuit proving.
+pub mod batch;
+pub use self::batch::{BatchConfig, BatchResult, BatchProofResult, batch_prove, batch_verify};
+
+/// Solidity verifier contract generation for on-chain verification.
+#[cfg(any(feature = "solidity", test))]
+pub mod solidity;
+
+/// Ergonomic circuit builder SDK.
+pub mod circuit_builder;
+pub use self::circuit_builder::{CircuitBuilder, BuiltCircuit, Wire, CircuitStats};
+
+/// Circuit library: Poseidon, Merkle trees, range checks.
+pub mod circuits;
+pub use self::circuits::{
+    PoseidonParams, PoseidonHashCircuit, MerkleProofCircuit, RangeCheckCircuit,
+    poseidon_hash,
+};
+
+/// Recursive proof composition framework.
+pub mod recursion;
+pub use self::recursion::{
+    RecursiveProof, RecursionConfig, CurvePair,
+    create_recursive_proof, verify_recursive_chain,
+};
+
 #[cfg(test)]
 mod test;
 

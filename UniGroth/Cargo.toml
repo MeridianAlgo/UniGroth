@@ -84,6 +84,8 @@ print-trace = ["ark-std/print-trace"]
 universal = []  # Enable universal setup
 sap = []        # Enable SAP arithmetization
 gpu = []        # Enable GPU MSM dispatch via icicle (requires icicle crate)
+wasm = ["std"]  # WASM compilation target for browser-based proving
+solidity = ["std", "ark-bn254"]  # Solidity verifier contract generation
 # Feature enabling the compare binary's extra dependencies
 compare = ["std", "ark-bn254", "ark-groth16"]
 

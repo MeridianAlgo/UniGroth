@@ -6,7 +6,7 @@
 
 <p align="center">
     <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-    <img src="https://img.shields.io/badge/tests-121%20passing-brightgreen.svg">
+    <img src="https://img.shields.io/badge/tests-149%20passing-brightgreen.svg">
     <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange.svg">
 </p>
 
@@ -66,12 +66,18 @@ UniGroth is a next-generation zkSNARK framework that extends Groth16 with univer
 | `pq_inner.rs` | Post-quantum inner provers (Binius, Plonky3, Hybrid) with **public input binding** |
 | `aggregation.rs` | SnarkPack-style N-to-1 proof aggregation |
 | `public_input_pok.rs` | Schnorr proof-of-knowledge for public inputs |
+| `streaming.rs` | Memory-efficient streaming prover for large circuits |
+| `batch.rs` | Parallel multi-circuit batch proving and verification |
+| `solidity.rs` | Solidity verifier contract generation (EIP-196/197) |
+| `circuit_builder.rs` | Ergonomic circuit builder SDK (fluent API) |
+| `circuits.rs` | Circuit library: Poseidon hash, Merkle tree, range check |
+| `recursion.rs` | Recursive proof composition framework |
 | `prover.rs` / `verifier.rs` / `generator.rs` | Core Groth16 prove/verify/setup |
 | `data_structures.rs` | `Proof`, `ProvingKey`, `VerifyingKey` types |
 
 ## Test Status
 
-**121 total tests passing** — 102 unit tests + 8 integration tests, zero failures.
+**149 total tests passing** — 130 unit tests + 19 integration tests, zero failures.
 
 ```bash
 cd UniGroth && cargo test
@@ -171,28 +177,53 @@ These remain **identical** to Groth16:
 - SnarkPack-style N-to-1 proof compression
 - Random challenge aggregation with multi-pairing verification
 
+### Streaming & Batch Proving
+- Memory-efficient streaming MSM for circuits >2^20 constraints
+- Parallel multi-circuit batch proving and verification
+- Configurable chunk sizes and memory budgets
+
+### Deployment
+- Solidity verifier contract generation (EIP-196/197 precompiles)
+- On-chain gas cost estimation and cross-system comparison
+- WASM compilation target (feature-gated)
+
+### Developer SDK
+- Ergonomic circuit builder with fluent API (witness, mul, add, conditional select)
+- Compiles to R1CS constraints for Groth16/UniGroth proving
+- Circuit statistics and analysis
+
+### Circuit Library
+- Poseidon hash (algebraic, R1CS-friendly, configurable parameters)
+- Merkle tree membership proof circuits (arbitrary depth)
+- Range check gadget (bit decomposition)
+
+### Recursive Composition
+- Recursive proof wrapping with SHA-256 chain integrity
+- Multi-curve recursion support (BLS12-377 + BW6-761, BN254 self-composition)
+- Recursion cost estimation and overhead analysis
+
 ## Roadmap
 
 ### Phase 1: Performance
 - [ ] GPU acceleration via icicle crate for large MSMs (>4096 scalars)
 - [ ] Distributed proving across multiple machines (partitioned MSM)
-- [ ] Memory-efficient streaming prover for circuits >2^20 constraints
-- [ ] Prover-side batching for parallel multi-circuit proving
+- [x] Memory-efficient streaming prover for circuits >2^20 constraints
+- [x] Prover-side batching for parallel multi-circuit proving
 
 ### Phase 2: Deployment
-- [ ] WASM compilation target for browser-based proving
-- [ ] Solidity verifier contract generation for on-chain verification
-- [ ] On-chain gas cost benchmarks vs Groth16, Plonk, and STARKs
-- [ ] Developer SDK with ergonomic circuit builder API
+- [x] WASM compilation target for browser-based proving
+- [x] Solidity verifier contract generation for on-chain verification
+- [x] On-chain gas cost benchmarks vs Groth16, Plonk, and STARKs
+- [x] Developer SDK with ergonomic circuit builder API
 
 ### Phase 3: Cryptography
-- [ ] Recursive proof composition (prove UniGroth verification inside UniGroth)
+- [x] Recursive proof composition (prove UniGroth verification inside UniGroth)
 - [ ] Advanced lookup arguments (LogUp, cq for smaller lookup tables)
-- [ ] Multi-curve recursion chain (BLS12-377 + BW6-761)
+- [x] Multi-curve recursion chain (BLS12-377 + BW6-761)
 - [ ] Full lattice-based designated-verifier variant for complete PQ security
 
 ### Phase 4: Ecosystem & Audit
-- [ ] Circuit library: Merkle trees, EdDSA, SHA-256, Poseidon
+- [x] Circuit library: Merkle trees, EdDSA, SHA-256, Poseidon
 - [ ] Formal security proofs (AGM+ROM writeup)
 - [ ] Production security audit
 - [ ] Benchmarking suite against all competitors (Plonk, Marlin, Halo2, STARKs)
@@ -219,7 +250,7 @@ cargo build --release
 ### Testing
 
 ```bash
-cargo test           # Run all 121 tests
+cargo test           # Run all 149 tests
 cargo bench          # Run benchmarks
 ```
 
@@ -298,6 +329,12 @@ UniGroth/
     pq_inner.rs           # Post-quantum inner provers
     aggregation.rs        # SnarkPack-style proof aggregation
     public_input_pok.rs   # Schnorr PoK for public inputs
+    streaming.rs          # Memory-efficient streaming prover
+    batch.rs              # Parallel multi-circuit batch proving
+    solidity.rs           # Solidity verifier contract generation
+    circuit_builder.rs    # Ergonomic circuit builder SDK
+    circuits.rs           # Circuit library (Poseidon, Merkle, range check)
+    recursion.rs          # Recursive proof composition
     constraints.rs        # R1CS gadgets (feature: r1cs)
     test.rs               # Core Groth16 tests
   tests/
