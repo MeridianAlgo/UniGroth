@@ -55,7 +55,7 @@ UniGroth is the only system that combines Groth16-class proof size with universa
 └─────────────────────────────────────────────────────────┘
                             │
 ┌─────────────────────────────────────────────────────────┐
-│         Post-Quantum Inner Prover (Optional)           │
+│         Post-Quantum Inner Prover (Optional)            │
 │          Binius / Plonky3 / Hybrid PQ Wrapper           │
 └─────────────────────────────────────────────────────────┘
                             │

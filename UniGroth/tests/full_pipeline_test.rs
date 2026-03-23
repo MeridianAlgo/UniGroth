@@ -267,14 +267,19 @@ fn test_pq_inner_full_pipeline() {
     println!("=== Post-Quantum Inner Prover Pipeline Test ===\n");
 
     let witness = b"secret_witness_for_pq_pipeline_test";
+    let public_inputs = b"public_inputs";
 
     // Test all three schemes
     for scheme in [PqScheme::Binius, PqScheme::Plonky3, PqScheme::Hybrid] {
         let config = PqConfig::new(scheme.clone());
 
-        let proof = prove_pq(&config, witness);
-        let valid = verify_pq(&config, &proof, b"public_inputs");
+        let proof = prove_pq(&config, witness, public_inputs);
+        let valid = verify_pq(&config, &proof, public_inputs);
         assert!(valid, "{:?} prove/verify must succeed", config.scheme);
+
+        // Verify that wrong public inputs are rejected
+        assert!(!verify_pq(&config, &proof, b"wrong_inputs"),
+            "{:?} must reject wrong public inputs", config.scheme);
 
         println!("[{:?}] proof: {} bytes, verified: {}", config.scheme, proof.byte_len(), valid);
     }
@@ -282,16 +287,16 @@ fn test_pq_inner_full_pipeline() {
     // Aggregation
     let config = PqConfig::new(PqScheme::Binius);
     let proofs: Vec<_> = (0..8)
-        .map(|i| BiniusProver::prove(&config, &[i as u8; 64]))
+        .map(|i| BiniusProver::prove(&config, &[i as u8; 64], b"agg_inputs"))
         .collect();
     let agg = aggregate_pq_proofs(&proofs, &config);
     println!("\n[Aggregation] {} Binius proofs → {} byte aggregate", proofs.len(), agg.len());
 
     // Size comparison
     println!("\n[Size Comparison at 128-bit security]");
-    println!("  Binius:      {} bytes", BiniusProver::prove(&PqConfig::new(PqScheme::Binius), witness).byte_len());
-    println!("  Plonky3:     {} bytes", Plonky3Prover::prove(&PqConfig::new(PqScheme::Plonky3), witness).byte_len());
-    println!("  Hybrid:      {} bytes", HybridProver::prove(&PqConfig::new(PqScheme::Hybrid), witness).byte_len());
+    println!("  Binius:      {} bytes", BiniusProver::prove(&PqConfig::new(PqScheme::Binius), witness, public_inputs).byte_len());
+    println!("  Plonky3:     {} bytes", Plonky3Prover::prove(&PqConfig::new(PqScheme::Plonky3), witness, public_inputs).byte_len());
+    println!("  Hybrid:      {} bytes", HybridProver::prove(&PqConfig::new(PqScheme::Hybrid), witness, public_inputs).byte_len());
     println!("  Groth16 SE:  ~160 bytes (pairing-based, not PQ)");
 
     println!("\n=== Post-Quantum Pipeline: ALL PASS ===");

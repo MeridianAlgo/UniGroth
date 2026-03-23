@@ -196,7 +196,8 @@ impl<E: Pairing> FoldingEngine<E> {
         // Step 1: Compute cross-term T₁
         // T₁ encodes the "cross error" when combining acc and new_instance
         // For R1CS: T₁ = A(acc_w) · B(new_w) + A(new_w) · B(acc_w) - C(acc_w) - C(new_w)
-        // (simplified here; full implementation requires constraint evaluation)
+        // Scalar approximation for commitment; for full per-constraint cross-terms
+        // see compute_cross_term_vector()
         let cross_term_scalar = compute_cross_term_scalar::<E>(&acc, new_instance);
         let t1 = (self.srs.powers_of_g[0].into_group() * cross_term_scalar).into_affine();
 
@@ -520,6 +521,210 @@ impl<E: Pairing> IVC<E> {
     }
 }
 
+// ─── Full Decision Predicate (Relaxed R1CS) ─────────────────────────────────
+
+/// Sparse R1CS constraint matrices for decision predicate verification.
+///
+/// Represents the constraint system A·z ⊙ B·z = C·z (standard R1CS) or its
+/// relaxed form A·z ⊙ B·z = μ·C·z + e (after folding).
+///
+/// Each matrix row is stored as a list of (coefficient, variable_index) pairs.
+/// Variable ordering follows arkworks convention:
+///   index 0 = constant "1" wire
+///   indices 1..=num_public = public inputs
+///   remaining = private witness
+///
+/// References: Nova §4.1 "Relaxed R1CS", ProtoStar §3.4 "Decision Predicate"
+#[derive(Clone, Debug)]
+pub struct R1CSMatrices<F: PrimeField> {
+    /// A matrix: a[i] is constraint i's row as (coefficient, variable_index) pairs
+    pub a: Vec<Vec<(F, usize)>>,
+    /// B matrix
+    pub b: Vec<Vec<(F, usize)>>,
+    /// C matrix
+    pub c: Vec<Vec<(F, usize)>>,
+    /// Number of constraints (rows)
+    pub num_constraints: usize,
+    /// Total number of variables (1 + public + private)
+    pub num_variables: usize,
+}
+
+/// Prover-side state for decision predicate verification.
+///
+/// The `FoldingAccumulator` stores commitments for the verifier. This struct
+/// stores the raw values that the prover keeps locally for cross-term
+/// computation and full algebraic decision checks.
+///
+/// After each fold, the prover updates this state in lockstep with the
+/// accumulator so that `verify_decision_predicate` can perform the
+/// complete relaxed R1CS check.
+#[derive(Clone, Debug)]
+pub struct ProverState<F: PrimeField> {
+    /// Folded witness values (private)
+    pub folded_witness: Vec<F>,
+    /// Error vector: one entry per constraint.
+    /// Starts at all-zero for the first instance; accumulates cross-terms.
+    pub error_vector: Vec<F>,
+}
+
+impl<F: PrimeField> ProverState<F> {
+    /// Initialize prover state for the first instance.
+    ///
+    /// Error vector starts at zero because a fresh satisfying instance
+    /// has zero error: A(z)·B(z) = 1·C(z) + 0.
+    pub fn init(witness: Vec<F>, num_constraints: usize) -> Self {
+        Self {
+            folded_witness: witness,
+            error_vector: vec![F::zero(); num_constraints],
+        }
+    }
+}
+
+/// Evaluate a sparse matrix row against assignment vector z.
+///
+/// Returns the inner product Σ_j coefficient_j · z[index_j].
+fn eval_sparse_row<F: PrimeField>(row: &[(F, usize)], z: &[F]) -> F {
+    let mut sum = F::zero();
+    for &(ref coeff, idx) in row {
+        if idx < z.len() {
+            sum += *coeff * z[idx];
+        }
+    }
+    sum
+}
+
+/// Build full assignment vector z = (1, x₀, ..., xₖ, w₀, ..., wₘ).
+///
+/// The constant "1" wire is always at index 0, followed by public inputs,
+/// then private witness values.
+fn build_full_assignment<F: PrimeField>(public_inputs: &[F], witness: &[F]) -> Vec<F> {
+    let mut z = Vec::with_capacity(1 + public_inputs.len() + witness.len());
+    z.push(F::one());
+    z.extend_from_slice(public_inputs);
+    z.extend_from_slice(witness);
+    z
+}
+
+/// Compute the cross-term vector T for R1CS folding.
+///
+/// For each constraint i:
+///   T_i = A_i(z_acc)·B_i(z_new) + A_i(z_new)·B_i(z_acc)
+///         − μ_new·C_i(z_acc) − μ_acc·C_i(z_new)
+///
+/// This captures the bilinear cross-interaction between the accumulated and
+/// incoming instances. The identity A(z')·B(z') = μ'·C(z') + e' holds with
+/// e' = e_acc + r·T, ensuring the relaxed R1CS equation is preserved across
+/// all folded instances.
+///
+/// References: Nova §4.2 "Computing Cross-Terms", ProtoStar §3.3
+pub fn compute_cross_term_vector<F: PrimeField>(
+    matrices: &R1CSMatrices<F>,
+    acc_x: &[F],
+    acc_witness: &[F],
+    acc_mu: F,
+    new_instance: &FoldingInstance<F>,
+) -> Vec<F> {
+    let z_acc = build_full_assignment(acc_x, acc_witness);
+    let z_new = build_full_assignment(&new_instance.public_inputs, &new_instance.witness);
+
+    (0..matrices.num_constraints)
+        .map(|i| {
+            let a_acc = eval_sparse_row(&matrices.a[i], &z_acc);
+            let b_new = eval_sparse_row(&matrices.b[i], &z_new);
+            let a_new = eval_sparse_row(&matrices.a[i], &z_new);
+            let b_acc = eval_sparse_row(&matrices.b[i], &z_acc);
+            let c_acc = eval_sparse_row(&matrices.c[i], &z_acc);
+            let c_new = eval_sparse_row(&matrices.c[i], &z_new);
+
+            a_acc * b_new + a_new * b_acc - new_instance.slack * c_acc - acc_mu * c_new
+        })
+        .collect()
+}
+
+/// Fold prover state with a new instance using challenge r.
+///
+/// Updates the raw witness and error vectors for the prover:
+///   folded_witness' = folded_witness + r · new_witness
+///   error_vector'   = error_vector   + r · cross_terms
+///
+/// Must be called with the same challenge `r` that the `FoldingEngine`
+/// derived via Fiat-Shamir for this fold step.
+pub fn fold_prover_state<F: PrimeField>(
+    state: &ProverState<F>,
+    new_instance: &FoldingInstance<F>,
+    cross_terms: &[F],
+    r: &F,
+) -> ProverState<F> {
+    ProverState {
+        folded_witness: fold_scalars(&state.folded_witness, &new_instance.witness, r),
+        error_vector: fold_scalars(&state.error_vector, cross_terms, r),
+    }
+}
+
+/// Verify the full ProtoStar decision predicate (relaxed R1CS).
+///
+/// Performs both structural checks and the complete algebraic verification:
+///   ∀i: A_i(z) · B_i(z) == μ · C_i(z) + e_i
+///
+/// where z = (1 ‖ x ‖ w) is the full assignment.
+///
+/// Also verifies that the witness commitment stored in the accumulator
+/// matches the prover's raw folded witness via KZG re-commitment.
+///
+/// This is the **complete** decision predicate as specified in:
+/// - ProtoStar §3.4 "Decision Predicate for Relaxed R1CS"
+/// - Nova §4.1 "Relaxed R1CS and its Folding"
+///
+/// It replaces the structural-only `verify_accumulator` with a full
+/// algebraic soundness check.
+pub fn verify_decision_predicate<E: Pairing>(
+    srs: &UniversalSRS<E>,
+    acc: &FoldingAccumulator<E>,
+    prover_state: &ProverState<E::ScalarField>,
+    matrices: &R1CSMatrices<E::ScalarField>,
+) -> Result<bool, FoldingError> {
+    // Step 1: Structural checks (same as verify_accumulator)
+    if !verify_accumulator(srs, acc) {
+        return Ok(false);
+    }
+
+    // Step 2: Build full assignment z = (1, x, w)
+    let z = build_full_assignment(&acc.acc_x, &prover_state.folded_witness);
+
+    // Step 3: Verify relaxed R1CS: A(z)·B(z) = μ·C(z) + e
+    for i in 0..matrices.num_constraints {
+        let az = eval_sparse_row(&matrices.a[i], &z);
+        let bz = eval_sparse_row(&matrices.b[i], &z);
+        let cz = eval_sparse_row(&matrices.c[i], &z);
+
+        let ei = if i < prover_state.error_vector.len() {
+            prover_state.error_vector[i]
+        } else {
+            E::ScalarField::zero()
+        };
+
+        let lhs = az * bz;
+        let rhs = acc.acc_mu * cz + ei;
+
+        if lhs != rhs {
+            return Ok(false);
+        }
+    }
+
+    // Step 4: Verify witness commitment matches folded witness
+    if !prover_state.folded_witness.is_empty() {
+        let witness_poly = witness_to_poly::<E>(&prover_state.folded_witness);
+        let expected_commit = KZG::commit(srs, &witness_poly);
+        if let Some(ref stored_commit) = acc.acc_w {
+            if stored_commit.value != expected_commit.value {
+                return Ok(false);
+            }
+        }
+    }
+
+    Ok(true)
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -577,7 +782,7 @@ mod tests {
 
         let mut ivc = IVC::new(srs);
 
-        // Simulate 10 computation steps
+        // Execute 10 IVC computation steps
         for i in 0..10u64 {
             ivc.step(
                 vec![Fr::from(i)],
@@ -696,5 +901,228 @@ mod tests {
         let evals = domain.fft(&poly.coeffs);
         assert_eq!(evals[0], witness[0]);
         assert_eq!(evals[1], witness[1]);
+    }
+
+    // ── Decision Predicate Tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_decision_predicate_single_instance() {
+        // Circuit: x * x = y
+        // Variables: [0: const 1, 1: y (public), 2: x (witness)]
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        // Instance: x=3, y=9 (satisfying: 3*3=9)
+        let inst = FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]);
+
+        let mut engine = FoldingEngine::new(srs.clone());
+        engine.fold(inst.clone(), &mut rng).unwrap();
+
+        let acc = engine.accumulator.as_ref().unwrap().clone();
+        let prover_state = ProverState::init(inst.witness.clone(), matrices.num_constraints);
+
+        let result = verify_decision_predicate::<Bn254>(&srs, &acc, &prover_state, &matrices);
+        assert!(result.unwrap(), "Decision predicate must pass for a single satisfying instance");
+    }
+
+    #[test]
+    fn test_decision_predicate_two_instances() {
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        let inst1 = FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]);
+        let inst2 = FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]);
+
+        let mut engine = FoldingEngine::new(srs.clone());
+        engine.fold(inst1.clone(), &mut rng).unwrap();
+
+        let acc1 = engine.accumulator.as_ref().unwrap().clone();
+        let mut prover_state = ProverState::init(inst1.witness.clone(), matrices.num_constraints);
+
+        // Fold second instance
+        engine.fold(inst2.clone(), &mut rng).unwrap();
+        let acc2 = engine.accumulator.as_ref().unwrap().clone();
+
+        // Extract challenge r from transcript (same r the engine used)
+        let r = acc2.randomness_transcript[0];
+
+        // Compute per-constraint cross-terms and fold prover state
+        let cross_terms = compute_cross_term_vector(
+            &matrices, &acc1.acc_x, &prover_state.folded_witness, acc1.acc_mu, &inst2,
+        );
+        prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
+
+        let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
+        assert!(result.unwrap(), "Decision predicate must pass after folding two satisfying instances");
+    }
+
+    #[test]
+    fn test_decision_predicate_three_instances() {
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        let instances = vec![
+            FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]),    // 3*3=9
+            FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]),   // 5*5=25
+            FoldingInstance::new(vec![Fr::from(49u64)], vec![Fr::from(7u64)]),   // 7*7=49
+        ];
+
+        let mut engine = FoldingEngine::new(srs.clone());
+
+        // Fold first instance
+        engine.fold(instances[0].clone(), &mut rng).unwrap();
+        let mut prover_state = ProverState::init(instances[0].witness.clone(), matrices.num_constraints);
+
+        // Fold remaining instances, tracking prover state in lockstep
+        for k in 1..instances.len() {
+            let acc_before = engine.accumulator.as_ref().unwrap().clone();
+            engine.fold(instances[k].clone(), &mut rng).unwrap();
+            let acc_after = engine.accumulator.as_ref().unwrap().clone();
+
+            let r = acc_after.randomness_transcript[k - 1];
+            let cross_terms = compute_cross_term_vector(
+                &matrices,
+                &acc_before.acc_x,
+                &prover_state.folded_witness,
+                acc_before.acc_mu,
+                &instances[k],
+            );
+            prover_state = fold_prover_state(&prover_state, &instances[k], &cross_terms, &r);
+        }
+
+        let acc = engine.accumulator.as_ref().unwrap().clone();
+        let result = verify_decision_predicate::<Bn254>(&srs, &acc, &prover_state, &matrices);
+        assert!(result.unwrap(), "Decision predicate must pass after folding three instances");
+    }
+
+    #[test]
+    fn test_decision_predicate_rejects_wrong_witness() {
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        let inst = FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]);
+        let mut engine = FoldingEngine::new(srs.clone());
+        engine.fold(inst.clone(), &mut rng).unwrap();
+
+        let acc = engine.accumulator.as_ref().unwrap().clone();
+
+        // Wrong witness: x=4 instead of x=3 (4*4=16, not 9)
+        let bad_state = ProverState::init(vec![Fr::from(4u64)], matrices.num_constraints);
+        let result = verify_decision_predicate::<Bn254>(&srs, &acc, &bad_state, &matrices);
+        assert!(!result.unwrap(), "Decision predicate must reject incorrect witness");
+    }
+
+    #[test]
+    fn test_decision_predicate_multi_constraint() {
+        // Circuit: x*x = y  AND  x*y = z
+        // Variables: [0: const 1, 1: y (public), 2: z (public), 3: x (witness)]
+        let matrices = R1CSMatrices {
+            a: vec![
+                vec![(Fr::one(), 3)],  // constraint 0: A selects x
+                vec![(Fr::one(), 3)],  // constraint 1: A selects x
+            ],
+            b: vec![
+                vec![(Fr::one(), 3)],  // constraint 0: B selects x
+                vec![(Fr::one(), 1)],  // constraint 1: B selects y
+            ],
+            c: vec![
+                vec![(Fr::one(), 1)],  // constraint 0: C selects y → x*x=y
+                vec![(Fr::one(), 2)],  // constraint 1: C selects z → x*y=z
+            ],
+            num_constraints: 2,
+            num_variables: 4,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        // x=3, y=9, z=27 (3*3=9, 3*9=27)
+        let inst1 = FoldingInstance::new(
+            vec![Fr::from(9u64), Fr::from(27u64)],
+            vec![Fr::from(3u64)],
+        );
+        // x=2, y=4, z=8 (2*2=4, 2*4=8)
+        let inst2 = FoldingInstance::new(
+            vec![Fr::from(4u64), Fr::from(8u64)],
+            vec![Fr::from(2u64)],
+        );
+
+        let mut engine = FoldingEngine::new(srs.clone());
+        engine.fold(inst1.clone(), &mut rng).unwrap();
+        let acc1 = engine.accumulator.as_ref().unwrap().clone();
+        let mut prover_state = ProverState::init(inst1.witness.clone(), matrices.num_constraints);
+
+        engine.fold(inst2.clone(), &mut rng).unwrap();
+        let acc2 = engine.accumulator.as_ref().unwrap().clone();
+        let r = acc2.randomness_transcript[0];
+
+        let cross_terms = compute_cross_term_vector(
+            &matrices,
+            &acc1.acc_x,
+            &prover_state.folded_witness,
+            acc1.acc_mu,
+            &inst2,
+        );
+        prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
+
+        let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
+        assert!(result.unwrap(), "Decision predicate must pass for multi-constraint circuit");
+    }
+
+    #[test]
+    fn test_cross_term_vector_correctness() {
+        // Verify cross-term computation algebraically for x*x=y
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        // Instance 1: x=3, y=9
+        let acc_x = vec![Fr::from(9u64)];
+        let acc_w = vec![Fr::from(3u64)];
+        let acc_mu = Fr::one();
+        let inst2 = FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]);
+
+        let cross = compute_cross_term_vector(&matrices, &acc_x, &acc_w, acc_mu, &inst2);
+
+        // T = A(z1)*B(z2) + A(z2)*B(z1) - mu2*C(z1) - mu1*C(z2)
+        //   = 3*5 + 5*3 - 1*9 - 1*25 = 30 - 34 = -4
+        let expected = Fr::from(30u64) - Fr::from(34u64);
+        assert_eq!(cross[0], expected, "Cross-term must be -4 for x*x=y with x1=3,x2=5");
     }
 }

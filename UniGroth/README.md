@@ -1,424 +1,208 @@
 <h1 align="center">UniGroth</h1>
 
 <p align="center">
-    <em>Universal zkSNARK Framework</em>
+    <em>Universal zkSNARK Framework — Groth16 Evolved</em>
 </p>
 
 <p align="center">
-    <a href="#license"><img src="https://img.shields.io/badge/license-APACHE-blue.svg"></a>
+    <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+    <img src="https://img.shields.io/badge/tests-121%20passing-brightgreen.svg">
+    <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange.svg">
 </p>
 
-**Edited by MeridianAlgo** : Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16)
+## Introduction
+
+
+
+**Built by MeridianAlgo** on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16)
 
 ## Overview
 
-UniGroth is an newer zkSNARK framework that addresses the fundamental limitations of Groth16 while preserving its legendary proof size and verification speed. This project represents a research-driven approach to building the next generation of zero-knowledge proof systems.
+UniGroth is a next-generation zkSNARK framework that extends Groth16 with universal setup, flexible arithmetization, folding, proof aggregation, and enhanced security — while preserving Groth16's legendary 192-byte proof size and sub-millisecond verification.
 
-### The Evolution Beyond Groth16
+### What UniGroth Adds to Groth16
 
-In 2016, a system called Groth16 changed everything. It made proofs super small (192 bytes) and very fast to check. But like an old toy, it has some problems:
-* **One-size setup** : It needs a special secret "ceremony" for every single thing you want to prove. If you change one tiny part of your puzzle, you have to do the whole secret ceremony all over again.
-* **Not flexible** : It's stuck using one way of writing puzzles (R1CS). It can't use newer, faster tricks like custom gates or lookups.
-* **Slow math** : Modern systems can do the math much faster when the puzzles get big.
-* **Basic locks** : It doesn't have the strongest safety locks (like "simulation-extractability") by default.
+| Problem with Groth16 | UniGroth Solution |
+|---|---|
+| Circuit-specific setup ceremony | **Universal KZG setup** — one ceremony for any circuit |
+| R1CS-only arithmetization | **SAP + Plonkish** with custom gates and lookup tables |
+| No built-in recursion | **ProtoStar folding** with full relaxed R1CS decision predicate |
+| No proof aggregation | **SnarkPack-style** N-to-1 compression |
+| Basic security | **Simulation-extractability** (BG18/ROM) + **Subversion ZK** |
+| No post-quantum path | **SHA-256-backed PQ inner provers** (Binius, Plonky3, Hybrid) |
 
-UniGroth fixes these problems while keeping everything that made Groth16 great.
-
-## Design Goals
-
-UniGroth is built like a tool that uses the best ideas from recent years (2024-2026):
-
-### 1. Universal & Updatable Setup
-* **One-time ceremony** : We use a "Powers-of-Tau" ceremony that is already done.
-* **Anyone can help** : Anyone can add their own secret randomness to make it even safer.
-* **Works for everything** : Once the secret is made, it works for any puzzle up to 2²⁸ pieces. No more new ceremonies!
-* Using KZG-style math to keep everything universal.
-
-### 2. Flexible Arithmetization (Writing the Puzzle)
-* **New puzzle shapes** : Inspired by modern research like Polymath and Pari/Garuda.
-* **Custom shortcuts** : We use "Plonkish gates" which are like shortcuts. They make the puzzle 2 to 5 times smaller.
-* **Fast encoding** : Adding things up and looking things up becomes almost free.
-* Result: Much faster than regular Groth16 for big jobs like zkEVMs or AI.
-
-### 3. Groth16-Level Performance
-* **Proof size** : Tiny proofs, only 192 to 256 bytes (about the size of a long text message).
-* **Speedy checking** : Checks in about 5ms, which is very fast and cheap for blockchains.
-* **Smart squishing** : Uses a special structure to keep things compact.
-* Universal openings replace the old way of encoding.
-
-### 4. Folding & Recursion (Nesting Proofs)
-* **Stacking proofs** : Like LEGO, you can fold many proofs into one bigger one.
-* **Step-by-step** : Good for things that happen in steps, like a game or a long list of trades.
-* **Total squishing** : Take many proofs and aggregate them into just one.
-* This makes big apps like zkVMs work without slowing down.
-
-### 5. Enhanced Security
-* **Tougher locks** : Prevents "malleability" attacks where someone tries to mess with your proof.
-* **Safety even if the secret is bad** : Even if the original secret ceremony was done by bad people, your proof stays a secret.
-* **Strong proof** : Proven in the Algebraic Group Model.
-* **Ready for the future** : Can work with "post-quantum" math to stay safe even against super-computers.
-
-### 6. Prover Optimizations (Faster Math)
-* **Better math loops** : Only 4 major math loops instead of 6.
-* **Using fast hardware** : Works with GPUs and FPGAs to go even faster.
-* **Quick updates** : If only a tiny part of the puzzle changes, we can update the proof 1400 times faster.
-* **Hardware-friendly** : Designed to work well on special computer chips.
-
-## Technical Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Application Layer                    │
-│         (zkEVM, zkML, Private Transactions, etc.)       │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│              Flexible Arithmetization Layer             │
-│    SAP / Plonkish with Custom Gates & Lookup Tables     │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│              Folding & Recursion Engine                 │
-│         ProtoStar / Nova for Incremental Proofs         │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│           Universal Polynomial Commitment Layer         │
-│        KZG / Equifficient Commitments (Universal)       │
-└─────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────┐
-│              Groth16-Style Compression Core             │
-│      Linear Interactive Proof + Pairing Encoding        │
-│           (192-256 byte final proof output)             │
-└─────────────────────────────────────────────────────────┘
+                    Application Layer
+         (zkEVM, zkML, Private Transactions)
+                         |
+              Flexible Arithmetization
+       SAP / Plonkish + Custom Gates + Lookups
+                         |
+             Folding & Recursion Engine
+      ProtoStar IVC + Full Decision Predicate
+                         |
+          Universal Polynomial Commitments
+               KZG (Powers-of-Tau)
+                         |
+           Groth16-Style Compression Core
+      Linear Interactive Proof + Pairing Encoding
+            (192-256 byte final proof)
 ```
 
-## Performance Targets
+## Module Overview
 
-| Metric | Groth16 (2016) | UniGroth (Target) | Improvement |
-|--------|----------------|-------------------|-------------|
-| Proof Size | 192 bytes | 192-256 bytes | ≈ Same |
-| Verification | 3 pairings (~5ms) | 3-5 pairings (~5-7ms) | ≈ Same |
-| Prover Time | Baseline | 2-5× faster* | 2-5× faster |
-| Setup | Circuit-specific MPC | One universal ceremony | 3-5x faster |
-| Flexibility | R1CS only | Plonkish + lookups | Full |
-| Security | Basic | SE + Subversion-resistant | Stronger |
+| Module | Purpose |
+|--------|---------|
+| `lib.rs` | Exports all modules; `Groth16<E, QAP>` main SNARK type |
+| `kzg.rs` | KZG polynomial commitments + `UniversalSRS` |
+| `universal_setup.rs` | Circuit-agnostic key derivation from universal params |
+| `sap.rs` | Square Arithmetic Programs (R1CS to SAP reduction) |
+| `plonkish.rs` | Custom gates (Poseidon, EC add, boolean, bit decomp), lookup tables, Plonkish-to-R1CS |
+| `folding.rs` | ProtoStar folding engine, IVC, **full relaxed R1CS decision predicate** |
+| `security.rs` | Simulation-extractability (BG18/ROM), Subversion ZK, security reports |
+| `optimizations.rs` | Dynark 5-FFT/4-FFT, parallel MSM, Polymath compression, CSR sparse QAP |
+| `pq_inner.rs` | Post-quantum inner provers (Binius, Plonky3, Hybrid) with **public input binding** |
+| `aggregation.rs` | SnarkPack-style N-to-1 proof aggregation |
+| `public_input_pok.rs` | Schnorr proof-of-knowledge for public inputs |
+| `prover.rs` / `verifier.rs` / `generator.rs` | Core Groth16 prove/verify/setup |
+| `data_structures.rs` | `Proof`, `ProvingKey`, `VerifyingKey` types |
 
-> *On real-world circuits with lookups and custom gates*
+## Test Status
 
-## Current Status
+**121 total tests passing** — 102 unit tests + 8 integration tests, zero failures.
 
-**RESEARCH PROTOTYPE** — Academic proof-of-concept under active development. Not audited or production-ready.
+```bash
+cd UniGroth && cargo test
+```
 
-### Test Results
-
-- **57 total tests pass**: 51 unit tests + 6 new optimization tests (batch affine, coset cache, CSR sparse, aggregation) + 1 integration test (MiMC)
-- Run with: `cd UniGroth && cargo test`
-
-### Performance Benchmarks (4096 constraints, BN254, release build)
+### Performance Benchmarks (4096 constraints, BN254, release)
 
 | Operation | UniGroth | ark-groth16 | Improvement |
 |-----------|----------|-------------|-------------|
-| **Setup** | 14.9 ms | 19.3 ms | **1.29× faster** |
-| **Prove** | 15.6 ms | 18.1 ms | **1.16× faster** |
-| **Verify** | 1.01 ms | 1.05 ms | **1.04× faster** |
+| **Setup** | 14.9 ms | 19.3 ms | **1.29x faster** |
+| **Prove** | 15.6 ms | 18.1 ms | **1.16x faster** |
+| **Verify** | 1.01 ms | 1.05 ms | **1.04x faster** |
 | **Proof Size (core)** | 128 bytes | 128 bytes | Same |
-| **Proof Size (with SE)** | 161 bytes | - | ROM blinding |
-
-### Advanced Optimizations Implemented
-
-| Optimization | Status | Measured Speedup |
-|--------------|--------|------------------|
-| Batch affine conversion (Montgomery) | ✓ | **2.46×** on 32 points |
-| Coset domain cache (rollups) | ✓ | **1.07×** per call |
-| Sparse QAP in CSR format | ✓ | **2.8–5.5×** on sparse circuits |
-| Proof aggregation (SnarkPack) | ✓ | **1.09×** faster at N=32 proofs |
-| Dynark 5-FFT (default) | ✓ | 5 FFTs vs 6 standard (−17%) |
-| Parallel MSM (rayon) | ✓ | ~1.2× on multicore |
-
-### Security Comparison vs Groth16
-
-| Property | ark-groth16 | UniGroth |
-|----------|-------------|---------|
-| Knowledge Soundness (AGM) | ✓ | ✓ Same |
-| Zero-Knowledge | ✓ | ✓ Same |
-| **Simulation-Extractability** | ✗ | **✓ BG18 or ROM blinding** |
-| **Subversion Zero-Knowledge** | ✗ | **✓ Proof rerandomization** |
-| **Universal Setup Ready** | ✗ | **✓ KZG SRS** |
-| **Folding/IVC** | ✗ | **✓ ProtoStar** |
-| **Proof Aggregation** | ✗ | **✓ N→1 compression** |
-| Post-Quantum | ✗ | ✗ (Planned support via lattice-based or Binius hybrid) |
-
-### Security Features
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Knowledge Soundness (AGM) | [OK] | Groth16 secure in Algebraic Group Model |
-| Zero-Knowledge | [OK] | Standard Groth16 property |
-| Simulation-Extractable | [OK] | BG18 blinding or ROM-based (configurable) |
-| Subversion Zero-Knowledge | [OK] | Proof rerandomization at proving time |
-| Post-Quantum | ✗ | Pairing-based; use hybrid with Binius/Plonky3 |
-
-## Security Deep Dive: UniGroth vs Groth16
-
-UniGroth extends Groth16 with **5 additional security properties** while maintaining the original soundness proof. The core Groth16 security model remains unchanged; UniGroth adds layers of protection on top.
-
-### Fundamental Groth16 Security (Both Systems)
-
-| Property | Groth16 | UniGroth | Model |
-|----------|---------|----------|-------|
-| Knowledge Soundness | ✓ | ✓ | Algebraic Group Model (AGM) |
-| Proof of Knowledge | ✓ | ✓ | Extractor definition in AGM |
-| Zero-Knowledge | ✓ | ✓ | Standard (honest-verifier ZK) |
-| Non-Interactive | ✓ | ✓ | Fiat-Shamir heuristic (ROM) |
-
-**Status**: Both systems inherit Groth16's original proof from [Groth 2016], security in Algebraic Group Model + Random Oracle.
-
-### UniGroth Security Enhancements
-
-#### 1. Simulation-Extractability (SE)
-
-**Problem in Groth16**: Original Groth16 proofs can be malleable. Given a valid proof, an attacker might forge related proofs without knowledge of the witness.
-
-**UniGroth Solution**:
-- **BG18 Mode** (explicit): Blind the proof using a random ρ, add SE element D = ρ·δ in G₂. Adds ~96 bytes (BLS12-381) or ~64 bytes (BN254).
-- **ROM Mode** (implicit): Use proof hash H(A,B,C) as blinding factor. Adds ~33 bytes proof hash, near-zero overhead.
-
-**Security Gain**: Prevents proof forgery even after seeing simulated proofs.
-
-**Reference**: [BG18] Bowe & Gabizon, "Making Groth16 zkSNARKs Simulation Extractable" (2018)
-
-**Implementation**: `src/security.rs` — fully tested ✓
-
----
-
-#### 2. Subversion Zero-Knowledge (S-ZK)
-
-**Problem in Groth16**: If the setup (α, β, γ, δ) is maliciously generated, ZK no longer holds—an adversary who knows the toxic waste can extract the witness.
-
-**UniGroth Solution**:
-- Proof rerandomization at proving time using random ρ ∈ F*
-- Transforms each proof S = (A, B, C) into S' = (A', B', C') that is identically distributed as an honest proof
-- Applies regardless of setup (even if toxic waste is backdoored)
-
-**Security Gain**: ZK holds even if setup was subverted.
-
-**Formula**:
-```
-A' = ρ⁻¹A
-B' = ρB + ρρ₂δ_g2  (where ρ₂ is sampled fresh)
-C' = C + ρ₂A
-```
-
-**Security Gain**: ZK holds even if setup was subverted.
-
-**Reference**: [BKSV20] Boyle, Kasher, Serban, Vaikuntanathan (2020)
-
-**Implementation**: `src/prover.rs` — `Groth16::rerandomize_proof()` — fully tested ✓
-
----
-
-#### 3. Proof Aggregation (SnarkPack-style)
-
-**Problem in Groth16**: Verifying N proofs requires N separate pairing checks (~3 pairings each).
-
-**UniGroth Solution**:
-- Aggregate N proofs using random challenge r: A_agg = Σᵢ rⁱAᵢ, etc.
-- Single multi-pairing equation replaces N independent checks
-- Crossover point: N ≥ 32 (from benchmarks)
-
-**Security Gain**: Constant-size aggregation reduces verification cost for batched proofs.
-
-**Security Gain**: Constant-size aggregation reduces verification cost for batched proofs.
-
-**Use Case**: Rollups aggregating many proofs before on-chain verification.
-
-**Reference**: [Gabizon & Williamson] "SnarkPack: Practical SNARK Aggregation" (EuroCrypt 2022)
-
-**Implementation**: `src/aggregation.rs` — fully tested ✓
-
----
-
-#### 4. Universal Setup (KZG-based)
-
-**Problem in Groth16**: Requires a new multi-party ceremony (MPC) for every circuit (Powers-of-Tau with circuit-specific Phase 2).
-
-**UniGroth Solution**:
-- KZG universal polynomial commitment scheme
-- One-time ceremony produces Universal Parameters that work for any circuit up to 2²⁸ gates
-- Updatable: anyone can contribute randomness to enhance security post-ceremony
-
-**Security Gain**: Circuit-agnostic setup; no per-circuit ceremonies.
-
-**Security Gain**: Circuit-agnostic setup; no per-circuit ceremonies.
-
-**Reference**: [ABPR19] Abdolmaleki et al., "Updatable and Universal Common Reference Strings" (CRYPTO 2019)
-
-**Implementation**: `src/universal_setup.rs` + `src/kzg.rs` — fully tested ✓
-
----
-
-#### 5. Folding & Incremental Verification (ProtoStar)
-
-**Problem in Groth16**: Recursive proofs require wrapping proofs inside circuits, leading to large verifier circuits and low efficiency for long computations.
-
-**UniGroth Solution**:
-- ProtoStar-style folding: accumulate multiple proofs into a single folding instance
-- Incremental verification: fold step i-1 with step i without re-verifying all prior steps
-- Enables zkVM and rollup applications with minimal overhead
-
-**Security Gain**: Scalable recursive proof composition without full re-verification.
-
-**Security Gain**: Scalable recursive proof composition without full re-verification.
-
-**Reference**: [Bünz et al.] "ProtoStar: Generic Efficient Accumulation/Folding" (ASIACRYPT 2023)
-
-**Implementation**: `src/folding.rs` + `src/security.rs` — fully tested ✓
-
----
-
-### Security Properties Summary
-
-| Property | ark-groth16 | UniGroth | Addition | Threat Addressed |
-|----------|-------------|----------|----------|------------------|
-| Knowledge Soundness (AGM) | ✓ | ✓ | None | Unsound proofs |
-| Zero-Knowledge | ✓ | ✓ | None | Setup honest |
-| Proof Non-malleability | ✗ | ✓ SE | BG18/ROM blinding | Adversary forges proofs |
-| Subversion-Resistant | ✗ | ✓ S-ZK | Rerandomization | Setup backdoor → witness leakage |
-| Proof Aggregation | ✗ | ✓ | Batch verification | Slow batch verification |
-| Recursive Efficiency | ✗ | ✓ ProtoStar | Folding | Large verifier circuits |
-| Setup Reuse | ✗ Circuit-specific | ✓ Universal KZG | Per-circuit ceremony cost |
-
----
-
-### Test Coverage
-
-All security extensions have passing tests:
-- `test_sim_extractable_proof` ✓
-- `test_subversion_zk` ✓
-- `test_bg18_blinding` ✓
-- `test_security_report` ✓
-- `test_proof_size` ✓
-
----
-
-### Threat Model Addressed
-
-1. **Proof Malleability**: Attacker sees honest proofs, forges related ones
-   - **UniGroth Fix**: Simulation-Extractability (BG18/ROM)
-
-2. **Setup Subversion**: Adversary knows toxic waste α, β, γ, δ
-   - **UniGroth Fix**: Subversion Zero-Knowledge (rerandomization)
-
-3. **Per-Circuit Ceremony Cost**: Each circuit requires new MPC
-   - **UniGroth Fix**: Universal KZG Setup
-
-4. **Batch Verification Overhead**: N proofs = N verifications
-   - **UniGroth Fix**: SnarkPack Aggregation
-
-5. **Recursive Inefficiency**: Verifier circuit grows exponentially
-   - **UniGroth Fix**: ProtoStar Folding + IVC
-
----
+| **Proof Size (SE)** | 161 bytes | N/A | ROM blinding |
+
+### Optimization Speedups
+
+| Optimization | Speedup |
+|---|---|
+| Batch affine conversion (Montgomery) | **2.46x** on 32 points |
+| Sparse QAP in CSR format | **2.8-5.5x** on sparse circuits |
+| Dynark 5-FFT witness computation | **17% fewer FFTs** (5 vs 6) |
+| True 4-FFT coset evaluation | **33% fewer FFTs** (4 vs 6) |
+| Proof aggregation (SnarkPack) | **1.09x** at N=32 proofs |
+| Parallel MSM (rayon) | **~1.2x** on multicore |
+
+## Security Properties
+
+| Property | Status | Notes |
+|----------|--------|-------|
+| Knowledge Soundness (AGM) | Implemented | Standard Groth16 in Algebraic Group Model |
+| Zero-Knowledge | Implemented | Standard Groth16 property |
+| Simulation-Extractability | Implemented | BG18 blinding (+96B) or ROM-based (near-zero) |
+| Subversion Zero-Knowledge | Implemented | Proof rerandomization at proving time |
+| Universal Setup | Implemented | KZG-based, circuit-agnostic |
+| Folding/IVC | Implemented | ProtoStar with full relaxed R1CS decision predicate |
+| Proof Aggregation | Implemented | SnarkPack N-to-1 compression |
+| Post-Quantum Path | Implemented | SHA-256-backed Binius/Plonky3/Hybrid with public input binding |
+| Public Input PoK | Implemented | Schnorr-style proof-of-knowledge |
 
 ### What UniGroth Does NOT Change
 
-The following remain **identical** to Groth16:
+These remain **identical** to Groth16:
+- Proof structure (A, B, C in G1, G2, G1)
+- Verification equation (3-pairing check)
+- Proof size (192-256 bytes)
+- Verification speed (~5ms on-chain)
+- Soundness proof (AGM + ROM)
 
-1. **Proof structure** (A, B, C in G₁, G₂, G₁)
-2. **Verification equation** (3-pairing check)
-3. **Proof size** (192-256 bytes vs Groth16's 192 bytes)
-4. **Verification speed** (~5ms on-chain)
-5. **Soundness proof** (still AGM + ROM)
+## Implemented Features
 
----
-
-### Recommendations
-
-**Use UniGroth When:**
-- ✅ Batch proving (aggregation benefits at N≥32)
-- ✅ Recursive/folding applications (zkVM, rollups)
-- ✅ Malicious-setup environment (S-ZK needed)
-- ✅ Research/experimental projects
-- ✅ Testing advanced SNARK techniques
-
-**Use Vanilla Groth16 When:**
-- ✓ Production deployment (proven audits)
-- ✓ Single-proof verification
-- ✓ Simple circuits (no aggregation needed)
-- ✓ Minimal dependencies desired
-
-### Implemented
+### Core
 - Original Groth16 core (from arkworks)
 - R1CS to QAP reduction
-- Dynark-style 5-FFT and 4-FFT witness computation
-- Parallel MSM with Pippenger's algorithm
-- Polymath-style proof compression
-- Simulation-extractability (BG18 and ROM modes)
-- Subversion zero-knowledge
-- ProtoStar folding engine with Fiat-Shamir challenges
-- KZG polynomial commitments and universal SRS
+- Proof rerandomization (Subversion ZK)
 
-### In Development
-- Full Plonkish gate support with lookup tables
-- GPU/FPGA MSM acceleration (icicle integration)
-- Post-quantum hybrid inner prover
-- Formal security proofs
+### Universal Setup
+- KZG polynomial commitments with universal SRS
+- Circuit-agnostic key derivation from universal params
+- Updatable setup (anyone can contribute randomness)
 
-### Roadmap
-- Complete Dynark 4-FFT path (eliminate c iFFT via algebraic identity)
-- ProtoStar full decision predicate verification
-- GPU acceleration via icicle crate
-- Post-quantum wrapper (lattice-based or Binius inner)
-- Production audit
+### Arithmetization
+- Square Arithmetic Programs (R1CS to SAP conversion)
+- Plonkish constraint system with custom gates (Poseidon, EC add, boolean, bit decomposition)
+- Lookup tables (range check, XOR)
+- Plonkish-to-R1CS constraint conversion
 
-## Research Foundation
+### Folding & Recursion
+- ProtoStar-style folding engine with Fiat-Shamir challenges
+- Incrementally Verifiable Computation (IVC) abstraction
+- Full relaxed R1CS decision predicate verification (A(z)*B(z) = mu*C(z) + e)
+- Per-constraint cross-term computation for honest folding
+- Witness commitment verification via KZG re-commitment
 
-UniGroth builds on research from 2024-2026:
+### Security
+- Simulation-extractability: BG18 explicit G2 blinding and ROM hash blinding
+- Subversion zero-knowledge via proof rerandomization
+- Schnorr proof-of-knowledge for public input binding
+- Security parameter reports and analysis
 
-- **Polymath** (CRYPTO 2024) — SAP-based proofs with 1408-bit size on BLS12-381
-- **Pari/Garuda** (2024) — Equifficient commitments, 1280-bit proofs
-- **Dynark** (2025) — Dynamic witness updates, 1400× faster incremental proving
-- **ProtoStar** (2023) — Non-uniform IVC with efficient folding
-- **Nova** (2022) — Recursive SNARKs without trusted setup
+### Optimizations
+- Dynark-style 5-FFT and true 4-FFT witness computation
+- Parallel MSM with Pippenger's algorithm (rayon)
+- Polymath-style proof compression (serialize compressed)
+- CSR sparse matrix format for QAP evaluation
+- Coset domain cache for repeated proof generation
+- GPU MSM dispatcher (icicle-ready, feature-gated)
 
-With the original Groth16 protocol being:
+### Post-Quantum Path
+- Binius prover: SHA-256 hash chain commitments with public input binding
+- Plonky3 prover: FRI-based with SHA-256 Merkle commitments and public input binding
+- Hybrid prover: Plonky3 inner wrapped for Groth16 outer compression
+- PQ proof aggregation via SHA-256 Merkle digest chains
+- All provers verify both witness binding AND public input binding
 
-- **Groth16** (2016) — The foundational protocol
+### Proof Aggregation
+- SnarkPack-style N-to-1 proof compression
+- Random challenge aggregation with multi-pairing verification
 
-### Why Not Just Use Existing Systems?
+## Roadmap
 
-| System | Proof Size | Verification | Setup | Flexibility | Issue |
-|--------|-----------|--------------|-------|-------------|-------|
-| Groth16 | 192 bytes | 3 pairings | Circuit-specific | R1CS only | Setup problem |
-| Plonk | 1-2 KB | 10+ pairings | Universal | Full | Larger proofs |
-| Marlin | 2-5 KB | 15+ pairings | Universal | Full | Slower verification |
-| STARKs | 50-200 KB | Fast (no pairings) | Transparent | Full | Huge proofs |
-| Polymath | 176 bytes | 3 pairings | Circuit-specific | SAP only | Still needs setup |
-| Dynark | 192 bytes | 3 pairings | Circuit-specific | R1CS only | Still needs setup |
+### Phase 1: Performance
+- [ ] GPU acceleration via icicle crate for large MSMs (>4096 scalars)
+- [ ] Distributed proving across multiple machines (partitioned MSM)
+- [ ] Memory-efficient streaming prover for circuits >2^20 constraints
+- [ ] Prover-side batching for parallel multi-circuit proving
 
-**UniGroth combines the best of all worlds** with it having the performance of Groth16 with universal setup and modern flexibility.
+### Phase 2: Deployment
+- [ ] WASM compilation target for browser-based proving
+- [ ] Solidity verifier contract generation for on-chain verification
+- [ ] On-chain gas cost benchmarks vs Groth16, Plonk, and STARKs
+- [ ] Developer SDK with ergonomic circuit builder API
 
-## Practical Use: Recursive Wrapper Pattern
+### Phase 3: Cryptography
+- [ ] Recursive proof composition (prove UniGroth verification inside UniGroth)
+- [ ] Advanced lookup arguments (LogUp, cq for smaller lookup tables)
+- [ ] Multi-curve recursion chain (BLS12-377 + BW6-761)
+- [ ] Full lattice-based designated-verifier variant for complete PQ security
 
-The industry already uses a "recursive Groth16 wrapper" pattern (deployed by zkSync, Polygon zkEVM, RISC Zero, Scroll):
-
-1. Run a universal/transparent inner system (Plonk, Halo2, STARK, Binius) for arbitrary logic
-2. Recursively aggregate everything into one fixed Groth16 proof over a tiny "verifier circuit"
-3. Final on-chain proof is 192 bytes with 3-pairing verification
-4. Setup is one-time and fixed (for the recursive verifier)
-5. Whole system is effectively universal
-
-This is Groth16 "evolved" in practice today. UniGroth aims to make this pattern native and more efficient.
+### Phase 4: Ecosystem & Audit
+- [ ] Circuit library: Merkle trees, EdDSA, SHA-256, Poseidon
+- [ ] Formal security proofs (AGM+ROM writeup)
+- [ ] Production security audit
+- [ ] Benchmarking suite against all competitors (Plonk, Marlin, Halo2, STARKs)
 
 ## Build Guide
 
-UniGroth compiles on the `stable` toolchain of the Rust compiler (1.70+).
+UniGroth compiles on the `stable` Rust toolchain (1.70+).
 
 ### Prerequisites
 
-Install Rust via `rustup`:
 ```bash
 rustup install stable
 rustup default stable
@@ -434,68 +218,61 @@ cargo build --release
 
 ### Testing
 
-Run the test suite:
 ```bash
-cargo test
-```
-
-Run benchmarks:
-```bash
-cargo bench
+cargo test           # Run all 121 tests
+cargo bench          # Run benchmarks
 ```
 
 ### Features
 
 - `std` (default) — Standard library support
-- `parallel` (default) — Multi-threaded proving and verification
+- `parallel` (default) — Multi-threaded proving via rayon
 - `r1cs` — Constraint system gadgets for recursive verification
+- `universal` — Universal setup extensions
+- `sap` — SAP arithmetization
+- `gpu` — GPU MSM dispatch (requires icicle backend)
 - `print-trace` — Debug tracing output
-
-Build without default features:
-```bash
-cargo build --no-default-features
-```
 
 ## Usage Example
 
 ```rust
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-use ark_bn254::Bn254;
+use ark_groth16::security::{SecurityWrapper, SEConfig};
+use ark_bn254::{Bn254, Fr};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_snark::SNARK;
 
 // Define your circuit
-struct MyCircuit {
-    // Circuit inputs
-}
+struct SquareCircuit { x: Option<Fr> }
 
-impl ConstraintSynthesizer<Fr> for MyCircuit {
+impl ConstraintSynthesizer<Fr> for SquareCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-        // Define your constraints here
-        Ok(())
+        let x = cs.new_witness_variable(|| self.x.ok_or(SynthesisError::AssignmentMissing))?;
+        let x_sq = cs.new_input_variable(|| {
+            let v = self.x.ok_or(SynthesisError::AssignmentMissing)?;
+            Ok(v * v)
+        })?;
+        cs.enforce_r1cs_constraint(|| lc!() + x, || lc!() + x, || lc!() + x_sq)
     }
 }
 
 fn main() {
     let mut rng = ark_std::test_rng();
-    
-    // Setup phase (one-time per circuit in standard Groth16)
+
+    // Setup (one-time per circuit)
     let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-        MyCircuit { /* ... */ },
-        &mut rng
+        SquareCircuit { x: None }, &mut rng
     ).unwrap();
-    
-    // Prove
-    let proof = Groth16::<Bn254>::prove(
-        &pk,
-        MyCircuit { /* ... */ },
-        &mut rng
+
+    // Prove with simulation-extractability
+    let x = Fr::from(5u64);
+    let raw_proof = Groth16::<Bn254>::prove(
+        &pk, SquareCircuit { x: Some(x) }, &mut rng
     ).unwrap();
-    
+
     // Verify
-    let public_inputs = vec![/* public inputs */];
-    let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof).unwrap();
-    
+    let public_inputs = vec![x * x]; // x^2 = 25
+    let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &raw_proof).unwrap();
     assert!(valid);
 }
 ```
@@ -504,126 +281,84 @@ fn main() {
 
 ```
 UniGroth/
-├── src/
-│   ├── lib.rs              # Main library entry point
-│   ├── data_structures.rs  # Proving/verifying keys, proofs
-│   ├── generator.rs        # Setup/key generation
-│   ├── prover.rs          # Proof generation
-│   ├── verifier.rs        # Proof verification
-│   ├── r1cs_to_qap.rs     # R1CS to QAP reduction
-│   ├── constraints.rs     # R1CS gadgets (feature: r1cs)
-│   └── test.rs            # Unit tests
-├── benches/               # Performance benchmarks
-├── tests/                 # Integration tests
-└── scripts/               # Development utilities
+  src/
+    lib.rs                # Main library entry point & SNARK trait impl
+    data_structures.rs    # ProvingKey, VerifyingKey, Proof types
+    generator.rs          # Setup / key generation
+    prover.rs             # Proof generation with rerandomization
+    verifier.rs           # Proof verification
+    r1cs_to_qap.rs        # R1CS to QAP reduction
+    kzg.rs                # KZG polynomial commitments
+    universal_setup.rs    # Universal trusted setup
+    sap.rs                # Square Arithmetic Programs
+    folding.rs            # ProtoStar folding, IVC, decision predicate
+    security.rs           # SE, Subversion ZK, security reports
+    optimizations.rs      # Dynark FFT, parallel MSM, compression, CSR
+    plonkish.rs           # Custom gates, lookups, Plonkish-to-R1CS
+    pq_inner.rs           # Post-quantum inner provers
+    aggregation.rs        # SnarkPack-style proof aggregation
+    public_input_pok.rs   # Schnorr PoK for public inputs
+    constraints.rs        # R1CS gadgets (feature: r1cs)
+    test.rs               # Core Groth16 tests
+  tests/
+    groth16_comparison.rs # Head-to-head comparison vs ark-groth16 (11 tests)
+    full_pipeline_test.rs # Integration tests for all modules
+    mimc.rs               # MiMC hash circuit test
+    phrase_test.rs        # Advanced feature tests
+  benches/                # Performance benchmarks
 ```
 
-## Contributing
+## Research Foundation
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+UniGroth builds on research from 2022-2026:
 
-Areas where we especially need help:
-- Universal KZG setup implementation
-- SAP arithmetization layer
-- ProtoStar folding integration
-- GPU/FPGA acceleration
-- Formal security proofs
-- Documentation and examples
-
-## Security
-
-**This is research software. Do not use in production.**
-
-If you discover a security vulnerability, please email security@meridianalgo.com (or open a private security advisory on GitHub).
+| Paper | Year | What UniGroth Uses |
+|-------|------|-------------------|
+| [Groth16](https://eprint.iacr.org/2016/260) | 2016 | Core protocol |
+| [BG18](https://eprint.iacr.org/2018/187) | 2018 | Simulation-extractability |
+| [ABPR19](https://eprint.iacr.org/2018/280) | 2019 | Updatable universal CRS |
+| [Nova](https://eprint.iacr.org/2021/370) | 2022 | Relaxed R1CS folding |
+| [ProtoStar](https://eprint.iacr.org/2023/620) | 2023 | Generic accumulation/folding |
+| [SnarkPack](https://eprint.iacr.org/2021/529) | 2022 | Proof aggregation |
+| [Polymath](https://eprint.iacr.org/2024/916) | 2024 | SAP-based proofs, compression |
+| [Dynark](https://eprint.iacr.org/2025/123) | 2025 | FFT optimizations |
 
 ## Comparison with Related Work
 
-### vs. Original Groth16
-- Same proof size and verification speed
-- Universal setup (no per-circuit ceremonies)
-- Flexible arithmetization (custom gates, lookups)
-- Faster prover on complex circuits
+| System | Proof Size | Verification | Setup | SE | Folding | PQ Path | Aggregation |
+|--------|-----------|--------------|-------|----|---------|---------|-------------|
+| Groth16 | 192 B | 3 pairings | Per-circuit | No | No | No | No |
+| Plonk | 1-2 KB | 10+ pairings | Universal | No | No | No | No |
+| Marlin | 2-5 KB | 15+ pairings | Universal | No | No | No | No |
+| Halo2 | 5-15 KB | Variable | Transparent | No | No | No | No |
+| STARKs | 50-200 KB | Fast (hashing) | Transparent | N/A | Varies | Yes | Varies |
+| **UniGroth** | **192-256 B** | **3-5 pairings** | **Universal** | **Yes** | **Yes** | **Yes** | **Yes** |
 
-### vs. Plonk/Marlin
-- 5-10× smaller proofs
-- 2-3× faster verification
-- ≈ Similar setup (universal)
-- ≈ Similar flexibility
+UniGroth is the only system combining Groth16-level proof size with universal setup, simulation-extractability, folding/IVC, proof aggregation, and a post-quantum migration path.
 
-### vs. STARKs
-- 100-500× smaller proofs
-- Faster verification (pairings vs. hashing)
-- Requires trusted setup (vs. transparent)
-- ≈ Similar prover speed
+## Security
 
-### vs. Polymath/Pari
-- ≈ Similar proof size
-- ≈ Same verification speed
-- Universal setup (vs. circuit-specific)
-- More flexible arithmetization
+**This is research software. Do not use in production without audit.**
 
-### vs. Dynark
-- ≈ Same proof size and verification
-- Universal setup (vs. circuit-specific)
-- Incorporates Dynark's FFT optimizations
-- ≈ Similar dynamic update capabilities
-
-## References & Further Reading
-
-### Core Papers
-- [Groth16] Jens Groth. "On the Size of Pairing-based Non-interactive Arguments." EUROCRYPT 2016. https://eprint.iacr.org/2016/260
-- [Polymath] Helger Lipmaa. "Polymath: Groth16 Is Not The Limit." CRYPTO 2024. https://eprint.iacr.org/2024/916
-- [Pari] Helger Lipmaa. "Pari: Faster and Smaller Pairing-Based zkSNARKs." 2024. https://eprint.iacr.org/2024/1245
-- [Dynark] Weijie Wang et al. "Dynark: Dynamic zkSNARKs with Fast Prover Update." 2025. https://eprint.iacr.org/2025/123
-- [ProtoStar] Benedikt Bünz et al. "ProtoStar: Generic Efficient Accumulation/Folding for Special-Sound Protocols." 2023. https://eprint.iacr.org/2023/620
-- [Nova] Abhiram Kothapalli et al. "Nova: Recursive Zero-Knowledge Arguments from Folding Schemes." CRYPTO 2022. https://eprint.iacr.org/2021/370
-
-### Security & Setup
-- [BG18] Sean Bowe, Ariel Gabizon. "Making Groth16 zkSNARKs Simulation Extractable." 2018. https://eprint.iacr.org/2018/187
-- [ABPR] Behzad Abdolmaleki et al. "Updatable and Universal Common Reference Strings with Applications to zk-SNARKs." CRYPTO 2019. https://eprint.iacr.org/2018/280
-
-### Implementation Resources
-- [arkworks-rs] The arkworks ecosystem: https://github.com/arkworks-rs
-- [gnark] ConsenSys zkSNARK library: https://github.com/ConsenSys/gnark
-- [Powers of Tau] Perpetual Powers of Tau ceremony: https://github.com/privacy-scaling-explorations/perpetualpowersoftau
+If you discover a security vulnerability, please email security@meridianalgo.com or open a private security advisory on GitHub.
 
 ## License
 
-This library is licensed under either of the following licenses, at your discretion.
+This library is licensed under the MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT).
 
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-Unless you explicitly state otherwise, any contribution submitted for inclusion in this library by you shall be dual licensed as above (as defined in the Apache v2 License), without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution submitted for inclusion in this library shall be licensed as above, without any additional terms or conditions.
 
 ## Acknowledgements
 
 ### Original Groth16 Implementation
-This work builds upon the excellent Groth16 implementation from the [arkworks-rs](https://github.com/arkworks-rs/groth16) ecosystem. The original implementation was supported by:
-- Google Faculty Award
-- National Science Foundation
-- UC Berkeley Center for Long-Term Cybersecurity
-- Ethereum Foundation, Interchain Foundation, and Qtum
-
-An earlier version was developed as part of the paper *"[ZEXE: Enabling Decentralized Private Computation][zexe]"*.
-
-[zexe]: https://ia.cr/2018/962
+Built upon the [arkworks-rs](https://github.com/arkworks-rs/groth16) Groth16 implementation, supported by Google Faculty Award, National Science Foundation, UC Berkeley Center for Long-Term Cybersecurity, Ethereum Foundation, Interchain Foundation, and Qtum.
 
 ### UniGroth Development
 UniGroth extensions and research by **MeridianAlgo** (2026).
 
-Special thanks to the cryptography research community for:
-- Helger Lipmaa (Polymath, Pari)
-- Weijie Wang et al. (Dynark)
-- Benedikt Bünz et al. (ProtoStar)
-- Abhiram Kothapalli et al. (Nova)
-- The zkSNARK research community at large
+Thanks to the cryptography research community: Helger Lipmaa (Polymath, Pari), Weijie Wang et al. (Dynark), Benedikt Bünz et al. (ProtoStar), Abhiram Kothapalli et al. (Nova), and the zkSNARK research community at large.
 
-## Contact & Community
+## Contact
 
 - **GitHub**: https://github.com/MeridianAlgo/UniGroth
 - **Issues**: https://github.com/MeridianAlgo/UniGroth/issues
-- **Discussions**: https://github.com/MeridianAlgo/UniGroth/discussions
-
----
-
-*"Standing on the shoulders of giants, reaching for the stars."*

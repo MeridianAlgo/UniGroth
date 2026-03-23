@@ -138,7 +138,11 @@ pub use self::{data_structures::*, verifier::*};
 pub use self::kzg::{Commitment, KZG, Opening, UniversalSRS};
 pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
 pub use self::universal_setup::UniversalParams;
-pub use self::folding::{FoldingAccumulator, FoldingEngine, FoldingInstance, IVC};
+pub use self::folding::{
+    FoldingAccumulator, FoldingEngine, FoldingInstance, IVC,
+    R1CSMatrices, ProverState,
+    compute_cross_term_vector, fold_prover_state, verify_decision_predicate,
+};
 pub use self::security::{SecurityParams, SecurityReport, SEConfig, SimExtractableProof, SecurityWrapper};
 pub use self::optimizations::{parallel_msm, MSMGPUHint, PolymathCompressor, ProverProfile, CosetDomainCache, CsrMatrix};
 pub use self::plonkish::{

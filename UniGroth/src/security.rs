@@ -237,17 +237,11 @@ pub fn verify_sim_extractable<E: Pairing>(
     let prepared_inputs = g_ic.into_affine();
 
     // Standard Groth16 verification check (for debug)
-    let base_pairings = vec![
+    let mut pairings = vec![
         (E::G1Prepared::from(proof.a), E::G2Prepared::from(proof.b)),
         (E::G1Prepared::from(prepared_inputs), pvk.gamma_g2_neg_pc.clone()),
         (E::G1Prepared::from(proof.c), pvk.delta_g2_neg_pc.clone()),
     ];
-    let base_res = E::multi_pairing(
-        base_pairings.iter().map(|(a, _)| a.clone()),
-        base_pairings.iter().map(|(_, b)| b.clone()),
-    );
-    
-    let mut pairings = base_pairings;
 
     if let Some(d) = se_proof.se_element {
         // Add the BG18 correction term: e(delta_g1, D)^-1 = e(delta_g1, -D)
@@ -260,15 +254,6 @@ pub fn verify_sim_extractable<E: Pairing>(
     );
 
     let qap_valid = final_res.0 == pvk.alpha_g1_beta_g2;
-    
-    if !qap_valid {
-        println!("DEBUG: SE Verification Failed");
-        println!("  base_res == pvk.alpha_g1_beta_g2: {}", base_res.0 == pvk.alpha_g1_beta_g2);
-        println!("  final_res == pvk.alpha_g1_beta_g2: {}", qap_valid);
-        if se_proof.se_element.is_some() {
-             println!("  (BG18 SE element was present)");
-        }
-    }
 
     end_timer!(verify_time);
 
