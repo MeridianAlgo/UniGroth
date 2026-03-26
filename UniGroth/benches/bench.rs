@@ -1,41 +1,42 @@
-// For benchmark, run:
-//     RAYON_NUM_THREADS=N cargo bench --no-default-features --features "std
-// parallel" -- --nocapture where N is the number of threads you want to use (N
-// = 1 for single-thread).
+// UniGroth Comprehensive Benchmark Suite
+//
+// Benchmarks all key optimizations with real crypto operations:
+//   1. 4-FFT vs 6-FFT witness computation
+//   2. h_query_scalars O(n) vs O(n log n) (iterative acc vs pow)
+//   3. Parallel MSM scaling across thread counts
+//   4. End-to-end proving: UniGroth vs arkworks Groth16
+//
+// Run:
+//   cargo bench --no-default-features --features "std parallel" -- --nocapture
+//   RAYON_NUM_THREADS=1 cargo bench --no-default-features --features "std parallel" -- --nocapture
 
-use ark_bls12_381::{Bls12_381, Fr as BlsFr};
+use ark_bls12_381::{Bls12_381, Fr as BlsFr, G1Affine as BlsG1Affine, G1Projective as BlsG1};
 use ark_crypto_primitives::snark::SNARK;
-use ark_ff::{PrimeField, UniformRand};
-use ark_groth16::{r1cs_to_qap::evaluate_constraint, Groth16};
-use ark_mnt4_298::{Fr as MNT4Fr, MNT4_298};
+use ark_ec::{CurveGroup, VariableBaseMSM};
+use ark_ff::{FftField, Field, PrimeField, UniformRand};
+use ark_groth16::{r1cs_to_qap::evaluate_constraint, Groth16 as ArkGroth16};
+use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
 use ark_relations::{
     gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
     lc,
 };
-use ark_std::rand::{Rng, SeedableRng};
+use ark_std::{
+    rand::{Rng, SeedableRng},
+    time::Instant,
+};
+use std::hint::black_box;
 
-const NUM_PROVE_REPETITIONS: usize = 1;
-const NUM_VERIFY_REPETITIONS: usize = 50;
-const NUM_CONSTRAINTS: usize = (1 << 20) - 100;
-const NUM_VARIABLES: usize = (1 << 20) - 100;
+use unigroth as ug;
+use unigroth::optimizations::{compute_h_coset_evals, compute_witness_4fft};
 
-#[derive(Copy)]
+// ─── Circuits ────────────────────────────────────────────────────────────────
+
+#[derive(Copy, Clone)]
 struct DummyCircuit<F: PrimeField> {
     pub a: Option<F>,
     pub b: Option<F>,
     pub num_variables: usize,
     pub num_constraints: usize,
-}
-
-impl<F: PrimeField> Clone for DummyCircuit<F> {
-    fn clone(&self) -> Self {
-        DummyCircuit {
-            a: self.a.clone(),
-            b: self.b.clone(),
-            num_variables: self.num_variables.clone(),
-            num_constraints: self.num_constraints.clone(),
-        }
-    }
 }
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for DummyCircuit<F> {
@@ -45,122 +46,366 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for DummyCircuit<F> {
         let c = cs.new_input_variable(|| {
             let a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
             let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
-
             Ok(a * b)
         })?;
-
         for _ in 0..(self.num_variables - 3) {
             let _ = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
         }
-
         for _ in 0..self.num_constraints - 1 {
             cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
         }
-
         cs.enforce_r1cs_constraint(|| lc!(), || lc!(), || lc!())?;
-
         Ok(())
     }
 }
 
-macro_rules! groth16_prove_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-        let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
-            num_variables: NUM_VARIABLES,
-            num_constraints: NUM_CONSTRAINTS,
-        };
+// ─── Timing ──────────────────────────────────────────────────────────────────
 
-        let (pk, _) = Groth16::<$bench_pairing_engine>::circuit_specific_setup(c, rng).unwrap();
-
-        let start = ark_std::time::Instant::now();
-
-        for _ in 0..NUM_PROVE_REPETITIONS {
-            let _ = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
-        }
-
-        println!(
-            "per-constraint proving time for {}: {} ns/constraint",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_nanos() / (NUM_PROVE_REPETITIONS as u128 * NUM_CONSTRAINTS as u128)
-        );
-        println!(
-            "wall-clock proving time for {}: {} s",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_secs_f64() / NUM_PROVE_REPETITIONS as f64
-        );
-    };
+fn sep() {
+    println!("  {}", "─".repeat(72));
 }
 
-macro_rules! groth16_verify_bench {
-    ($bench_name:ident, $bench_field:ty, $bench_pairing_engine:ty) => {
-        let rng = &mut ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-        let c = DummyCircuit::<$bench_field> {
-            a: Some(<$bench_field>::rand(rng)),
-            b: Some(<$bench_field>::rand(rng)),
-            num_variables: 10,
-            num_constraints: NUM_CONSTRAINTS,
-        };
-
-        let (pk, vk) = Groth16::<$bench_pairing_engine>::circuit_specific_setup(c, rng).unwrap();
-        let proof = Groth16::<$bench_pairing_engine>::prove(&pk, c.clone(), rng).unwrap();
-
-        let v = c.a.unwrap() * c.b.unwrap();
-
-        let start = ark_std::time::Instant::now();
-
-        for _ in 0..NUM_VERIFY_REPETITIONS {
-            let _ = Groth16::<$bench_pairing_engine>::verify(&vk, &vec![v], &proof).unwrap();
-        }
-
-        println!(
-            "verifying time for {}: {} ns",
-            stringify!($bench_pairing_engine),
-            start.elapsed().as_nanos() / NUM_VERIFY_REPETITIONS as u128
-        );
-    };
-}
-
-fn create_evaluate_constraint_test_data(size: usize) -> (Vec<(BlsFr, usize)>, Vec<BlsFr>) {
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-    let terms = (0..10)
-        .map(|_| (BlsFr::rand(&mut rng), rng.gen_range(0..size)))
-        .collect();
-    let assignment = (0..size).map(|_| BlsFr::rand(&mut rng)).collect();
-    (terms, assignment)
-}
-
-fn bench_evaluate_constraint() {
-    println!("\nBenchmarking evaluate_constraint:");
-
-    for size in [100, 1000, 10000, 100000].iter() {
-        let (terms, assignment) = create_evaluate_constraint_test_data(*size);
-
-        // Benchmark sequential version
-        let start = ark_std::time::Instant::now();
-        for _ in 0..100 {
-            let _ = evaluate_constraint(&terms, &assignment);
-        }
-        let seq_time = start.elapsed();
-
-        println!("Size {}: {} ns/iteration", size, seq_time.as_nanos() / 100);
+fn speedup_str(baseline_us: f64, optimized_us: f64) -> String {
+    let ratio = baseline_us / optimized_us;
+    if ratio >= 1.0 {
+        format!("{:.2}× faster", ratio)
+    } else {
+        format!("{:.2}× slower (regression)", 1.0 / ratio)
     }
 }
 
-fn bench_prove() {
-    groth16_prove_bench!(bls, BlsFr, Bls12_381);
-    groth16_prove_bench!(mnt4, MNT4Fr, MNT4_298);
+// ─── Benchmark 1: 4-FFT vs 6-FFT ────────────────────────────────────────────
+
+fn bench_fft_comparison() {
+    println!("\n  § 1  FFT COMPARISON: UniGroth 5-FFT vs Standard 6-FFT");
+    sep();
+    println!("  UniGroth uses polynomial-multiplication approach: 7 FFTs → 5 FFTs.");
+    println!("  Standard Groth16 (libsnark) needs: iFFT(a), iFFT(b), iFFT(c),");
+    println!("    cosetFFT(a), cosetFFT(b), cosetFFT(c) = 6 FFTs + pointwise ops.");
+    println!("  UniGroth: iFFT(a), iFFT(b), cosetFFT2n(a), cosetFFT2n(b), icosetFFT2n = 5 FFTs.");
+    println!();
+
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+
+    for log_n in [12, 14, 16, 18] {
+        let domain_size = 1usize << log_n;
+        let domain = GeneralEvaluationDomain::<BlsFr>::new(domain_size).unwrap();
+        let iters = match log_n {
+            18 => 3,
+            16 => 10,
+            14 => 30,
+            _ => 50,
+        };
+
+        let a_evals: Vec<BlsFr> = (0..domain_size).map(|_| BlsFr::rand(&mut rng)).collect();
+        let b_evals: Vec<BlsFr> = (0..domain_size).map(|_| BlsFr::rand(&mut rng)).collect();
+        let c_evals: Vec<BlsFr> = (0..domain_size).map(|_| BlsFr::rand(&mut rng)).collect();
+
+        // Standard 6-FFT path (simulate): iFFT(a) + iFFT(b) + iFFT(c) + cosetFFT(a) + cosetFFT(b) + cosetFFT(c)
+        let start = Instant::now();
+        for _ in 0..iters {
+            let mut a = a_evals.clone();
+            let mut b = b_evals.clone();
+            let mut c = c_evals.clone();
+            domain.ifft_in_place(&mut a);
+            domain.ifft_in_place(&mut b);
+            domain.ifft_in_place(&mut c);
+            let coset = domain.get_coset(BlsFr::GENERATOR).unwrap();
+            coset.fft_in_place(&mut a);
+            coset.fft_in_place(&mut b);
+            coset.fft_in_place(&mut c);
+            // pointwise: h_coset[i] = (a[i]*b[i] - c[i]) / z[i]
+            let h_coset: Vec<BlsFr> = a
+                .iter()
+                .zip(b.iter())
+                .zip(c.iter())
+                .map(|((ai, bi), ci)| *ai * *bi - *ci)
+                .collect();
+            black_box(h_coset);
+        }
+        let standard_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        // UniGroth 5-FFT (real implementation)
+        let start = Instant::now();
+        for _ in 0..iters {
+            let result = compute_witness_4fft(&domain, a_evals.clone(), b_evals.clone());
+            black_box(result.h_poly);
+        }
+        let unigroth_5fft_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        // UniGroth 4-FFT coset-eval form (even faster, no final iFFT)
+        let start = Instant::now();
+        for _ in 0..iters {
+            let (h_coset, _count) =
+                compute_h_coset_evals(&domain, a_evals.clone(), b_evals.clone());
+            black_box(h_coset);
+        }
+        let unigroth_4fft_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        println!("  n=2^{log_n} ({domain_size} constraints, {iters} iterations):");
+        println!("    Standard 6-FFT          : {:>10.0} µs", standard_us);
+        println!(
+            "    UniGroth 5-FFT (wired)  : {:>10.0} µs  ← {}",
+            unigroth_5fft_us,
+            speedup_str(standard_us, unigroth_5fft_us)
+        );
+        println!(
+            "    UniGroth 4-FFT (coset)  : {:>10.0} µs  ← {}",
+            unigroth_4fft_us,
+            speedup_str(standard_us, unigroth_4fft_us)
+        );
+    }
+    println!();
 }
 
-fn bench_verify() {
-    groth16_verify_bench!(bls, BlsFr, Bls12_381);
-    groth16_verify_bench!(mnt4, MNT4Fr, MNT4_298);
+// ─── Benchmark 2: h_query_scalars O(n) vs O(n log n) ────────────────────────
+
+fn bench_h_query_scalars() {
+    println!("  § 2  h_query_scalars: ITERATIVE (O(n)) vs POW LOOP (O(n log n))");
+    sep();
+    println!("  UniGroth: acc *= t (iterative multiplication)");
+    println!("  Original: .pow([i as u64]) (exponentiation per element)");
+    println!();
+
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+
+    for log_n in [12, 14, 16, 18, 20] {
+        let n = 1usize << log_n;
+        let t = BlsFr::rand(&mut rng);
+        let zt = BlsFr::rand(&mut rng);
+        let delta_inv = BlsFr::rand(&mut rng);
+        let base = zt * delta_inv;
+
+        let iters = match log_n {
+            20 => 3,
+            18 => 5,
+            16 => 20,
+            14 => 50,
+            _ => 100,
+        };
+
+        // O(n log n): .pow([i as u64]) loop (original Groth16 approach)
+        let start = Instant::now();
+        for _ in 0..iters {
+            let mut scalars = Vec::with_capacity(n);
+            for i in 0..n {
+                scalars.push(base * t.pow([i as u64]));
+            }
+            black_box(scalars);
+        }
+        let pow_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        // O(n): iterative acc *= t (UniGroth approach)
+        let start = Instant::now();
+        for _ in 0..iters {
+            let mut scalars = Vec::with_capacity(n);
+            let mut acc = base;
+            for _ in 0..n {
+                scalars.push(acc);
+                acc *= t;
+            }
+            black_box(scalars);
+        }
+        let iter_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        println!("  n=2^{log_n} ({n} scalars, {iters} iterations):");
+        println!("    .pow([i]) loop (O(n log n)) : {:>10.0} µs", pow_us);
+        println!(
+            "    acc *= t       (O(n))       : {:>10.0} µs  ← {}",
+            iter_us,
+            speedup_str(pow_us, iter_us)
+        );
+    }
+    println!();
 }
+
+// ─── Benchmark 3: Parallel MSM Scaling ──────────────────────────────────────
+
+fn bench_parallel_msm() {
+    println!("  § 3  PARALLEL MSM SCALING");
+    sep();
+    println!("  Measures MSM performance using arkworks Pippenger.");
+    println!("  Set RAYON_NUM_THREADS=1 and rerun to see single-thread baseline.");
+    println!();
+
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+
+    for log_n in [10, 12, 14, 16] {
+        let n = 1usize << log_n;
+        let iters = match log_n {
+            16 => 3,
+            14 => 10,
+            _ => 30,
+        };
+
+        let scalars: Vec<BlsFr> = (0..n).map(|_| BlsFr::rand(&mut rng)).collect();
+        let bases: Vec<BlsG1Affine> = (0..n)
+            .map(|_| BlsG1::rand(&mut rng).into_affine())
+            .collect();
+
+        let start = Instant::now();
+        for _ in 0..iters {
+            let result = BlsG1::msm(&bases, &scalars).unwrap();
+            black_box(result);
+        }
+        let total_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        let threads = rayon::current_num_threads();
+        println!("  n=2^{log_n} ({n} scalars, {threads} threads, {iters} iters):");
+        println!(
+            "    MSM time : {:>10.0} µs  ({:.1} ns/scalar)",
+            total_us,
+            total_us * 1000.0 / n as f64
+        );
+    }
+    println!();
+}
+
+// ─── Benchmark 4: End-to-End Prove+Verify ────────────────────────────────────
+
+fn bench_end_to_end() {
+    println!("  § 4  END-TO-END: UniGroth vs ark-groth16");
+    sep();
+
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+
+    for (label, num_constraints, num_variables) in [
+        ("small  (2^12)", (1 << 12) - 100, (1 << 12) - 100),
+        ("medium (2^16)", (1 << 16) - 100, (1 << 16) - 100),
+    ] {
+        let a_val = BlsFr::rand(&mut rng);
+        let b_val = BlsFr::rand(&mut rng);
+        let c_val = a_val * b_val;
+
+        let circuit = DummyCircuit::<BlsFr> {
+            a: Some(a_val),
+            b: Some(b_val),
+            num_variables,
+            num_constraints,
+        };
+        let setup_circuit = DummyCircuit::<BlsFr> {
+            a: None,
+            b: None,
+            num_variables,
+            num_constraints,
+        };
+
+        let iters = if num_constraints > (1 << 14) { 2 } else { 5 };
+
+        // ark-groth16 setup + prove + verify
+        let (ark_pk, ark_vk) =
+            ArkGroth16::<Bls12_381>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
+
+        let start = Instant::now();
+        let mut ark_proof = None;
+        for _ in 0..iters {
+            ark_proof = Some(ArkGroth16::<Bls12_381>::prove(&ark_pk, circuit, &mut rng).unwrap());
+        }
+        let ark_prove_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        let ark_pvk = ArkGroth16::<Bls12_381>::process_vk(&ark_vk).unwrap();
+        let start = Instant::now();
+        for _ in 0..iters {
+            let ok = ArkGroth16::<Bls12_381>::verify_with_processed_vk(
+                &ark_pvk,
+                &[c_val],
+                ark_proof.as_ref().unwrap(),
+            )
+            .unwrap();
+            assert!(ok);
+        }
+        let ark_verify_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        // UniGroth setup + prove + verify
+        let (ug_pk, ug_vk) =
+            ug::Groth16::<Bls12_381>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
+
+        let start = Instant::now();
+        let mut ug_proof = None;
+        for _ in 0..iters {
+            ug_proof = Some(ug::Groth16::<Bls12_381>::prove(&ug_pk, circuit, &mut rng).unwrap());
+        }
+        let ug_prove_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        let ug_pvk = ug::Groth16::<Bls12_381>::process_vk(&ug_vk).unwrap();
+        let start = Instant::now();
+        for _ in 0..iters {
+            let ok = ug::Groth16::<Bls12_381>::verify_with_processed_vk(
+                &ug_pvk,
+                &[c_val],
+                ug_proof.as_ref().unwrap(),
+            )
+            .unwrap();
+            assert!(ok);
+        }
+        let ug_verify_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        println!("  Circuit: {label} ({num_constraints} constraints, {iters} iterations):");
+        println!("    Prove:");
+        println!("      ark-groth16 : {:>12.0} µs", ark_prove_us);
+        println!(
+            "      UniGroth    : {:>12.0} µs  ← {}",
+            ug_prove_us,
+            speedup_str(ark_prove_us, ug_prove_us)
+        );
+        println!("    Verify:");
+        println!("      ark-groth16 : {:>12.0} µs", ark_verify_us);
+        println!(
+            "      UniGroth    : {:>12.0} µs  ← {}",
+            ug_verify_us,
+            speedup_str(ark_verify_us, ug_verify_us)
+        );
+        println!();
+    }
+}
+
+// ─── Benchmark 5: evaluate_constraint scaling ────────────────────────────────
+
+fn bench_evaluate_constraint() {
+    println!("  § 5  evaluate_constraint SCALING");
+    sep();
+
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+
+    for size in [100, 1000, 10000, 100000] {
+        let terms: Vec<(BlsFr, usize)> = (0..10)
+            .map(|_| (BlsFr::rand(&mut rng), rng.gen_range(0..size)))
+            .collect();
+        let assignment: Vec<BlsFr> = (0..size).map(|_| BlsFr::rand(&mut rng)).collect();
+
+        let iters = 1000;
+        let start = Instant::now();
+        for _ in 0..iters {
+            let result = evaluate_constraint(&terms, &assignment);
+            black_box(result);
+        }
+        let time_ns = start.elapsed().as_nanos() as f64 / iters as f64;
+
+        println!("  Assignment size {:>6}: {:>8.0} ns/eval", size, time_ns);
+    }
+    println!();
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    bench_prove();
-    bench_verify();
+    println!();
+    println!("╔════════════════════════════════════════════════════════════════════════╗");
+    println!("║        UniGroth Comprehensive Benchmark Suite                          ║");
+    println!(
+        "║  Threads: {}  ·  BLS12-381 + BN254                                    ║",
+        rayon::current_num_threads()
+    );
+    println!("╚════════════════════════════════════════════════════════════════════════╝");
+
+    bench_fft_comparison();
+    bench_h_query_scalars();
+    bench_parallel_msm();
+    bench_end_to_end();
     bench_evaluate_constraint();
+
+    println!("╔════════════════════════════════════════════════════════════════════════╗");
+    println!("║                          BENCHMARK COMPLETE                            ║");
+    println!("╚════════════════════════════════════════════════════════════════════════╝");
+    println!();
 }

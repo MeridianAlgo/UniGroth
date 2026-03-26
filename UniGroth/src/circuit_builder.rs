@@ -15,10 +15,7 @@
 
 use ark_ff::PrimeField;
 use ark_relations::{
-    gr1cs::{
-        ConstraintSynthesizer, ConstraintSystemRef,
-        SynthesisError, Variable,
-    },
+    gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
     lc,
 };
 use ark_std::vec::Vec;
@@ -32,14 +29,42 @@ pub struct Wire {
 /// Operation recorded by the builder for deferred constraint generation.
 #[derive(Clone, Debug)]
 enum Op<F: PrimeField> {
-    AllocWitness { index: usize, value: Option<F> },
-    AllocPublic { index: usize, value: Option<F> },
-    MulConstraint { a: usize, b: usize, c: usize },
-    AddConstraint { a: usize, b: usize, c: usize },
-    ConstMul { input: usize, scalar: F, output: usize },
-    AssertEqual { a: usize, b: usize },
-    AssertBool { a: usize },
-    ConditionalSelect { cond: usize, a: usize, b: usize, out: usize },
+    AllocWitness {
+        index: usize,
+        value: Option<F>,
+    },
+    AllocPublic {
+        index: usize,
+        value: Option<F>,
+    },
+    MulConstraint {
+        a: usize,
+        b: usize,
+        c: usize,
+    },
+    AddConstraint {
+        a: usize,
+        b: usize,
+        c: usize,
+    },
+    ConstMul {
+        input: usize,
+        scalar: F,
+        output: usize,
+    },
+    AssertEqual {
+        a: usize,
+        b: usize,
+    },
+    AssertBool {
+        a: usize,
+    },
+    ConditionalSelect {
+        cond: usize,
+        a: usize,
+        b: usize,
+        out: usize,
+    },
 }
 
 /// Ergonomic circuit builder.
@@ -58,14 +83,20 @@ pub struct CircuitBuilder<F: PrimeField> {
     wire_values: Vec<Option<F>>,
 }
 
-impl<F: PrimeField> CircuitBuilder<F> {
-    /// Create a new empty circuit builder.
-    pub fn new() -> Self {
+impl<F: PrimeField> Default for CircuitBuilder<F> {
+    fn default() -> Self {
         Self {
             ops: Vec::new(),
             wire_count: 0,
             wire_values: Vec::new(),
         }
+    }
+}
+
+impl<F: PrimeField> CircuitBuilder<F> {
+    /// Create a new empty circuit builder.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn alloc_wire(&mut self, value: Option<F>) -> usize {
@@ -169,7 +200,7 @@ impl<F: PrimeField> CircuitBuilder<F> {
                 } else {
                     Some(bv)
                 }
-            }
+            },
             _ => None,
         };
         let out_idx = self.alloc_wire(out_val);
@@ -214,7 +245,7 @@ impl<F: PrimeField> CircuitBuilder<F> {
                 Op::AllocPublic { .. } => public_inputs += 1,
                 Op::MulConstraint { .. } => mul_gates += 1,
                 Op::AddConstraint { .. } => add_gates += 1,
-                _ => {}
+                _ => {},
             }
         }
 
@@ -272,7 +303,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BuiltCircuit<F> {
                         vars.push(Variable::One);
                     }
                     vars[*index] = var;
-                }
+                },
                 Op::AllocPublic { index, value } => {
                     let v = *value;
                     let var =
@@ -281,49 +312,53 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BuiltCircuit<F> {
                         vars.push(Variable::One);
                     }
                     vars[*index] = var;
-                }
+                },
                 Op::MulConstraint { a, b, c } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*a],
                         || lc!() + vars[*b],
                         || lc!() + vars[*c],
                     )?;
-                }
+                },
                 Op::AddConstraint { a, b, c } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*a] + vars[*b],
                         || lc!() + Variable::One,
                         || lc!() + vars[*c],
                     )?;
-                }
-                Op::ConstMul { input, scalar, output } => {
+                },
+                Op::ConstMul {
+                    input,
+                    scalar,
+                    output,
+                } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*input],
                         || lc!() + (*scalar, Variable::One),
                         || lc!() + vars[*output],
                     )?;
-                }
+                },
                 Op::AssertEqual { a, b } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*a] - vars[*b],
                         || lc!() + Variable::One,
                         || lc!(),
                     )?;
-                }
+                },
                 Op::AssertBool { a } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*a],
                         || lc!() + Variable::One - vars[*a],
                         || lc!(),
                     )?;
-                }
+                },
                 Op::ConditionalSelect { cond, a, b, out } => {
                     cs.enforce_r1cs_constraint(
                         || lc!() + vars[*cond],
                         || lc!() + vars[*a] - vars[*b],
                         || lc!() + vars[*out] - vars[*b],
                     )?;
-                }
+                },
             }
         }
 
@@ -334,10 +369,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for BuiltCircuit<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Groth16;
     use ark_bn254::{Bn254, Fr};
     use ark_crypto_primitives::snark::SNARK;
     use ark_std::rand::{RngCore, SeedableRng};
-    use crate::Groth16;
 
     fn make_rng() -> ark_std::rand::rngs::StdRng {
         ark_std::rand::rngs::StdRng::seed_from_u64(ark_std::test_rng().next_u64())
@@ -356,11 +391,9 @@ mod tests {
 
         let circuit = builder.build();
         let mut rng = make_rng();
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
-        let valid =
-            Groth16::<Bn254>::verify(&vk, &[Fr::from(21u64)], &proof).unwrap();
+        let valid = Groth16::<Bn254>::verify(&vk, &[Fr::from(21u64)], &proof).unwrap();
         assert!(valid);
     }
 
@@ -374,11 +407,9 @@ mod tests {
 
         let circuit = builder.build();
         let mut rng = make_rng();
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
-        let valid =
-            Groth16::<Bn254>::verify(&vk, &[Fr::from(30u64)], &proof).unwrap();
+        let valid = Groth16::<Bn254>::verify(&vk, &[Fr::from(30u64)], &proof).unwrap();
         assert!(valid);
     }
 
@@ -394,11 +425,9 @@ mod tests {
 
         let circuit = builder.build();
         let mut rng = make_rng();
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
-        let valid =
-            Groth16::<Bn254>::verify(&vk, &[Fr::from(42u64)], &proof).unwrap();
+        let valid = Groth16::<Bn254>::verify(&vk, &[Fr::from(42u64)], &proof).unwrap();
         assert!(valid);
     }
 
@@ -411,11 +440,9 @@ mod tests {
 
         let circuit = builder.build();
         let mut rng = make_rng();
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
-        let valid =
-            Groth16::<Bn254>::verify(&vk, &[Fr::from(35u64)], &proof).unwrap();
+        let valid = Groth16::<Bn254>::verify(&vk, &[Fr::from(35u64)], &proof).unwrap();
         assert!(valid);
     }
 

@@ -50,13 +50,7 @@ impl<F: PrimeField> PoseidonParams<F> {
         let mds_matrix: Vec<Vec<F>> = (0..width)
             .map(|i| {
                 (0..width)
-                    .map(|j| {
-                        if i == j {
-                            F::from(2u64)
-                        } else {
-                            F::from(1u64)
-                        }
-                    })
+                    .map(|j| if i == j { F::from(2u64) } else { F::from(1u64) })
                     .collect()
             })
             .collect();
@@ -165,7 +159,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for PoseidonHashCircuit<F> {
             (Some(l), Some(r)) => Some(poseidon_hash(l, r, &self.params)),
             _ => None,
         };
-        let output = cs.new_input_variable(|| output_val.ok_or(SynthesisError::AssignmentMissing))?;
+        let output =
+            cs.new_input_variable(|| output_val.ok_or(SynthesisError::AssignmentMissing))?;
 
         // Simplified constraint: left * right contributes to the hash
         // In a full implementation, each round of Poseidon would be constrained.
@@ -184,8 +179,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for PoseidonHashCircuit<F> {
             (Some(o), Some(p)) => Some(o - p),
             _ => None,
         };
-        let diff =
-            cs.new_witness_variable(|| diff_val.ok_or(SynthesisError::AssignmentMissing))?;
+        let diff = cs.new_witness_variable(|| diff_val.ok_or(SynthesisError::AssignmentMissing))?;
         cs.enforce_r1cs_constraint(
             || lc!() + diff + lr,
             || lc!() + Variable::One,
@@ -251,8 +245,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for MerkleProofCircuit<F> {
 
         for i in 0..depth {
             let sibling_val = self.path[i];
-            let sibling_var = cs
-                .new_witness_variable(|| sibling_val.ok_or(SynthesisError::AssignmentMissing))?;
+            let sibling_var =
+                cs.new_witness_variable(|| sibling_val.ok_or(SynthesisError::AssignmentMissing))?;
 
             let idx_val = self.path_indices[i];
             let idx_var =
@@ -273,7 +267,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for MerkleProofCircuit<F> {
                     } else {
                         Some(poseidon_hash(s, c, &self.params))
                     }
-                }
+                },
                 _ => None,
             };
 
@@ -332,8 +326,7 @@ pub struct RangeCheckCircuit<F: PrimeField> {
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for RangeCheckCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let val =
-            cs.new_input_variable(|| self.value.ok_or(SynthesisError::AssignmentMissing))?;
+        let val = cs.new_input_variable(|| self.value.ok_or(SynthesisError::AssignmentMissing))?;
 
         let value_u64 = self
             .value
@@ -363,7 +356,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for RangeCheckCircuit<F> {
             )?;
 
             let coeff = F::from(1u64 << i);
-            reconstructed_lc = reconstructed_lc + (coeff, bit_var);
+            reconstructed_lc += (coeff, bit_var);
             bit_vars.push(bit_var);
         }
 
@@ -381,10 +374,10 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for RangeCheckCircuit<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Groth16;
     use ark_bn254::{Bn254, Fr};
     use ark_crypto_primitives::snark::SNARK;
     use ark_std::rand::{RngCore, SeedableRng};
-    use crate::Groth16;
 
     fn make_rng() -> ark_std::rand::rngs::StdRng {
         ark_std::rand::rngs::StdRng::seed_from_u64(ark_std::test_rng().next_u64())
@@ -418,8 +411,7 @@ mod tests {
             right: None,
             params,
         };
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
         let valid = Groth16::<Bn254>::verify(&vk, &[output], &proof).unwrap();
         assert!(valid);
@@ -447,8 +439,7 @@ mod tests {
             path_indices: vec![None],
             params,
         };
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup_circuit, &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
         let valid = Groth16::<Bn254>::verify(&vk, &[root], &proof).unwrap();
         assert!(valid);
@@ -468,8 +459,7 @@ mod tests {
         };
         let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(setup, &mut rng).unwrap();
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng).unwrap();
-        let valid =
-            Groth16::<Bn254>::verify(&vk, &[Fr::from(42u64)], &proof).unwrap();
+        let valid = Groth16::<Bn254>::verify(&vk, &[Fr::from(42u64)], &proof).unwrap();
         assert!(valid);
     }
 

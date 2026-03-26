@@ -30,8 +30,16 @@ jobs:
           UniGroth/target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('UniGroth/Cargo.lock') }}
 
+    - name: Run fmt check
+      run: cargo fmt --check
+      working-directory: ./UniGroth
+
     - name: Run Build
       run: cargo build --verbose
+      working-directory: ./UniGroth
+
+    - name: Run Clippy
+      run: cargo clippy -- -D warnings
       working-directory: ./UniGroth
 
     - name: Run Tests

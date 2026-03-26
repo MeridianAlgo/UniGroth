@@ -17,7 +17,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --all-features
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: cargo check
+        run: cargo check --all-features
+        working-directory: .
+
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --check
+        working-directory: .
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+        working-directory: .
 
   test:
     name: Test
@@ -25,33 +71,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all-features
-
-  fmt-clippy-autofix:
-    name: Auto-fix Formatting and Linting
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
+      - name: Cache dependencies
+        uses: actions/cache@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      
-      - name: Run cargo fmt
-        run: cargo fmt --all
-      
-      - name: Run cargo clippy fix
-        run: cargo clippy --all-features --fix --allow-dirty --allow-staged
-
-      - name: Commit and push changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "style: auto-fix linting and formatting [skip ci]"
-          branch: ${{ github.head_ref || github.ref_name }}
-          commit_options: '--no-verify'
-          status_options: '--untracked-files=no'
-          skip_dirty_check: false
-          skip_fetch: true
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: cargo test
+        run: cargo test --all-features
+        working-directory: .

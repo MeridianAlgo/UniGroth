@@ -6,7 +6,7 @@
 
 <p align="center">
     <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
-    <img src="https://img.shields.io/badge/tests-149%20passing-brightgreen.svg">
+    <img src="https://img.shields.io/badge/tests-156%20passing-brightgreen.svg">
     <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange.svg">
 </p>
 
@@ -77,7 +77,7 @@ UniGroth is a next-generation zkSNARK framework that extends Groth16 with univer
 
 ## Test Status
 
-**149 total tests passing** — 130 unit tests + 19 integration tests, zero failures.
+**156 total tests passing** — 137 unit tests + 19 integration tests, zero failures, zero warnings.
 
 ```bash
 cd UniGroth && cargo test
@@ -201,32 +201,6 @@ These remain **identical** to Groth16:
 - Recursive proof wrapping with SHA-256 chain integrity
 - Multi-curve recursion support (BLS12-377 + BW6-761, BN254 self-composition)
 - Recursion cost estimation and overhead analysis
-
-## Roadmap
-
-### Phase 1: Performance
-- [ ] GPU acceleration via icicle crate for large MSMs (>4096 scalars)
-- [ ] Distributed proving across multiple machines (partitioned MSM)
-- [x] Memory-efficient streaming prover for circuits >2^20 constraints
-- [x] Prover-side batching for parallel multi-circuit proving
-
-### Phase 2: Deployment
-- [x] WASM compilation target for browser-based proving
-- [x] Solidity verifier contract generation for on-chain verification
-- [x] On-chain gas cost benchmarks vs Groth16, Plonk, and STARKs
-- [x] Developer SDK with ergonomic circuit builder API
-
-### Phase 3: Cryptography
-- [x] Recursive proof composition (prove UniGroth verification inside UniGroth)
-- [ ] Advanced lookup arguments (LogUp, cq for smaller lookup tables)
-- [x] Multi-curve recursion chain (BLS12-377 + BW6-761)
-- [ ] Full lattice-based designated-verifier variant for complete PQ security
-
-### Phase 4: Ecosystem & Audit
-- [x] Circuit library: Merkle trees, EdDSA, SHA-256, Poseidon
-- [ ] Formal security proofs (AGM+ROM writeup)
-- [ ] Production security audit
-- [ ] Benchmarking suite against all competitors (Plonk, Marlin, Halo2, STARKs)
 
 ## Build Guide
 

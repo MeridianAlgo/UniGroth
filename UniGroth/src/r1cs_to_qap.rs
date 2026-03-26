@@ -99,7 +99,7 @@ pub trait R1CSToQAP {
         .concat();
 
         Self::witness_map_from_matrices::<F, D>(
-            &matrices,
+            matrices,
             num_inputs,
             num_constraints,
             &full_assignment,
@@ -194,8 +194,8 @@ impl R1CSToQAP for LibsnarkReduction {
             .zip(&matrices[0])
             .zip(&matrices[1])
             .for_each(|(((a, b), at_i), bt_i)| {
-                *a = evaluate_constraint(&at_i, &full_assignment);
-                *b = evaluate_constraint(&bt_i, &full_assignment);
+                *a = evaluate_constraint(at_i, full_assignment);
+                *b = evaluate_constraint(bt_i, full_assignment);
             });
 
         {
