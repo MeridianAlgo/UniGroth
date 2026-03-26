@@ -14,8 +14,8 @@
 //!
 //! This module adds a multi-scalar Schnorr PoK that forces the prover to commit
 //! to their input vector `{x₁, …, xₙ}` during proving, which the verifier can
-//! check alongside the Groth16 verification equation. 
-// 
+//! check alongside the Groth16 verification equation.
+//
 // Thank you Claude for teaching me ts. Thank you Ajak M., Akshath R., and Eshan K. to make sure the rust is valid and optimized.
 //!
 //!
@@ -95,7 +95,11 @@ where
         .map(|(r, x)| *r + challenge * x)
         .collect();
 
-    PublicInputPoK { commitment, challenge, responses }
+    PublicInputPoK {
+        commitment,
+        challenge,
+        responses,
+    }
 }
 
 /// Verify a Schnorr PoK alongside a Groth16 proof.
@@ -209,13 +213,17 @@ mod tests {
         }
     }
 
-    fn setup_prove(x_val: u64) -> (
+    fn setup_prove(
+        x_val: u64,
+    ) -> (
         ark_std::rand::rngs::StdRng,
         crate::VerifyingKey<Bn254>,
         crate::Proof<Bn254>,
         Vec<Fr>,
     ) {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(x_val.wrapping_mul(0xdeadbeef_u64).wrapping_add(1));
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(
+            x_val.wrapping_mul(0xdeadbeef_u64).wrapping_add(1),
+        );
         let x = Fr::from(x_val);
         let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
             SquareCircuit { x: None },
@@ -275,7 +283,8 @@ mod tests {
 
         // Adversary substitutes a random commitment
         use ark_ec::{AffineRepr, CurveGroup};
-        pok.commitment = (ark_bn254::G1Affine::generator().into_group() * Fr::from(42u64)).into_affine();
+        pok.commitment =
+            (ark_bn254::G1Affine::generator().into_group() * Fr::from(42u64)).into_affine();
         assert!(
             !verify_public_input_pok::<Bn254>(&vk, &public_inputs, &proof, &pok),
             "tampered commitment should be rejected (challenge mismatch)"
@@ -300,11 +309,15 @@ mod tests {
         .unwrap();
 
         let se_proof1 = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk, SquareCircuit { x: Some(x) }, &mut rng1,
+            &pk,
+            SquareCircuit { x: Some(x) },
+            &mut rng1,
         )
         .unwrap();
         let se_proof2 = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk, SquareCircuit { x: Some(x) }, &mut rng2,
+            &pk,
+            SquareCircuit { x: Some(x) },
+            &mut rng2,
         )
         .unwrap();
 
@@ -313,7 +326,10 @@ mod tests {
         let public_inputs = vec![x * x];
 
         // Sanity: different randomness → different proof elements
-        assert_ne!(proof1.a, proof2.a, "two proofs with different rng must differ");
+        assert_ne!(
+            proof1.a, proof2.a,
+            "two proofs with different rng must differ"
+        );
 
         let pok = prove_public_input_pok::<Bn254, _>(&vk, &public_inputs, &proof1, &mut rng1);
         assert!(

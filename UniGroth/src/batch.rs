@@ -16,29 +16,20 @@ use ark_relations::gr1cs::ConstraintSynthesizer;
 use ark_std::rand::SeedableRng;
 use ark_std::vec::Vec;
 
-use crate::{Groth16, ProvingKey, VerifyingKey, r1cs_to_qap::R1CSToQAP};
-use crate::security::{SimExtractableProof, SEConfig, make_sim_extractable};
+use crate::security::{make_sim_extractable, SEConfig, SimExtractableProof};
+use crate::{r1cs_to_qap::R1CSToQAP, Groth16, ProvingKey, VerifyingKey};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Configuration for batch proving.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BatchConfig {
     /// Maximum number of proofs to generate in parallel.
     /// 0 = use all available cores.
     pub max_parallelism: usize,
     /// Whether to collect per-proof timing stats
     pub collect_stats: bool,
-}
-
-impl Default for BatchConfig {
-    fn default() -> Self {
-        Self {
-            max_parallelism: 0,
-            collect_stats: false,
-        }
-    }
 }
 
 /// Result of a single proof in the batch.
@@ -81,7 +72,7 @@ where
                 Ok(proof) => {
                     let se_proof = make_sim_extractable(proof, pk, &se_config, &mut rng);
                     BatchProofResult::Success(se_proof)
-                }
+                },
                 Err(e) => BatchProofResult::Failed(format!("{}", e)),
             }
         })
@@ -93,7 +84,11 @@ where
         .count();
     let failures = results.len() - successes;
 
-    BatchResult { results, successes, failures }
+    BatchResult {
+        results,
+        successes,
+        failures,
+    }
 }
 
 /// Sequential batch prove (no parallel feature).
@@ -118,7 +113,7 @@ where
                 Ok(proof) => {
                     let se_proof = make_sim_extractable(proof, pk, &se_config, &mut rng);
                     BatchProofResult::Success(se_proof)
-                }
+                },
                 Err(e) => BatchProofResult::Failed(format!("{}", e)),
             };
         results.push(result);
@@ -130,7 +125,11 @@ where
         .count();
     let failures = results.len() - successes;
 
-    BatchResult { results, successes, failures }
+    BatchResult {
+        results,
+        successes,
+        failures,
+    }
 }
 
 /// Verify multiple proofs in parallel.
@@ -142,9 +141,7 @@ pub fn batch_verify<E: Pairing>(
     let pvk = crate::prepare_verifying_key(vk);
     proofs_and_inputs
         .par_iter()
-        .map(|(proof, inputs)| {
-            Groth16::<E>::verify_proof(&pvk, proof, inputs).unwrap_or(false)
-        })
+        .map(|(proof, inputs)| Groth16::<E>::verify_proof(&pvk, proof, inputs).unwrap_or(false))
         .collect()
 }
 
@@ -157,9 +154,7 @@ pub fn batch_verify<E: Pairing>(
     let pvk = crate::prepare_verifying_key(vk);
     proofs_and_inputs
         .iter()
-        .map(|(proof, inputs)| {
-            Groth16::<E>::verify_proof(&pvk, proof, inputs).unwrap_or(false)
-        })
+        .map(|(proof, inputs)| Groth16::<E>::verify_proof(&pvk, proof, inputs).unwrap_or(false))
         .collect()
 }
 
@@ -200,12 +195,12 @@ pub struct BatchThroughputEstimate {
 mod tests {
     use super::*;
     use ark_bn254::{Bn254, Fr};
+    use ark_crypto_primitives::snark::SNARK;
     use ark_relations::{
         gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
         lc,
     };
     use ark_std::rand::{RngCore, SeedableRng};
-    use ark_crypto_primitives::snark::SNARK;
 
     fn make_rng() -> ark_std::rand::rngs::StdRng {
         ark_std::rand::rngs::StdRng::seed_from_u64(ark_std::test_rng().next_u64())
@@ -218,10 +213,7 @@ mod tests {
     }
 
     impl ConstraintSynthesizer<Fr> for SimpleCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
             let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
 
@@ -239,11 +231,9 @@ mod tests {
     fn test_batch_prove_and_verify() {
         let mut rng = make_rng();
 
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            SimpleCircuit { a: None, b: None },
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, vk) =
+            Groth16::<Bn254>::circuit_specific_setup(SimpleCircuit { a: None, b: None }, &mut rng)
+                .unwrap();
 
         let circuits: Vec<SimpleCircuit> = (1..=4u64)
             .map(|i| SimpleCircuit {

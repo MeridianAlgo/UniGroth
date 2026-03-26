@@ -23,7 +23,7 @@
 
 use ark_ff::{BigInteger, PrimeField};
 use ark_std::vec::Vec;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// A recursive proof wrapping an inner proof with verification metadata.
 #[derive(Clone, Debug)]
@@ -101,9 +101,7 @@ pub fn create_recursive_proof(
 
     let depth = previous.map_or(0, |p| p.recursion_depth + 1);
 
-    let mut proof_chain = previous
-        .map(|p| p.proof_chain.clone())
-        .unwrap_or_default();
+    let mut proof_chain = previous.map(|p| p.proof_chain.clone()).unwrap_or_default();
 
     // Add current proof commitment to the chain
     let mut proof_hasher = Sha256::new();

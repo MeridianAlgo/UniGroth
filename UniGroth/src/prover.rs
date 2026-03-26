@@ -4,11 +4,8 @@ use crate::{r1cs_to_qap::R1CSToQAP, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_poly::GeneralEvaluationDomain;
-use ark_relations::{
-    gr1cs::{
-        ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, Result as R1CSResult,
-        SynthesisMode,
-    },
+use ark_relations::gr1cs::{
+    ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, Result as R1CSResult, SynthesisMode,
 };
 use ark_serialize::CanonicalSerialize;
 use ark_std::{
@@ -17,7 +14,6 @@ use ark_std::{
     vec::Vec,
 };
 use sha2::{Digest, Sha256};
-
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// Create a Groth16 proof using randomness `r` and `s` and
@@ -34,33 +30,59 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     ) -> R1CSResult<Proof<E>> {
         // In Groth16, we compute several MSMs over the proving key queries.
         // We use rayon::join to parallelize these independent MSMs.
-        
+
         #[cfg(feature = "parallel")]
         let ((h_acc, l_aux_acc), (g_a, g1_b, g2_b)) = rayon::join(
-            || rayon::join(
-                || E::G1::msm(&pk.h_query, h).unwrap(),
-                || E::G1::msm(&pk.l_query, aux_assignment).unwrap(),
-            ),
+            || {
+                rayon::join(
+                    || E::G1::msm(&pk.h_query, h).unwrap(),
+                    || E::G1::msm(&pk.l_query, aux_assignment).unwrap(),
+                )
+            },
             || {
                 let r_g1 = pk.delta_g1.mul(r);
                 let s_g1 = pk.delta_g1.mul(s);
                 let s_g2 = pk.vk.delta_g2.mul(s);
-                
+
                 let ((g_a, g1_b), g2_b) = rayon::join(
-                    || rayon::join(
-                        || Self::calculate_coeff(r_g1, &pk.a_query, pk.vk.alpha_g1, input_assignment, aux_assignment),
-                        || {
-                            if !r.is_zero() {
-                                Self::calculate_coeff(s_g1, &pk.b_g1_query, pk.beta_g1, input_assignment, aux_assignment)
-                            } else {
-                                E::G1::zero()
-                            }
-                        }
-                    ),
-                    || Self::calculate_coeff(s_g2, &pk.b_g2_query, pk.vk.beta_g2, input_assignment, aux_assignment)
+                    || {
+                        rayon::join(
+                            || {
+                                Self::calculate_coeff(
+                                    r_g1,
+                                    &pk.a_query,
+                                    pk.vk.alpha_g1,
+                                    input_assignment,
+                                    aux_assignment,
+                                )
+                            },
+                            || {
+                                if !r.is_zero() {
+                                    Self::calculate_coeff(
+                                        s_g1,
+                                        &pk.b_g1_query,
+                                        pk.beta_g1,
+                                        input_assignment,
+                                        aux_assignment,
+                                    )
+                                } else {
+                                    E::G1::zero()
+                                }
+                            },
+                        )
+                    },
+                    || {
+                        Self::calculate_coeff(
+                            s_g2,
+                            &pk.b_g2_query,
+                            pk.vk.beta_g2,
+                            input_assignment,
+                            aux_assignment,
+                        )
+                    },
                 );
                 (g_a, g1_b, g2_b)
-            }
+            },
         );
 
         #[cfg(not(feature = "parallel"))]
@@ -68,17 +90,35 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             let r_g1 = pk.delta_g1.mul(r);
             let s_g1 = pk.delta_g1.mul(s);
             let s_g2 = pk.vk.delta_g2.mul(s);
-            
+
             (
                 E::G1::msm(&pk.h_query, h).unwrap(),
                 E::G1::msm(&pk.l_query, aux_assignment).unwrap(),
-                Self::calculate_coeff(r_g1, &pk.a_query, pk.vk.alpha_g1, input_assignment, aux_assignment),
+                Self::calculate_coeff(
+                    r_g1,
+                    &pk.a_query,
+                    pk.vk.alpha_g1,
+                    input_assignment,
+                    aux_assignment,
+                ),
                 if !r.is_zero() {
-                    Self::calculate_coeff(s_g1, &pk.b_g1_query, pk.beta_g1, input_assignment, aux_assignment)
+                    Self::calculate_coeff(
+                        s_g1,
+                        &pk.b_g1_query,
+                        pk.beta_g1,
+                        input_assignment,
+                        aux_assignment,
+                    )
                 } else {
                     E::G1::zero()
                 },
-                Self::calculate_coeff(s_g2, &pk.b_g2_query, pk.vk.beta_g2, input_assignment, aux_assignment)
+                Self::calculate_coeff(
+                    s_g2,
+                    &pk.b_g2_query,
+                    pk.vk.beta_g2,
+                    input_assignment,
+                    aux_assignment,
+                ),
             )
         };
 
@@ -145,7 +185,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         fresh.serialize_uncompressed(&mut buf).unwrap();
 
         let mut hasher2 = Sha256::new();
-        hasher2.update(&circuit_tag);
+        hasher2.update(circuit_tag);
         hasher2.update(&buf);
         let combined = hasher2.finalize();
 
@@ -171,8 +211,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         prover.finalize();
 
-        let h = QAP::witness_map::<E::ScalarField, GeneralEvaluationDomain<E::ScalarField>>(prover.clone())?;
-        
+        let h = QAP::witness_map::<E::ScalarField, GeneralEvaluationDomain<E::ScalarField>>(
+            prover.clone(),
+        )?;
+
         let cs = prover.borrow().unwrap();
         let input_assignment = cs.instance_assignment().unwrap();
         let aux_assignment = cs.witness_assignment().unwrap();
@@ -182,8 +224,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             r,
             s,
             &h,
-            &input_assignment,
-            &aux_assignment,
+            input_assignment,
+            aux_assignment,
         )
     }
 
@@ -247,13 +289,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         G::Group: VariableBaseMSM<MulBase = G>,
     {
         let el = query[0];
-        
-        // Combined MSMs without concat: 
+
+        // Combined MSMs without concat:
         // query[0] matches input_assignment[0] (constant 1)
         // query[1..input_assignment.len()] matches input_assignment[1..]
         // query[input_assignment.len()..] matches aux_assignment
         let acc = G::Group::msm(&query[1..input_assignment.len()], &input_assignment[1..]).unwrap()
-                + G::Group::msm(&query[input_assignment.len()..], aux_assignment).unwrap();
+            + G::Group::msm(&query[input_assignment.len()..], aux_assignment).unwrap();
 
         let mut res = initial;
         res.add_assign(&el);

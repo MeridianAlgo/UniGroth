@@ -20,12 +20,12 @@
 //! References: BG18 (2018), BCFGRS16 (2016), AGM (2017), ABPR19 (2019)
 
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{UniformRand, Zero, PrimeField};
+use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_serialize::*;
 use ark_std::{rand::RngCore, vec::Vec};
 use core::ops::Neg;
 
-use crate::{Proof, ProvingKey, VerifyingKey, PreparedVerifyingKey};
+use crate::{PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
 
 // ─── Simulation-Extractable Proof ────────────────────────────────────────────
 
@@ -47,30 +47,59 @@ pub struct SimExtractableProof<E: Pairing> {
 }
 
 pub fn compute_proof_hash<E: Pairing>(proof: &Proof<E>) -> E::ScalarField {
-    use ark_crypto_primitives::sponge::{poseidon::{PoseidonConfig, PoseidonSponge}, CryptographicSponge};
-    use ark_std::vec;
+    use ark_crypto_primitives::sponge::{
+        poseidon::{PoseidonConfig, PoseidonSponge},
+        CryptographicSponge,
+    };
     use ark_ff::UniformRand;
     use ark_std::rand::SeedableRng;
-    
+    use ark_std::vec;
+
     // Simplistic default config for ROM hashing
     let full_rounds = 8;
     let partial_rounds = 31;
     let alpha = 5;
     let mds = vec![
-        vec![E::ScalarField::from(1u128), E::ScalarField::from(0u128), E::ScalarField::from(0u128)],
-        vec![E::ScalarField::from(0u128), E::ScalarField::from(1u128), E::ScalarField::from(0u128)],
-        vec![E::ScalarField::from(0u128), E::ScalarField::from(0u128), E::ScalarField::from(1u128)],
+        vec![
+            E::ScalarField::from(1u128),
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(0u128),
+        ],
+        vec![
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(1u128),
+            E::ScalarField::from(0u128),
+        ],
+        vec![
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(1u128),
+        ],
     ];
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
     let round_constants = (0..(full_rounds + partial_rounds))
-        .map(|_| vec![E::ScalarField::rand(&mut rng), E::ScalarField::rand(&mut rng), E::ScalarField::rand(&mut rng)])
+        .map(|_| {
+            vec![
+                E::ScalarField::rand(&mut rng),
+                E::ScalarField::rand(&mut rng),
+                E::ScalarField::rand(&mut rng),
+            ]
+        })
         .collect::<Vec<_>>();
-    let config = PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, round_constants, 2, 1);
-    
+    let config = PoseidonConfig::new(
+        full_rounds,
+        partial_rounds,
+        alpha,
+        mds,
+        round_constants,
+        2,
+        1,
+    );
+
     let mut sponge = PoseidonSponge::new(&config);
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();
-    
+
     sponge.absorb(&bytes);
     sponge.squeeze_field_elements(1)[0]
 }
@@ -239,13 +268,19 @@ pub fn verify_sim_extractable<E: Pairing>(
     // Standard Groth16 verification check (for debug)
     let mut pairings = vec![
         (E::G1Prepared::from(proof.a), E::G2Prepared::from(proof.b)),
-        (E::G1Prepared::from(prepared_inputs), pvk.gamma_g2_neg_pc.clone()),
+        (
+            E::G1Prepared::from(prepared_inputs),
+            pvk.gamma_g2_neg_pc.clone(),
+        ),
         (E::G1Prepared::from(proof.c), pvk.delta_g2_neg_pc.clone()),
     ];
 
     if let Some(d) = se_proof.se_element {
         // Add the BG18 correction term: e(delta_g1, D)^-1 = e(delta_g1, -D)
-        pairings.push((pvk.delta_g1_prepared.clone(), E::G2Prepared::from(d.into_group().neg().into_affine())));
+        pairings.push((
+            pvk.delta_g1_prepared.clone(),
+            E::G2Prepared::from(d.into_group().neg().into_affine()),
+        ));
     }
 
     let final_res = E::multi_pairing(
@@ -330,13 +365,13 @@ impl SecurityParams {
     pub fn security_report(&self) -> SecurityReport {
         SecurityReport {
             lambda: self.lambda,
-            knowledge_soundness_agm: true,    // Always: Groth16 is KS in AGM
-            zero_knowledge: true,             // Always: Groth16 is ZK
+            knowledge_soundness_agm: true, // Always: Groth16 is KS in AGM
+            zero_knowledge: true,          // Always: Groth16 is ZK
             simulation_extractable: self.sim_extractable,
             subversion_zk: self.subversion_zk,
             post_quantum: false, // NOT post-quantum (pairing-based)
-            // PQ: Would require switching to lattice-based or hash-based inner prover
-            // See "Lattice-Based SNARKs" (2025) for a designated-verifier PQ path
+                                 // PQ: Would require switching to lattice-based or hash-based inner prover
+                                 // See "Lattice-Based SNARKs" (2025) for a designated-verifier PQ path
         }
     }
 }
@@ -358,7 +393,11 @@ impl SecurityReport {
         println!("Security level: {}-bit", self.lambda);
         println!(
             "Knowledge soundness (AGM): {}",
-            if self.knowledge_soundness_agm { "[OK]" } else { "[NO]" }
+            if self.knowledge_soundness_agm {
+                "[OK]"
+            } else {
+                "[NO]"
+            }
         );
         println!(
             "Zero-knowledge: {}",
@@ -366,7 +405,11 @@ impl SecurityReport {
         );
         println!(
             "Simulation-extractable: {}",
-            if self.simulation_extractable { "[OK]" } else { "[NO]" }
+            if self.simulation_extractable {
+                "[OK]"
+            } else {
+                "[NO]"
+            }
         );
         println!(
             "Subversion zero-knowledge: {}",
@@ -466,11 +509,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(5u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -495,11 +536,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, _vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, _vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(7u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -525,11 +564,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(9u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
@@ -590,7 +627,8 @@ mod tests {
         let public_inputs = vec![x * x];
 
         let valid = crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs).unwrap();
-        let invalid = crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap();
+        let invalid =
+            crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap();
 
         assert!(valid, "original proof must verify");
         assert!(!invalid, "proof with tampered A must be rejected");
@@ -689,14 +727,16 @@ mod tests {
         // Wrap with ROM blinding (se_element = None)
         let se_config = SEConfig::rom_se();
         let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
-        assert!(se_proof.se_element.is_none(), "ROM proof must NOT have BG18 element");
+        assert!(
+            se_proof.se_element.is_none(),
+            "ROM proof must NOT have BG18 element"
+        );
 
         // Attacker forges a BG18-style se_element on top of a valid ROM proof
         let mut forged = se_proof.clone();
         use ark_ec::PrimeGroup;
-        forged.se_element = Some(
-            (ark_bn254::G2Projective::generator() * Fr::from(123u64)).into_affine(),
-        );
+        forged.se_element =
+            Some((ark_bn254::G2Projective::generator() * Fr::from(123u64)).into_affine());
 
         let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
         let public_inputs = vec![x * x];
@@ -732,7 +772,10 @@ mod tests {
 
         let se_config = SEConfig::rom_se();
         let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
-        assert!(se_proof.se_element.is_none(), "ROM SE proof must NOT have BG18 element");
+        assert!(
+            se_proof.se_element.is_none(),
+            "ROM SE proof must NOT have BG18 element"
+        );
 
         let mut tampered = se_proof.clone();
         use ark_ec::PrimeGroup;
@@ -757,11 +800,9 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
-        let (pk, _vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            circuit,
-            &mut rng,
-        )
-        .unwrap();
+        let (pk, _vk) =
+            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
+                .unwrap();
 
         let x = Fr::from(3u64);
         let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(

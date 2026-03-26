@@ -13,3 +13,4 @@ public.json
 verification_key.json
 .DS_Store
 *.log
+compare_output.txt

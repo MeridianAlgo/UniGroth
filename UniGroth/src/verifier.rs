@@ -23,7 +23,10 @@ pub fn prepare_verifying_key<E: Pairing>(vk: &VerifyingKey<E>) -> PreparedVerify
 }
 
 /// Prepare the verifying key with delta_g1 for simulation-extractability support.
-pub fn prepare_verifying_key_with_delta<E: Pairing>(vk: &VerifyingKey<E>, delta_g1: E::G1Affine) -> PreparedVerifyingKey<E> {
+pub fn prepare_verifying_key_with_delta<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    delta_g1: E::G1Affine,
+) -> PreparedVerifyingKey<E> {
     PreparedVerifyingKey {
         vk: vk.clone(),
         alpha_g1_beta_g2: E::pairing(vk.alpha_g1, vk.beta_g2).0,

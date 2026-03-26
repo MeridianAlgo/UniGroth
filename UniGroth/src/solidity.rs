@@ -45,7 +45,11 @@ pub fn estimate_gas_cost(num_public_inputs: usize) -> GasCostEstimate {
 }
 
 fn serialize_point_hex(point_bytes: &[u8]) -> String {
-    let hex: String = point_bytes.iter().rev().map(|b| format!("{:02x}", b)).collect();
+    let hex: String = point_bytes
+        .iter()
+        .rev()
+        .map(|b| format!("{:02x}", b))
+        .collect();
     format!("0x{}", hex)
 }
 
@@ -77,10 +81,7 @@ fn format_g2(p: &G2Affine) -> ((String, String), (String, String)) {
 }
 
 /// Generate a Solidity verifier contract for the given verifying key.
-pub fn generate_solidity_verifier(
-    vk: &VerifyingKey<Bn254>,
-    contract_name: &str,
-) -> String {
+pub fn generate_solidity_verifier(vk: &VerifyingKey<Bn254>, contract_name: &str) -> String {
     let num_inputs = vk.gamma_abc_g1.len() - 1;
 
     let (alpha_x, alpha_y) = format_g1(&vk.alpha_g1);
@@ -269,6 +270,7 @@ pub fn gas_cost_comparison(num_public_inputs: usize) -> Vec<(&'static str, GasCo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Groth16;
     use ark_bn254::{Bn254, Fr};
     use ark_crypto_primitives::snark::SNARK;
     use ark_relations::{
@@ -276,7 +278,6 @@ mod tests {
         lc,
     };
     use ark_std::rand::{RngCore, SeedableRng};
-    use crate::Groth16;
 
     fn make_rng() -> ark_std::rand::rngs::StdRng {
         ark_std::rand::rngs::StdRng::seed_from_u64(ark_std::test_rng().next_u64())
@@ -289,10 +290,7 @@ mod tests {
     }
 
     impl ConstraintSynthesizer<Fr> for MulCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
             let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
             let c_val = self.a.unwrap_or_default() * self.b.unwrap_or_default();
@@ -305,11 +303,9 @@ mod tests {
     #[test]
     fn test_solidity_generation() {
         let mut rng = make_rng();
-        let (_, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            MulCircuit { a: None, b: None },
-            &mut rng,
-        )
-        .unwrap();
+        let (_, vk) =
+            Groth16::<Bn254>::circuit_specific_setup(MulCircuit { a: None, b: None }, &mut rng)
+                .unwrap();
 
         let sol = generate_solidity_verifier(&vk, "UniGrothVerifier");
         assert!(sol.contains("contract UniGrothVerifier"));

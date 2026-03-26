@@ -12,7 +12,7 @@
 //!
 //! References: Bottleneck-free Groth16 (2024), Bellman streaming prover
 
-use ark_ec::CurveGroup;
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::PrimeField;
 
 /// Configuration for the streaming prover.
@@ -122,8 +122,7 @@ where
         let start = chunk_idx * chunk_size;
         let end = (start + chunk_size).min(n);
 
-        let partial = G::msm(&bases[start..end], &witness[start..end])
-            .unwrap_or(G::zero());
+        let partial = G::msm(&bases[start..end], &witness[start..end]).unwrap_or(G::zero());
         accumulator += partial;
         on_chunk(chunk_idx, &accumulator);
     }
@@ -170,6 +169,119 @@ pub struct StreamingMemoryEstimate {
     pub num_chunks: usize,
 }
 
+/// Create a Groth16 proof using streaming/chunked MSM computation.
+///
+/// For circuits with >2^20 constraints, this bounds peak memory by processing
+/// the h_query and l_query MSMs in fixed-size chunks instead of loading the
+/// full witness into memory at once.
+///
+/// Returns the same `Proof<E>` as the non-streaming prover — no protocol changes.
+///
+/// # Arguments
+/// * `pk` - Proving key
+/// * `r`, `s` - Proving randomness
+/// * `h` - QAP quotient polynomial coefficients
+/// * `input_assignment` - Public input assignment
+/// * `aux_assignment` - Witness (private) assignment
+/// * `config` - Streaming configuration (chunk size, parallelism)
+pub fn create_streaming_proof<E: Pairing>(
+    pk: &crate::ProvingKey<E>,
+    r: E::ScalarField,
+    s: E::ScalarField,
+    h: &[E::ScalarField],
+    input_assignment: &[E::ScalarField],
+    aux_assignment: &[E::ScalarField],
+    config: &StreamingConfig,
+) -> crate::Proof<E>
+where
+    E::G1: VariableBaseMSM<MulBase = E::G1Affine>,
+    E::G2: VariableBaseMSM<MulBase = E::G2Affine>,
+{
+    use ark_ff::Zero;
+
+    // Stream the two large MSMs: h_query and l_query
+    let h_acc = streaming_msm::<E::G1>(&pk.h_query[..h.len()], h, config).result;
+
+    let l_acc =
+        streaming_msm::<E::G1>(&pk.l_query[..aux_assignment.len()], aux_assignment, config).result;
+
+    // A and B computations are typically small, no need to stream
+    let r_g1 = pk.delta_g1.into_group() * r;
+    let s_g1 = pk.delta_g1.into_group() * s;
+    let s_g2 = pk.vk.delta_g2.into_group() * s;
+
+    let g_a = calculate_coeff_streaming::<E::G1Affine>(
+        r_g1,
+        &pk.a_query,
+        pk.vk.alpha_g1,
+        input_assignment,
+        aux_assignment,
+    );
+
+    let g1_b = if !r.is_zero() {
+        calculate_coeff_streaming::<E::G1Affine>(
+            s_g1,
+            &pk.b_g1_query,
+            pk.beta_g1,
+            input_assignment,
+            aux_assignment,
+        )
+    } else {
+        E::G1::zero()
+    };
+
+    let g2_b = calculate_coeff_streaming::<E::G2Affine>(
+        s_g2,
+        &pk.b_g2_query,
+        pk.vk.beta_g2,
+        input_assignment,
+        aux_assignment,
+    );
+
+    let r_s_delta_g1 = pk.delta_g1.into_group() * (r * s);
+    let s_g_a = g_a * &s;
+    let r_g1_b = g1_b * &r;
+
+    let mut g_c = s_g_a;
+    g_c += &r_g1_b;
+    g_c -= &r_s_delta_g1;
+    g_c += &l_acc;
+    g_c += &h_acc;
+
+    let g1_affines = E::G1::normalize_batch(&[g_a, g_c]);
+    crate::Proof {
+        a: g1_affines[0],
+        b: g2_b.into_affine(),
+        c: g1_affines[1],
+    }
+}
+
+/// Helper: calculate_coeff for streaming prover (same logic as prover.rs but standalone).
+fn calculate_coeff_streaming<G: AffineRepr>(
+    initial: G::Group,
+    query: &[G],
+    vk_param: G,
+    input_assignment: &[G::ScalarField],
+    aux_assignment: &[G::ScalarField],
+) -> G::Group
+where
+    G::Group: VariableBaseMSM<MulBase = G>,
+{
+    use core::ops::AddAssign;
+
+    let el = query[0];
+
+    let acc = G::Group::msm(&query[1..input_assignment.len()], &input_assignment[1..]).unwrap()
+        + G::Group::msm(&query[input_assignment.len()..], aux_assignment).unwrap();
+
+    let mut res = initial;
+    res.add_assign(&el);
+    res += &acc;
+    res.add_assign(&vk_param);
+
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,9 +296,7 @@ mod tests {
         let n = 256;
 
         let scalars: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-        let bases: Vec<_> = (0..n)
-            .map(|_| G1::rand(&mut rng).into_affine())
-            .collect();
+        let bases: Vec<_> = (0..n).map(|_| G1::rand(&mut rng).into_affine()).collect();
 
         let direct = G1::msm(&bases, &scalars).unwrap();
 
@@ -206,9 +316,7 @@ mod tests {
         let n = 32;
 
         let scalars: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-        let bases: Vec<_> = (0..n)
-            .map(|_| G1::rand(&mut rng).into_affine())
-            .collect();
+        let bases: Vec<_> = (0..n).map(|_| G1::rand(&mut rng).into_affine()).collect();
 
         let config = StreamingConfig {
             chunk_size: 1024,
@@ -237,9 +345,7 @@ mod tests {
         let n = 128;
 
         let scalars: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
-        let bases: Vec<_> = (0..n)
-            .map(|_| G1::rand(&mut rng).into_affine())
-            .collect();
+        let bases: Vec<_> = (0..n).map(|_| G1::rand(&mut rng).into_affine()).collect();
 
         let config = StreamingConfig {
             chunk_size: 32,
@@ -247,14 +353,10 @@ mod tests {
         };
 
         let mut callback_count = 0;
-        let result = streaming_witness_process::<Fr, G1, _>(
-            &bases,
-            &scalars,
-            &config,
-            |_idx, _acc| {
+        let result =
+            streaming_witness_process::<Fr, G1, _>(&bases, &scalars, &config, |_idx, _acc| {
                 callback_count += 1;
-            },
-        );
+            });
 
         assert_eq!(callback_count, 4);
         let direct = G1::msm(&bases, &scalars).unwrap();

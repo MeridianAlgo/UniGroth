@@ -26,28 +26,25 @@ use ark_std::{
     test_rng,
 };
 use unigroth::{
-    aggregate_proofs, verify_aggregated,
-    folding::{IVC, verify_accumulator},
+    aggregate_proofs,
+    folding::{verify_accumulator, IVC},
     kzg::UniversalSRS,
     optimizations::{
-        compute_h_coset_evals, compute_witness_4fft, parallel_msm,
-        CosetDomainCache, GpuMsmDispatcher, PolymathCompressor, ProverProfile,
+        compute_h_coset_evals, compute_witness_4fft, parallel_msm, CosetDomainCache,
+        GpuMsmDispatcher, PolymathCompressor, ProverProfile,
     },
-    plonkish::{
-        PlonkishConstraintSystem,
-        plonkish_to_r1cs_constraints,
-    },
+    plonkish::{plonkish_to_r1cs_constraints, PlonkishConstraintSystem},
     pq_inner::{
-        BiniusProver, HybridProver, Plonky3Prover, PqConfig, PqInnerProver, PqScheme,
-        aggregate_pq_proofs, prove_pq, verify_pq,
+        aggregate_pq_proofs, prove_pq, verify_pq, BiniusProver, HybridProver, Plonky3Prover,
+        PqConfig, PqInnerProver, PqScheme,
     },
+    prepare_verifying_key_with_delta,
+    r1cs_to_qap::LibsnarkReduction,
     security::{
-        make_sim_extractable, verify_sim_extractable, apply_subversion_zk,
-        SEConfig, SecurityParams,
+        apply_subversion_zk, make_sim_extractable, verify_sim_extractable, SEConfig, SecurityParams,
     },
     universal_setup::UniversalParams,
-    Groth16, prepare_verifying_key_with_delta,
-    r1cs_to_qap::LibsnarkReduction,
+    verify_aggregated, Groth16,
 };
 
 // ─── Test Circuits ───────────────────────────────────────────────────────────
@@ -96,10 +93,9 @@ fn test_full_pipeline_prove_verify_aggregate() {
 
     // Step 1: Setup
     let setup_circuit = CubicCircuit { x: None };
-    let (pk, vk) = Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-        setup_circuit,
-        &mut rng,
-    ).unwrap();
+    let (pk, vk) =
+        Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(setup_circuit, &mut rng)
+            .unwrap();
     println!("[1] Setup complete");
 
     // Step 2: Generate multiple proofs with different witnesses
@@ -126,35 +122,56 @@ fn test_full_pipeline_prove_verify_aggregate() {
         proofs.push(se_proof.groth16_proof);
         public_inputs_all.push(vec![y]);
     }
-    println!("[2] Generated and verified {} individual proofs", proofs.len());
+    println!(
+        "[2] Generated and verified {} individual proofs",
+        proofs.len()
+    );
 
     // Step 3: Aggregate all proofs
     let agg = aggregate_proofs::<Bn254, _>(&proofs, &public_inputs_all, &mut rng);
     assert_eq!(agg.n, 4);
     let agg_valid = verify_aggregated(&vk, &agg);
     assert!(agg_valid, "Aggregated proof must verify");
-    println!("[3] Aggregated {} proofs → single verification: PASS", agg.n);
+    println!(
+        "[3] Aggregated {} proofs → single verification: PASS",
+        agg.n
+    );
 
     // Step 4: Security wrapping (SE + S-ZK)
     let x = Fr::from(99u64);
     let y = x * x * x + x + Fr::from(5u64);
     let raw_proof = Groth16::<Bn254, LibsnarkReduction>::create_random_proof_with_reduction(
-        CubicCircuit { x: Some(x) }, &pk, &mut rng,
-    ).unwrap();
+        CubicCircuit { x: Some(x) },
+        &pk,
+        &mut rng,
+    )
+    .unwrap();
 
     // BG18 SE
     let bg18_config = SEConfig::full_se();
     let se_proof = make_sim_extractable(raw_proof.clone(), &pk, &bg18_config, &mut rng);
-    assert!(se_proof.se_element.is_some(), "BG18 SE element must be present");
+    assert!(
+        se_proof.se_element.is_some(),
+        "BG18 SE element must be present"
+    );
 
     // ROM SE
     let rom_config = SEConfig::rom_se();
     let rom_proof = make_sim_extractable(raw_proof.clone(), &pk, &rom_config, &mut rng);
-    assert!(rom_proof.se_element.is_none(), "ROM SE must not have explicit element");
-    assert!(!rom_proof.proof_hash.is_zero(), "ROM proof hash must be non-zero");
+    assert!(
+        rom_proof.se_element.is_none(),
+        "ROM SE must not have explicit element"
+    );
+    assert!(
+        !rom_proof.proof_hash.is_zero(),
+        "ROM proof hash must be non-zero"
+    );
 
     let pvk = prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-    assert!(verify_sim_extractable(&pvk, &[y], &rom_proof), "ROM SE proof must verify");
+    assert!(
+        verify_sim_extractable(&pvk, &[y], &rom_proof),
+        "ROM SE proof must verify"
+    );
 
     // Subversion-ZK
     let szk_proof = apply_subversion_zk(&raw_proof, &vk, &mut rng);
@@ -194,7 +211,10 @@ fn test_folding_ivc_pipeline() {
     assert_eq!(acc.randomness_transcript.len(), 19);
 
     // Full decision predicate verification
-    assert!(verify_accumulator(&srs, &acc), "Decision predicate must pass after 20 honest folds");
+    assert!(
+        verify_accumulator(&srs, &acc),
+        "Decision predicate must pass after 20 honest folds"
+    );
 
     println!("[IVC] 20 steps folded → accumulator valid");
     println!("  fold_count: {}", acc.fold_count);
@@ -249,7 +269,10 @@ fn test_plonkish_full_pipeline() {
     println!("  Lookup rows:      {} (cheap!)", stats.lookup_rows);
     println!("  Custom gates:     {}", stats.custom_gates);
     println!("  Copy constraints: {}", stats.copy_constraints);
-    println!("  Compression:      {:.1}x vs R1CS", stats.compression_ratio);
+    println!(
+        "  Compression:      {:.1}x vs R1CS",
+        stats.compression_ratio
+    );
 
     // R1CS conversion
     let r1cs = plonkish_to_r1cs_constraints(&cs);
@@ -257,7 +280,11 @@ fn test_plonkish_full_pipeline() {
     for c in &r1cs {
         assert!(c.is_satisfied());
     }
-    println!("  R1CS constraints: {} (from {} Plonkish rows)", r1cs.len(), stats.total_rows);
+    println!(
+        "  R1CS constraints: {} (from {} Plonkish rows)",
+        r1cs.len(),
+        stats.total_rows
+    );
 
     println!("\n=== Plonkish Pipeline: ALL PASS ===");
 }
@@ -278,10 +305,18 @@ fn test_pq_inner_full_pipeline() {
         assert!(valid, "{:?} prove/verify must succeed", config.scheme);
 
         // Verify that wrong public inputs are rejected
-        assert!(!verify_pq(&config, &proof, b"wrong_inputs"),
-            "{:?} must reject wrong public inputs", config.scheme);
+        assert!(
+            !verify_pq(&config, &proof, b"wrong_inputs"),
+            "{:?} must reject wrong public inputs",
+            config.scheme
+        );
 
-        println!("[{:?}] proof: {} bytes, verified: {}", config.scheme, proof.byte_len(), valid);
+        println!(
+            "[{:?}] proof: {} bytes, verified: {}",
+            config.scheme,
+            proof.byte_len(),
+            valid
+        );
     }
 
     // Aggregation
@@ -290,13 +325,26 @@ fn test_pq_inner_full_pipeline() {
         .map(|i| BiniusProver::prove(&config, &[i as u8; 64], b"agg_inputs"))
         .collect();
     let agg = aggregate_pq_proofs(&proofs, &config);
-    println!("\n[Aggregation] {} Binius proofs → {} byte aggregate", proofs.len(), agg.len());
+    println!(
+        "\n[Aggregation] {} Binius proofs → {} byte aggregate",
+        proofs.len(),
+        agg.len()
+    );
 
     // Size comparison
     println!("\n[Size Comparison at 128-bit security]");
-    println!("  Binius:      {} bytes", BiniusProver::prove(&PqConfig::new(PqScheme::Binius), witness, public_inputs).byte_len());
-    println!("  Plonky3:     {} bytes", Plonky3Prover::prove(&PqConfig::new(PqScheme::Plonky3), witness, public_inputs).byte_len());
-    println!("  Hybrid:      {} bytes", HybridProver::prove(&PqConfig::new(PqScheme::Hybrid), witness, public_inputs).byte_len());
+    println!(
+        "  Binius:      {} bytes",
+        BiniusProver::prove(&PqConfig::new(PqScheme::Binius), witness, public_inputs).byte_len()
+    );
+    println!(
+        "  Plonky3:     {} bytes",
+        Plonky3Prover::prove(&PqConfig::new(PqScheme::Plonky3), witness, public_inputs).byte_len()
+    );
+    println!(
+        "  Hybrid:      {} bytes",
+        HybridProver::prove(&PqConfig::new(PqScheme::Hybrid), witness, public_inputs).byte_len()
+    );
     println!("  Groth16 SE:  ~160 bytes (pairing-based, not PQ)");
 
     println!("\n=== Post-Quantum Pipeline: ALL PASS ===");
@@ -320,17 +368,30 @@ fn test_optimization_pipeline() {
     let result_5fft = compute_witness_4fft(&domain, a.clone(), b.clone());
     assert_eq!(result_5fft.fft_count, 5);
     assert!(!result_5fft.h_poly.is_empty());
-    println!("[5-FFT] h_poly degree: {}, fft_count: {}", result_5fft.h_poly.len(), result_5fft.fft_count);
+    println!(
+        "[5-FFT] h_poly degree: {}, fft_count: {}",
+        result_5fft.h_poly.len(),
+        result_5fft.fft_count
+    );
 
     // 4-FFT path (coset evaluation form)
     let (h_coset, fft_count_4) = compute_h_coset_evals(&domain, a.clone(), b.clone());
     assert_eq!(fft_count_4, 4);
     assert_eq!(h_coset.len(), 2 * domain_size);
-    println!("[4-FFT] h_coset_evals length: {}, fft_count: {}", h_coset.len(), fft_count_4);
+    println!(
+        "[4-FFT] h_coset_evals length: {}, fft_count: {}",
+        h_coset.len(),
+        fft_count_4
+    );
 
     // Coset domain cache
     let cache = CosetDomainCache::<Fr, GeneralEvaluationDomain<Fr>>::new(domain_size).unwrap();
-    let result_cached = unigroth::optimizations::compute_witness_4fft_with_cache(&domain, &cache, a.clone(), b.clone());
+    let result_cached = unigroth::optimizations::compute_witness_4fft_with_cache(
+        &domain,
+        &cache,
+        a.clone(),
+        b.clone(),
+    );
     assert_eq!(result_5fft.h_poly, result_cached.h_poly);
     println!("[Cache] Cached result matches uncached ✓");
 
@@ -341,12 +402,18 @@ fn test_optimization_pipeline() {
     let scalars: Vec<Fr> = (0..64).map(|_| Fr::rand(&mut rng)).collect();
     let (msm_result, stats) = parallel_msm::<Bn254>(&bases, &scalars);
     assert!(!msm_result.is_zero());
-    println!("[MSM] n={}, window={}, algorithm={}", stats.num_scalars, stats.window_size, stats.algorithm);
+    println!(
+        "[MSM] n={}, window={}, algorithm={}",
+        stats.num_scalars, stats.window_size, stats.algorithm
+    );
 
     // GPU dispatcher (falls back to CPU)
     let (dispatch_result, _) = GpuMsmDispatcher::dispatch::<Bn254>(&bases, &scalars);
     assert_eq!(dispatch_result, msm_result);
-    println!("[GPU Dispatch] Falls back to CPU Pippenger for n={} ✓", bases.len());
+    println!(
+        "[GPU Dispatch] Falls back to CPU Pippenger for n={} ✓",
+        bases.len()
+    );
 
     // Proof compression
     assert!(PolymathCompressor::can_compress());
@@ -373,12 +440,22 @@ fn test_universal_setup_pipeline() {
 
     // Derive keys for different circuits (same circuit, different key derivations)
     let circuit1 = CubicCircuit { x: None };
-    let keys1 = universal.derive_keys::<_, LibsnarkReduction>(circuit1, &mut rng).unwrap();
-    println!("[Derive] Circuit keys derived: VK has {} gamma_abc elements", keys1.1.gamma_abc_g1.len());
+    let keys1 = universal
+        .derive_keys::<_, LibsnarkReduction>(circuit1, &mut rng)
+        .unwrap();
+    println!(
+        "[Derive] Circuit keys derived: VK has {} gamma_abc elements",
+        keys1.1.gamma_abc_g1.len()
+    );
 
     let circuit2 = CubicCircuit { x: None };
-    let keys2 = universal.derive_keys::<_, LibsnarkReduction>(circuit2, &mut rng).unwrap();
-    println!("[Derive] Second derivation: VK has {} gamma_abc elements", keys2.1.gamma_abc_g1.len());
+    let keys2 = universal
+        .derive_keys::<_, LibsnarkReduction>(circuit2, &mut rng)
+        .unwrap();
+    println!(
+        "[Derive] Second derivation: VK has {} gamma_abc elements",
+        keys2.1.gamma_abc_g1.len()
+    );
 
     // Update ceremony
     universal.update(&mut rng);
@@ -388,7 +465,11 @@ fn test_universal_setup_pipeline() {
     use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial};
     use unigroth::kzg::KZG;
     let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
-    let poly = DensePolynomial::from_coefficients_vec(vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
+    let poly = DensePolynomial::from_coefficients_vec(vec![
+        Fr::from(1u64),
+        Fr::from(2u64),
+        Fr::from(3u64),
+    ]);
     let commit = KZG::commit(&srs, &poly);
     let point = Fr::from(5u64);
     let (value, opening) = KZG::open(&srs, &poly, &point);

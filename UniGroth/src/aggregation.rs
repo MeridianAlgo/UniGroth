@@ -39,10 +39,10 @@
 //! - [SnarkPack] Gabizon & Williamson, "SnarkPack: Practical SNARK Aggregation", EuroCrypt 2022
 //! - [Bunz et al.] "Proofs for Inner Pairing Products and Applications", ASIACRYPT 2021
 
+use crate::{Proof, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
-use ark_std::{rand::Rng, vec::Vec, vec, One, Zero};
-use crate::{Proof, VerifyingKey};
+use ark_std::{rand::Rng, vec, vec::Vec, One, Zero};
 
 /// An aggregated proof for N individual Groth16 proofs.
 ///
@@ -86,7 +86,8 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
 ) -> AggregatedProof<E> {
     assert!(!proofs.is_empty(), "Cannot aggregate zero proofs");
     assert_eq!(
-        proofs.len(), public_inputs.len(),
+        proofs.len(),
+        public_inputs.len(),
         "proofs and public_inputs must have the same length"
     );
     let n = proofs.len();
@@ -108,7 +109,9 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
     }
 
     // scaled_a_vec[i] = rⁱ · Aᵢ  (G₁ scalar multiplications, batch-normalized)
-    let scaled_a_proj: Vec<E::G1> = proofs.iter().zip(powers.iter())
+    let scaled_a_proj: Vec<E::G1> = proofs
+        .iter()
+        .zip(powers.iter())
         .map(|(p, ri)| p.a.into_group() * ri)
         .collect();
     let scaled_a_vec = E::G1::normalize_batch(&scaled_a_proj);
@@ -126,8 +129,11 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
     let num_inputs = public_inputs[0].len();
     let mut inputs_agg = vec![E::ScalarField::zero(); num_inputs];
     for (i, inputs_i) in public_inputs.iter().enumerate() {
-        assert_eq!(inputs_i.len(), num_inputs,
-            "All public input vectors must have the same length");
+        assert_eq!(
+            inputs_i.len(),
+            num_inputs,
+            "All public input vectors must have the same length"
+        );
         for (j, &inp) in inputs_i.iter().enumerate() {
             inputs_agg[j] += powers[i] * inp;
         }
@@ -152,10 +158,7 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
 /// where PI_agg = pow_sum·γ_abc[0] + Σⱼ inputs_agg[j]·γ_abc[j+1].
 ///
 /// Returns `true` iff the aggregated proof is valid.
-pub fn verify_aggregated<E: Pairing>(
-    vk: &VerifyingKey<E>,
-    agg: &AggregatedProof<E>,
-) -> bool {
+pub fn verify_aggregated<E: Pairing>(vk: &VerifyingKey<E>, agg: &AggregatedProof<E>) -> bool {
     use ark_ec::pairing::PairingOutput;
 
     if agg.inputs_agg.len() + 1 != vk.gamma_abc_g1.len() {
@@ -187,7 +190,9 @@ pub fn verify_aggregated<E: Pairing>(
         + E::pairing(agg.c_agg, vk.delta_g2);
 
     // --- LHS: Σᵢ e(rⁱ·Aᵢ, Bᵢ) ---
-    let lhs = agg.scaled_a_vec.iter()
+    let lhs = agg
+        .scaled_a_vec
+        .iter()
         .zip(agg.b_vec.iter())
         .map(|(&sa, &b)| E::pairing(sa, b))
         .fold(PairingOutput::zero(), |acc, x| acc + x);
@@ -198,17 +203,20 @@ pub fn verify_aggregated<E: Pairing>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::{Bn254, Fr};
-    use ark_std::{rand::{RngCore, SeedableRng}, test_rng};
     use crate::Groth16;
-    use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+    use ark_bn254::{Bn254, Fr};
     use ark_ff::Zero;
+    use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
     use ark_snark::SNARK;
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
 
     // Simple circuit: prove knowledge of x such that x * x = y (public)
     struct SquareCircuit {
-        x: Fr,      // witness
-        y: Fr,      // public input
+        x: Fr, // witness
+        y: Fr, // public input
     }
 
     impl ConstraintSynthesizer<Fr> for SquareCircuit {
@@ -230,21 +238,18 @@ mod tests {
         let x = Fr::from(5u64);
         let y = x * x;
 
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            SquareCircuit { x, y },
-            &mut rng,
-        ).unwrap();
+        let (pk, vk) =
+            Groth16::<Bn254>::circuit_specific_setup(SquareCircuit { x, y }, &mut rng).unwrap();
 
         let se_proof = Groth16::<Bn254>::prove(&pk, SquareCircuit { x, y }, &mut rng).unwrap();
         let raw_proof = se_proof.groth16_proof;
 
-        let agg = aggregate_proofs::<Bn254, _>(
-            &[raw_proof],
-            &[vec![y]],
-            &mut rng,
-        );
+        let agg = aggregate_proofs::<Bn254, _>(&[raw_proof], &[vec![y]], &mut rng);
         assert_eq!(agg.n, 1);
-        assert!(verify_aggregated(&vk, &agg), "single-proof aggregation must verify");
+        assert!(
+            verify_aggregated(&vk, &agg),
+            "single-proof aggregation must verify"
+        );
     }
 
     #[test]
@@ -252,25 +257,36 @@ mod tests {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let pairs: Vec<(Fr, Fr)> = (1u64..=4)
-            .map(|i| { let x = Fr::from(i); (x, x * x) })
+            .map(|i| {
+                let x = Fr::from(i);
+                (x, x * x)
+            })
             .collect();
 
         let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            SquareCircuit { x: pairs[0].0, y: pairs[0].1 },
+            SquareCircuit {
+                x: pairs[0].0,
+                y: pairs[0].1,
+            },
             &mut rng,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut proofs = Vec::new();
         let mut inputs = Vec::new();
         for (x, y) in &pairs {
-            let se_proof = Groth16::<Bn254>::prove(&pk, SquareCircuit { x: *x, y: *y }, &mut rng).unwrap();
+            let se_proof =
+                Groth16::<Bn254>::prove(&pk, SquareCircuit { x: *x, y: *y }, &mut rng).unwrap();
             proofs.push(se_proof.groth16_proof);
             inputs.push(vec![*y]);
         }
 
         let agg = aggregate_proofs::<Bn254, _>(&proofs, &inputs, &mut rng);
         assert_eq!(agg.n, 4);
-        assert!(verify_aggregated(&vk, &agg), "4-proof aggregation must verify");
+        assert!(
+            verify_aggregated(&vk, &agg),
+            "4-proof aggregation must verify"
+        );
     }
 
     #[test]
@@ -279,17 +295,12 @@ mod tests {
         let x = Fr::from(3u64);
         let y = x * x;
 
-        let (pk, _vk) = Groth16::<Bn254>::circuit_specific_setup(
-            SquareCircuit { x, y }, &mut rng,
-        ).unwrap();
+        let (pk, _vk) =
+            Groth16::<Bn254>::circuit_specific_setup(SquareCircuit { x, y }, &mut rng).unwrap();
 
         let se_proof = Groth16::<Bn254>::prove(&pk, SquareCircuit { x, y }, &mut rng).unwrap();
 
-        let agg = aggregate_proofs::<Bn254, _>(
-            &[se_proof.groth16_proof],
-            &[vec![y]],
-            &mut rng,
-        );
+        let agg = aggregate_proofs::<Bn254, _>(&[se_proof.groth16_proof], &[vec![y]], &mut rng);
 
         assert!(!agg.challenge.is_zero());
         assert_eq!(agg.inputs_agg.len(), 1);

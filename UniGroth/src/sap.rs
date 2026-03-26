@@ -21,9 +21,7 @@
 use ark_ff::PrimeField;
 use ark_poly::EvaluationDomain;
 use ark_relations::{
-    gr1cs::{
-        ConstraintSystemRef, Result as R1CSResult, SynthesisError, R1CS_PREDICATE_LABEL,
-    },
+    gr1cs::{ConstraintSystemRef, Result as R1CSResult, SynthesisError, R1CS_PREDICATE_LABEL},
     utils::matrix::Matrix,
 };
 use ark_std::{cfg_iter_mut, vec::Vec};
@@ -69,16 +67,16 @@ impl R1CSToSAP {
     ) -> Vec<(F, usize)> {
         // For now, we use a simple conversion that maintains R1CS semantics
         // Future optimization: detect addition-only constraints and optimize them
-        
+
         let mut u_terms = Vec::new();
-        
+
         // Combine A and C terms with appropriate coefficients
         // This is a simplified version; full SAP optimization requires
         // circuit-level analysis
         for &(coeff, idx) in _a_terms {
             u_terms.push((coeff, idx));
         }
-        
+
         for &(coeff, idx) in c_terms {
             // Check if this index already exists
             if let Some(existing) = u_terms.iter_mut().find(|(_, i)| *i == idx) {
@@ -87,7 +85,7 @@ impl R1CSToSAP {
                 u_terms.push((coeff, idx));
             }
         }
-        
+
         u_terms
     }
 
@@ -113,7 +111,7 @@ impl R1CSToQAP for R1CSToSAP {
         let matrices = &cs.to_matrices().unwrap()[R1CS_PREDICATE_LABEL];
         let num_inputs = cs.num_instance_variables();
         let num_constraints = cs.num_constraints();
-        
+
         let domain_size = num_constraints + num_inputs;
         let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
@@ -134,7 +132,8 @@ impl R1CSToQAP for R1CSToSAP {
         {
             let start = 0;
             let end = num_inputs;
-            sap_u[start..end].copy_from_slice(&u[(start + num_constraints)..(end + num_constraints)]);
+            sap_u[start..end]
+                .copy_from_slice(&u[(start + num_constraints)..(end + num_constraints)]);
         }
 
         // Process constraints and convert to SAP form
@@ -207,8 +206,8 @@ impl R1CSToQAP for R1CSToSAP {
             .zip(&matrices[0])
             .zip(&matrices[1])
             .for_each(|(((a, b), at_i), bt_i)| {
-                *a = evaluate_constraint(&at_i, &full_assignment);
-                *b = evaluate_constraint(&bt_i, &full_assignment);
+                *a = evaluate_constraint(at_i, full_assignment);
+                *b = evaluate_constraint(bt_i, full_assignment);
             });
 
         // Copy instance variables
@@ -222,7 +221,7 @@ impl R1CSToQAP for R1CSToSAP {
         let result = crate::optimizations::compute_witness_4fft(&domain, a, b);
         let mut h = result.h_poly;
         h.truncate(domain_size - 1);
-        
+
         end_timer!(witness_time);
 
         Ok(h)
@@ -302,8 +301,10 @@ mod tests {
     use super::*;
     use ark_bn254::Fr;
     use ark_relations::{
+        gr1cs::{
+            ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError, Variable,
+        },
         lc,
-        gr1cs::{ConstraintSystem, ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
     };
 
     struct SimpleCircuit {
@@ -312,10 +313,7 @@ mod tests {
     }
 
     impl ConstraintSynthesizer<Fr> for SimpleCircuit {
-        fn generate_constraints(
-            self,
-            cs: ConstraintSystemRef<Fr>,
-        ) -> Result<(), SynthesisError> {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
             let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
             let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
 
@@ -326,7 +324,11 @@ mod tests {
                 Ok(a_val + b_val)
             })?;
 
-            cs.enforce_r1cs_constraint(|| lc!() + a + b, || lc!() + (Fr::from(1u64), Variable::One), || lc!() + c)?;
+            cs.enforce_r1cs_constraint(
+                || lc!() + a + b,
+                || lc!() + (Fr::from(1u64), Variable::One),
+                || lc!() + c,
+            )?;
 
             // Multiplication constraint: a * b = d
             let d = cs.new_witness_variable(|| {

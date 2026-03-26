@@ -31,11 +31,14 @@ use ark_crypto_primitives::sponge::{
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
 use ark_poly::{
-    univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain,
-    GeneralEvaluationDomain,
+    univariate::DensePolynomial, DenseUVPolynomial, EvaluationDomain, GeneralEvaluationDomain,
 };
 use ark_serialize::*;
-use ark_std::{rand::{RngCore, SeedableRng}, vec, vec::Vec};
+use ark_std::{
+    rand::{RngCore, SeedableRng},
+    vec,
+    vec::Vec,
+};
 
 use crate::kzg::{Commitment, UniversalSRS, KZG};
 
@@ -85,10 +88,7 @@ pub struct FoldingAccumulator<E: Pairing> {
 
 impl<E: Pairing> FoldingAccumulator<E> {
     /// Initialize accumulator with the first instance.
-    pub fn init(
-        srs: &UniversalSRS<E>,
-        instance: &FoldingInstance<E::ScalarField>,
-    ) -> Self {
+    pub fn init(srs: &UniversalSRS<E>, instance: &FoldingInstance<E::ScalarField>) -> Self {
         // Witness polynomial commitment
         let witness_poly = witness_to_poly::<E>(&instance.witness);
         let acc_w = if instance.witness.is_empty() {
@@ -175,14 +175,14 @@ impl<E: Pairing> FoldingEngine<E> {
                     t1: E::G1Affine::zero(),
                     higher_order: vec![],
                 })
-            }
+            },
             Some(acc) => {
                 // Subsequent instances: fold into existing accumulator
                 let (new_acc, cross_terms) = self.fold_step(acc.clone(), &instance, rng)?;
                 self.accumulator = Some(new_acc);
                 end_timer!(fold_time);
                 Ok(cross_terms)
-            }
+            },
         }
     }
 
@@ -218,7 +218,9 @@ impl<E: Pairing> FoldingEngine<E> {
         };
 
         let folded_w_value = match &acc.acc_w {
-            Some(commit) => (commit.value.into_group() + new_w_commit.into_group() * r).into_affine(),
+            Some(commit) => {
+                (commit.value.into_group() + new_w_commit.into_group() * r).into_affine()
+            },
             None => new_w_commit,
         };
 
@@ -235,7 +237,9 @@ impl<E: Pairing> FoldingEngine<E> {
 
         let new_acc = FoldingAccumulator {
             acc_x: folded_x,
-            acc_w: Some(Commitment { value: folded_w_value }),
+            acc_w: Some(Commitment {
+                value: folded_w_value,
+            }),
             acc_e: folded_e,
             acc_mu: folded_mu,
             fold_count: acc.fold_count + 1,
@@ -273,10 +277,7 @@ impl<E: Pairing> FoldingEngine<E> {
 /// This is done in the Groth16 circuit during final compression.
 ///
 /// References: ProtoStar (2023), Nova (2022)
-pub fn verify_accumulator<E: Pairing>(
-    _srs: &UniversalSRS<E>,
-    acc: &FoldingAccumulator<E>,
-) -> bool {
+pub fn verify_accumulator<E: Pairing>(_srs: &UniversalSRS<E>, acc: &FoldingAccumulator<E>) -> bool {
     let verify_time = start_timer!(|| "Accumulator decision check");
 
     // ── Check 1: Basic sanity ──────────────────────────────────────────────
@@ -294,11 +295,9 @@ pub fn verify_accumulator<E: Pairing>(
     }
 
     // ── Check 3: Error term for fold_count == 1 ────────────────────────────
-    if acc.fold_count == 1 {
-        if !acc.acc_e.is_zero() {
-            end_timer!(verify_time);
-            return false;
-        }
+    if acc.fold_count == 1 && !acc.acc_e.is_zero() {
+        end_timer!(verify_time);
+        return false;
     }
 
     // ── Check 4: Slack consistency for fold_count > 1 ─────────────────────
@@ -329,17 +328,14 @@ pub fn verify_accumulator<E: Pairing>(
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Convert a witness vector to a polynomial (for KZG commitment).
-fn witness_to_poly<E: Pairing>(
-    witness: &[E::ScalarField],
-) -> DensePolynomial<E::ScalarField> {
+fn witness_to_poly<E: Pairing>(witness: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
     if witness.is_empty() {
         return DensePolynomial::from_coefficients_vec(vec![E::ScalarField::zero()]);
     }
     // Interpolate witness values as polynomial over evaluation domain
     // w(X) such that w(ωⁱ) = wᵢ for the canonical domain
     let domain_size = witness.len().next_power_of_two();
-    let domain =
-        GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
+    let domain = GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
 
     let mut evals = witness.to_vec();
     evals.resize(domain_size, E::ScalarField::zero());
@@ -404,25 +400,39 @@ fn fiat_shamir_challenge<E: Pairing>(
     new_instance: &FoldingInstance<E::ScalarField>,
     t1: &E::G1Affine,
 ) -> E::ScalarField {
-    let full_rounds    = 8;
+    let full_rounds = 8;
     let partial_rounds = 31;
-    let alpha          = 5u64;
+    let alpha = 5u64;
 
     // Width-3 identity MDS matrix
     let mds = ark_std::vec![
-        ark_std::vec![E::ScalarField::from(1u128), E::ScalarField::from(0u128), E::ScalarField::from(0u128)],
-        ark_std::vec![E::ScalarField::from(0u128), E::ScalarField::from(1u128), E::ScalarField::from(0u128)],
-        ark_std::vec![E::ScalarField::from(0u128), E::ScalarField::from(0u128), E::ScalarField::from(1u128)],
+        ark_std::vec![
+            E::ScalarField::from(1u128),
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(0u128)
+        ],
+        ark_std::vec![
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(1u128),
+            E::ScalarField::from(0u128)
+        ],
+        ark_std::vec![
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(0u128),
+            E::ScalarField::from(1u128)
+        ],
     ];
 
     // Seeded round constants (same seed as security.rs)
     let mut seeded_rng = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
     let round_constants = (0..(full_rounds + partial_rounds))
-        .map(|_| ark_std::vec![
-            E::ScalarField::rand(&mut seeded_rng),
-            E::ScalarField::rand(&mut seeded_rng),
-            E::ScalarField::rand(&mut seeded_rng),
-        ])
+        .map(|_| {
+            ark_std::vec![
+                E::ScalarField::rand(&mut seeded_rng),
+                E::ScalarField::rand(&mut seeded_rng),
+                E::ScalarField::rand(&mut seeded_rng),
+            ]
+        })
         .collect::<ark_std::vec::Vec<_>>();
 
     let config = PoseidonConfig::new(
@@ -732,7 +742,10 @@ mod tests {
     use super::*;
     use ark_bn254::Bn254;
     use ark_poly::Polynomial;
-    use ark_std::{rand::{RngCore, SeedableRng}, test_rng};
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
 
     type Fr = <Bn254 as Pairing>::ScalarField;
 
@@ -809,10 +822,7 @@ mod tests {
 
         // Fold 3 instances (triggers the non-trivial decision checks)
         for i in 1u64..=3 {
-            let instance = FoldingInstance::new(
-                vec![Fr::from(i * 10)],
-                vec![Fr::from(i)],
-            );
+            let instance = FoldingInstance::new(vec![Fr::from(i * 10)], vec![Fr::from(i)]);
             engine.fold(instance, &mut rng).unwrap();
         }
 
@@ -861,14 +871,8 @@ mod tests {
             acc_a.acc_x, acc_b.acc_x,
             "acc_x must match (Fiat-Shamir is deterministic)"
         );
-        assert_eq!(
-            acc_a.acc_mu, acc_b.acc_mu,
-            "acc_mu must match"
-        );
-        assert_eq!(
-            acc_a.acc_e, acc_b.acc_e,
-            "acc_e must match"
-        );
+        assert_eq!(acc_a.acc_mu, acc_b.acc_mu, "acc_mu must match");
+        assert_eq!(acc_a.acc_e, acc_b.acc_e, "acc_e must match");
         assert_eq!(
             acc_a.randomness_transcript, acc_b.randomness_transcript,
             "transcript r values must match"
@@ -890,7 +894,12 @@ mod tests {
 
     #[test]
     fn test_witness_to_poly() {
-        let witness: Vec<Fr> = vec![Fr::from(1u64), Fr::from(2u64), Fr::from(3u64), Fr::from(4u64)];
+        let witness: Vec<Fr> = vec![
+            Fr::from(1u64),
+            Fr::from(2u64),
+            Fr::from(3u64),
+            Fr::from(4u64),
+        ];
         let poly = witness_to_poly::<Bn254>(&witness);
 
         // Polynomial should be non-trivial
@@ -930,7 +939,10 @@ mod tests {
         let prover_state = ProverState::init(inst.witness.clone(), matrices.num_constraints);
 
         let result = verify_decision_predicate::<Bn254>(&srs, &acc, &prover_state, &matrices);
-        assert!(result.unwrap(), "Decision predicate must pass for a single satisfying instance");
+        assert!(
+            result.unwrap(),
+            "Decision predicate must pass for a single satisfying instance"
+        );
     }
 
     #[test]
@@ -964,12 +976,19 @@ mod tests {
 
         // Compute per-constraint cross-terms and fold prover state
         let cross_terms = compute_cross_term_vector(
-            &matrices, &acc1.acc_x, &prover_state.folded_witness, acc1.acc_mu, &inst2,
+            &matrices,
+            &acc1.acc_x,
+            &prover_state.folded_witness,
+            acc1.acc_mu,
+            &inst2,
         );
         prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
 
         let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
-        assert!(result.unwrap(), "Decision predicate must pass after folding two satisfying instances");
+        assert!(
+            result.unwrap(),
+            "Decision predicate must pass after folding two satisfying instances"
+        );
     }
 
     #[test]
@@ -986,16 +1005,17 @@ mod tests {
         let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
 
         let instances = vec![
-            FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]),    // 3*3=9
-            FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]),   // 5*5=25
-            FoldingInstance::new(vec![Fr::from(49u64)], vec![Fr::from(7u64)]),   // 7*7=49
+            FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]), // 3*3=9
+            FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]), // 5*5=25
+            FoldingInstance::new(vec![Fr::from(49u64)], vec![Fr::from(7u64)]), // 7*7=49
         ];
 
         let mut engine = FoldingEngine::new(srs.clone());
 
         // Fold first instance
         engine.fold(instances[0].clone(), &mut rng).unwrap();
-        let mut prover_state = ProverState::init(instances[0].witness.clone(), matrices.num_constraints);
+        let mut prover_state =
+            ProverState::init(instances[0].witness.clone(), matrices.num_constraints);
 
         // Fold remaining instances, tracking prover state in lockstep
         for k in 1..instances.len() {
@@ -1016,7 +1036,10 @@ mod tests {
 
         let acc = engine.accumulator.as_ref().unwrap().clone();
         let result = verify_decision_predicate::<Bn254>(&srs, &acc, &prover_state, &matrices);
-        assert!(result.unwrap(), "Decision predicate must pass after folding three instances");
+        assert!(
+            result.unwrap(),
+            "Decision predicate must pass after folding three instances"
+        );
     }
 
     #[test]
@@ -1041,7 +1064,10 @@ mod tests {
         // Wrong witness: x=4 instead of x=3 (4*4=16, not 9)
         let bad_state = ProverState::init(vec![Fr::from(4u64)], matrices.num_constraints);
         let result = verify_decision_predicate::<Bn254>(&srs, &acc, &bad_state, &matrices);
-        assert!(!result.unwrap(), "Decision predicate must reject incorrect witness");
+        assert!(
+            !result.unwrap(),
+            "Decision predicate must reject incorrect witness"
+        );
     }
 
     #[test]
@@ -1050,16 +1076,16 @@ mod tests {
         // Variables: [0: const 1, 1: y (public), 2: z (public), 3: x (witness)]
         let matrices = R1CSMatrices {
             a: vec![
-                vec![(Fr::one(), 3)],  // constraint 0: A selects x
-                vec![(Fr::one(), 3)],  // constraint 1: A selects x
+                vec![(Fr::one(), 3)], // constraint 0: A selects x
+                vec![(Fr::one(), 3)], // constraint 1: A selects x
             ],
             b: vec![
-                vec![(Fr::one(), 3)],  // constraint 0: B selects x
-                vec![(Fr::one(), 1)],  // constraint 1: B selects y
+                vec![(Fr::one(), 3)], // constraint 0: B selects x
+                vec![(Fr::one(), 1)], // constraint 1: B selects y
             ],
             c: vec![
-                vec![(Fr::one(), 1)],  // constraint 0: C selects y → x*x=y
-                vec![(Fr::one(), 2)],  // constraint 1: C selects z → x*y=z
+                vec![(Fr::one(), 1)], // constraint 0: C selects y → x*x=y
+                vec![(Fr::one(), 2)], // constraint 1: C selects z → x*y=z
             ],
             num_constraints: 2,
             num_variables: 4,
@@ -1069,15 +1095,11 @@ mod tests {
         let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
 
         // x=3, y=9, z=27 (3*3=9, 3*9=27)
-        let inst1 = FoldingInstance::new(
-            vec![Fr::from(9u64), Fr::from(27u64)],
-            vec![Fr::from(3u64)],
-        );
+        let inst1 =
+            FoldingInstance::new(vec![Fr::from(9u64), Fr::from(27u64)], vec![Fr::from(3u64)]);
         // x=2, y=4, z=8 (2*2=4, 2*4=8)
-        let inst2 = FoldingInstance::new(
-            vec![Fr::from(4u64), Fr::from(8u64)],
-            vec![Fr::from(2u64)],
-        );
+        let inst2 =
+            FoldingInstance::new(vec![Fr::from(4u64), Fr::from(8u64)], vec![Fr::from(2u64)]);
 
         let mut engine = FoldingEngine::new(srs.clone());
         engine.fold(inst1.clone(), &mut rng).unwrap();
@@ -1098,7 +1120,10 @@ mod tests {
         prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
 
         let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
-        assert!(result.unwrap(), "Decision predicate must pass for multi-constraint circuit");
+        assert!(
+            result.unwrap(),
+            "Decision predicate must pass for multi-constraint circuit"
+        );
     }
 
     #[test]
@@ -1123,6 +1148,9 @@ mod tests {
         // T = A(z1)*B(z2) + A(z2)*B(z1) - mu2*C(z1) - mu1*C(z2)
         //   = 3*5 + 5*3 - 1*9 - 1*25 = 30 - 34 = -4
         let expected = Fr::from(30u64) - Fr::from(34u64);
-        assert_eq!(cross[0], expected, "Cross-term must be -4 for x*x=y with x1=3,x2=5");
+        assert_eq!(
+            cross[0], expected,
+            "Cross-term must be -4 for x*x=y with x1=3,x2=5"
+        );
     }
 }

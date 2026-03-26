@@ -12,7 +12,10 @@ use ark_relations::{
 };
 use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
-use ark_std::{rand::{RngCore, SeedableRng}, UniformRand};
+use ark_std::{
+    rand::{RngCore, SeedableRng},
+    UniformRand,
+};
 
 use ark_groth16 as ark_g16;
 use unigroth as ug;
@@ -53,11 +56,18 @@ impl<F: Field> ConstraintSynthesizer<F> for MulCircuit<F> {
 
 fn now_us() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros()
 }
 
-fn mean_f(v: &[u128]) -> f64 { v.iter().sum::<u128>() as f64 / v.len() as f64 }
-fn min_v(v: &[u128]) -> u128  { *v.iter().min().unwrap() }
+fn mean_f(v: &[u128]) -> f64 {
+    v.iter().sum::<u128>() as f64 / v.len() as f64
+}
+fn min_v(v: &[u128]) -> u128 {
+    *v.iter().min().unwrap()
+}
 
 fn speedup(baseline_us: f64, optimized_us: f64) -> String {
     let ratio = baseline_us / optimized_us;
@@ -68,7 +78,9 @@ fn speedup(baseline_us: f64, optimized_us: f64) -> String {
     }
 }
 
-fn sep() { println!("  {}", "─".repeat(68)); }
+fn sep() {
+    println!("  {}", "─".repeat(68));
+}
 
 fn main() {
     println!();
@@ -89,23 +101,32 @@ fn main() {
 
     let t0 = now_us();
     let (ark_pk, ark_vk) = ark_g16::Groth16::<Bn254>::circuit_specific_setup(
-        MulCircuit::<Fr> { a: None, b: None }, &mut rng,
-    ).expect("ark-groth16 setup failed");
+        MulCircuit::<Fr> { a: None, b: None },
+        &mut rng,
+    )
+    .expect("ark-groth16 setup failed");
     let ark_setup_us = now_us() - t0;
 
     let t0 = now_us();
     let (ug_pk, ug_vk) = ug::Groth16::<Bn254>::circuit_specific_setup(
-        MulCircuit::<Fr> { a: None, b: None }, &mut rng,
-    ).expect("unigroth setup failed");
+        MulCircuit::<Fr> { a: None, b: None },
+        &mut rng,
+    )
+    .expect("unigroth setup failed");
     let ug_setup_us = now_us() - t0;
 
     let ark_pvk = ark_g16::Groth16::<Bn254>::process_vk(&ark_vk).unwrap();
-    let ug_pvk  = ug::Groth16::<Bn254>::process_vk(&ug_vk).unwrap();
+    let ug_pvk = ug::Groth16::<Bn254>::process_vk(&ug_vk).unwrap();
 
-    println!("  ark-groth16 setup : {:>8.1} ms", ark_setup_us as f64 / 1000.0);
-    println!("  unigroth    setup : {:>8.1} ms  ({})",
+    println!(
+        "  ark-groth16 setup : {:>8.1} ms",
+        ark_setup_us as f64 / 1000.0
+    );
+    println!(
+        "  unigroth    setup : {:>8.1} ms  ({})",
         ug_setup_us as f64 / 1000.0,
-        speedup(ark_setup_us as f64, ug_setup_us as f64));
+        speedup(ark_setup_us as f64, ug_setup_us as f64)
+    );
     println!();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -120,13 +141,18 @@ fn main() {
         let t = now_us();
         let proof = ark_g16::Groth16::<Bn254>::prove(
             &ark_pk,
-            MulCircuit::<Fr> { a: Some(a_val), b: Some(b_val) },
+            MulCircuit::<Fr> {
+                a: Some(a_val),
+                b: Some(b_val),
+            },
             &mut rng,
-        ).unwrap();
+        )
+        .unwrap();
         ark_prove.push(now_us() - t);
 
         let t = now_us();
-        let ok = ark_g16::Groth16::<Bn254>::verify_with_processed_vk(&ark_pvk, &[c_val], &proof).unwrap();
+        let ok = ark_g16::Groth16::<Bn254>::verify_with_processed_vk(&ark_pvk, &[c_val], &proof)
+            .unwrap();
         ark_verify.push(now_us() - t);
         assert!(ok);
         ark_proof_last = Some(proof);
@@ -140,9 +166,13 @@ fn main() {
         let t = now_us();
         let proof = ug::Groth16::<Bn254>::prove(
             &ug_pk,
-            MulCircuit::<Fr> { a: Some(a_val), b: Some(b_val) },
+            MulCircuit::<Fr> {
+                a: Some(a_val),
+                b: Some(b_val),
+            },
             &mut rng,
-        ).unwrap();
+        )
+        .unwrap();
         ug_prove.push(now_us() - t);
 
         let t = now_us();
@@ -153,19 +183,35 @@ fn main() {
     }
 
     let ark_prove_mean = mean_f(&ark_prove);
-    let ug_prove_mean  = mean_f(&ug_prove);
+    let ug_prove_mean = mean_f(&ug_prove);
     let ark_verify_mean = mean_f(&ark_verify);
-    let ug_verify_mean  = mean_f(&ug_verify);
+    let ug_verify_mean = mean_f(&ug_verify);
 
     println!("  Prove (µs):");
-    println!("    ark-groth16 — mean {:>8.0}  min {:>8}", ark_prove_mean, min_v(&ark_prove));
-    println!("    unigroth    — mean {:>8.0}  min {:>8}  ← {}",
-        ug_prove_mean, min_v(&ug_prove), speedup(ark_prove_mean, ug_prove_mean));
+    println!(
+        "    ark-groth16 — mean {:>8.0}  min {:>8}",
+        ark_prove_mean,
+        min_v(&ark_prove)
+    );
+    println!(
+        "    unigroth    — mean {:>8.0}  min {:>8}  ← {}",
+        ug_prove_mean,
+        min_v(&ug_prove),
+        speedup(ark_prove_mean, ug_prove_mean)
+    );
     println!();
     println!("  Verify (µs):");
-    println!("    ark-groth16 — mean {:>8.0}  min {:>8}", ark_verify_mean, min_v(&ark_verify));
-    println!("    unigroth    — mean {:>8.0}  min {:>8}  ← {}",
-        ug_verify_mean, min_v(&ug_verify), speedup(ark_verify_mean, ug_verify_mean));
+    println!(
+        "    ark-groth16 — mean {:>8.0}  min {:>8}",
+        ark_verify_mean,
+        min_v(&ark_verify)
+    );
+    println!(
+        "    unigroth    — mean {:>8.0}  min {:>8}  ← {}",
+        ug_verify_mean,
+        min_v(&ug_verify),
+        speedup(ark_verify_mean, ug_verify_mean)
+    );
     println!();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -173,7 +219,7 @@ fn main() {
     sep();
 
     let ark_proof = ark_proof_last.as_ref().unwrap();
-    let ug_proof  = ug_proof_last.as_ref().unwrap();
+    let ug_proof = ug_proof_last.as_ref().unwrap();
 
     let mut ark_bytes = Vec::new();
     ark_proof.serialize_compressed(&mut ark_bytes).unwrap();
@@ -182,12 +228,27 @@ fn main() {
     ug_proof.serialize_compressed(&mut ug_bytes).unwrap();
 
     let mut ug_inner_bytes = Vec::new();
-    ug_proof.groth16_proof.serialize_compressed(&mut ug_inner_bytes).unwrap();
+    ug_proof
+        .groth16_proof
+        .serialize_compressed(&mut ug_inner_bytes)
+        .unwrap();
 
-    println!("  ark-groth16 proof (compressed)          : {:>4} bytes", ark_bytes.len());
-    println!("  unigroth inner Groth16 proof (compressed): {:>4} bytes  (same core size)", ug_inner_bytes.len());
-    println!("  unigroth SimExtractableProof (compressed): {:>4} bytes  (+ SE blinding hash)", ug_bytes.len());
-    println!("    se_element present: {}  (BG18 / ROM blinding active)", ug_proof.se_element.is_some());
+    println!(
+        "  ark-groth16 proof (compressed)          : {:>4} bytes",
+        ark_bytes.len()
+    );
+    println!(
+        "  unigroth inner Groth16 proof (compressed): {:>4} bytes  (same core size)",
+        ug_inner_bytes.len()
+    );
+    println!(
+        "  unigroth SimExtractableProof (compressed): {:>4} bytes  (+ SE blinding hash)",
+        ug_bytes.len()
+    );
+    println!(
+        "    se_element present: {}  (BG18 / ROM blinding active)",
+        ug_proof.se_element.is_some()
+    );
     println!();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -207,10 +268,12 @@ fn main() {
 
     let n_pts = 32usize;
     // Generate truly projective (non-normalized) points via pairwise addition
-    let pts: Vec<ark_bn254::G1Projective> = (0..n_pts).map(|_| {
-        // a + b has Z3 = Z1*Z2*H ≠ 1 in Jacobian coordinates → real inversion needed
-        ark_bn254::G1Projective::rand(&mut rng) + ark_bn254::G1Projective::rand(&mut rng)
-    }).collect();
+    let pts: Vec<ark_bn254::G1Projective> = (0..n_pts)
+        .map(|_| {
+            // a + b has Z3 = Z1*Z2*H ≠ 1 in Jacobian coordinates → real inversion needed
+            ark_bn254::G1Projective::rand(&mut rng) + ark_bn254::G1Projective::rand(&mut rng)
+        })
+        .collect();
 
     let iters = 500usize;
 
@@ -233,14 +296,28 @@ fn main() {
     }
     let batch_us = now_us() - t;
 
-    println!("  G1 affine conversion benchmark ({iters} iters, {n_pts} non-normalized points each):");
-    println!("    {n_pts} × individual .into_affine() : {:>8.1} µs total  ({:.2} µs/call",
-        individual_us as f64, individual_us as f64 / iters as f64);
-    println!("    normalize_batch({n_pts} pts)        : {:>8.1} µs total  ({:.2} µs/call  ← {}",
-        batch_us as f64, batch_us as f64 / iters as f64,
-        speedup(individual_us as f64, batch_us as f64));
-    println!("  (Montgomery trick: {} inversions + 3N mults → 1 inversion + 3N mults)", n_pts);
-    println!("  In prover: saves ~{} inversion(s) per proof (converting g_a + g_c to affine)", 1);
+    println!(
+        "  G1 affine conversion benchmark ({iters} iters, {n_pts} non-normalized points each):"
+    );
+    println!(
+        "    {n_pts} × individual .into_affine() : {:>8.1} µs total  ({:.2} µs/call",
+        individual_us as f64,
+        individual_us as f64 / iters as f64
+    );
+    println!(
+        "    normalize_batch({n_pts} pts)        : {:>8.1} µs total  ({:.2} µs/call  ← {}",
+        batch_us as f64,
+        batch_us as f64 / iters as f64,
+        speedup(individual_us as f64, batch_us as f64)
+    );
+    println!(
+        "  (Montgomery trick: {} inversions + 3N mults → 1 inversion + 3N mults)",
+        n_pts
+    );
+    println!(
+        "  In prover: saves ~{} inversion(s) per proof (converting g_a + g_c to affine)",
+        1
+    );
     println!();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -275,12 +352,18 @@ fn main() {
     }
     let cached_us = now_us() - t;
 
-    println!("  5-FFT witness computation benchmark ({fft_iters} iters, domain_size={domain_size}):");
-    println!("    Without cache (rebuilds coset 2n domain): {:>8.1} µs/call",
-        uncached_us as f64 / fft_iters as f64);
-    println!("    With CosetDomainCache (domain pre-built): {:>8.1} µs/call  ← {}",
+    println!(
+        "  5-FFT witness computation benchmark ({fft_iters} iters, domain_size={domain_size}):"
+    );
+    println!(
+        "    Without cache (rebuilds coset 2n domain): {:>8.1} µs/call",
+        uncached_us as f64 / fft_iters as f64
+    );
+    println!(
+        "    With CosetDomainCache (domain pre-built): {:>8.1} µs/call  ← {}",
         cached_us as f64 / fft_iters as f64,
-        speedup(uncached_us as f64, cached_us as f64));
+        speedup(uncached_us as f64, cached_us as f64)
+    );
     println!("  Note: speedup compounds across thousands of proofs in rollup settings");
     println!();
 
@@ -298,10 +381,13 @@ fn main() {
     // This mimics real R1CS: sparse in rows (many empty constraints), but each
     // active constraint references ~64 variables.
     let csr_rows = 2048usize;
-    let avg_nnz_per_row = 64usize;  // Entries per nonzero row
+    let avg_nnz_per_row = 64usize; // Entries per nonzero row
     let csr_cols = 4096usize;
 
-    println!("  (row_density = % of constraint rows with any nonzero entry; {} entries/active row)", avg_nnz_per_row);
+    println!(
+        "  (row_density = % of constraint rows with any nonzero entry; {} entries/active row)",
+        avg_nnz_per_row
+    );
 
     for density_pct in [5usize, 20, 50] {
         let mut m_a: Vec<Vec<(Fr, usize)>> = Vec::with_capacity(csr_rows);
@@ -353,19 +439,25 @@ fn main() {
         // CSR sparse (only iterate nonzero rows via nnz_rows list)
         let t = now_us();
         for _ in 0..eval_iters {
-            let result = CsrMatrix::sparse_witness_eval(
-                &csr_a, &csr_b, csr_rows, 0, &assignment, csr_rows,
-            );
+            let result =
+                CsrMatrix::sparse_witness_eval(&csr_a, &csr_b, csr_rows, 0, &assignment, csr_rows);
             black_box(result);
         }
         let csr_us = now_us() - t;
 
-        println!("  {}% density ({} nnz-A rows, {} nnz-B rows out of {}):",
-            density_pct, nnz_rows_a, nnz_rows_b, csr_rows);
-        println!("    Dense (all rows)  : {:>7.1} µs/call", dense_us as f64 / eval_iters as f64);
-        println!("    CSR  (skip zeros) : {:>7.1} µs/call  ← {}",
+        println!(
+            "  {}% density ({} nnz-A rows, {} nnz-B rows out of {}):",
+            density_pct, nnz_rows_a, nnz_rows_b, csr_rows
+        );
+        println!(
+            "    Dense (all rows)  : {:>7.1} µs/call",
+            dense_us as f64 / eval_iters as f64
+        );
+        println!(
+            "    CSR  (skip zeros) : {:>7.1} µs/call  ← {}",
             csr_us as f64 / eval_iters as f64,
-            speedup(dense_us as f64, csr_us as f64));
+            speedup(dense_us as f64, csr_us as f64)
+        );
     }
     println!();
 
@@ -394,9 +486,13 @@ fn main() {
         let ci = ai * bi;
         let se = ug::Groth16::<Bn254>::prove(
             &ug_pk,
-            MulCircuit::<Fr> { a: Some(ai), b: Some(bi) },
+            MulCircuit::<Fr> {
+                a: Some(ai),
+                b: Some(bi),
+            },
             &mut rng,
-        ).unwrap();
+        )
+        .unwrap();
         raw_pool.push(se.groth16_proof.clone());
         se_pool.push(se);
         input_pool.push(vec![ci]);
@@ -410,9 +506,8 @@ fn main() {
         // Individual verification (each proof via full SE verify)
         let t = now_us();
         for (se_proof, inp) in se_proofs.iter().zip(inputs.iter()) {
-            let ok = ug::Groth16::<Bn254>::verify_with_processed_vk(
-                &ug_pvk, inp, se_proof,
-            ).unwrap();
+            let ok =
+                ug::Groth16::<Bn254>::verify_with_processed_vk(&ug_pvk, inp, se_proof).unwrap();
             assert!(ok);
         }
         let individual_us = now_us() - t;
@@ -425,9 +520,15 @@ fn main() {
         assert!(ok, "aggregated proof must verify for n={}", n);
 
         println!("  N={n} proofs:");
-        println!("    Individual verify ({n} × pairing) : {:>7.1} µs", individual_us as f64);
-        println!("    Aggregate+verify  (1 × pairing)  : {:>7.1} µs  ← {}",
-            aggregated_us as f64, speedup(individual_us as f64, aggregated_us as f64));
+        println!(
+            "    Individual verify ({n} × pairing) : {:>7.1} µs",
+            individual_us as f64
+        );
+        println!(
+            "    Aggregate+verify  (1 × pairing)  : {:>7.1} µs  ← {}",
+            aggregated_us as f64,
+            speedup(individual_us as f64, aggregated_us as f64)
+        );
     }
     println!();
 
@@ -446,18 +547,26 @@ fn main() {
     println!("  § 9  SECURITY FEATURE COMPARISON");
     sep();
     let w = 32usize;
-    println!("  {:<w$}  {:^14}  {:^14}", "Property", "ark-groth16", "UniGroth");
-    println!("  {:<w$}  {:^14}  {:^14}", "─".repeat(w), "──────────────", "──────────────");
+    println!(
+        "  {:<w$}  {:^14}  {:^14}",
+        "Property", "ark-groth16", "UniGroth"
+    );
+    println!(
+        "  {:<w$}  {:^14}  {:^14}",
+        "─".repeat(w),
+        "──────────────",
+        "──────────────"
+    );
     let rows = [
         ("Knowledge soundness (AGM)", "✓", "✓"),
-        ("Zero-knowledge",            "✓", "✓"),
+        ("Zero-knowledge", "✓", "✓"),
         ("Simulation-extractability", "✗", "✓  (ROM blinding)"),
-        ("Subversion ZK",             "✗", "✓  (rerandomize)"),
-        ("Universal setup ready",     "✗", "✓  (KZG SRS)"),
+        ("Subversion ZK", "✗", "✓  (rerandomize)"),
+        ("Universal setup ready", "✗", "✓  (KZG SRS)"),
         ("Folding / IVC (ProtoStar)", "✗", "✓"),
-        ("Proof aggregation",         "✗", "✓  (SnarkPack-style)"),
-        ("Proof compression",         "✗", "✓  (Polymath/batch)"),
-        ("Post-quantum",              "✗", "✓  (Binius/Plonky3)"),
+        ("Proof aggregation", "✗", "✓  (SnarkPack-style)"),
+        ("Proof compression", "✗", "✓  (Polymath/batch)"),
+        ("Post-quantum", "✗", "✓  (Binius/Plonky3)"),
     ];
     for (prop, ark, ug) in &rows {
         println!("  {:<w$}  {:^14}  {:^14}", prop, ark, ug);
@@ -475,14 +584,25 @@ fn main() {
         let mut ivc = IVC::<Bn254>::new(srs);
 
         for i in 0..5u64 {
-            ivc.step(vec![Fr::from(i + 1)], vec![Fr::from((i+1)*(i+1))], &mut rng)
-                .expect("IVC step failed");
+            ivc.step(
+                vec![Fr::from(i + 1)],
+                vec![Fr::from((i + 1) * (i + 1))],
+                &mut rng,
+            )
+            .expect("IVC step failed");
         }
         let (steps, acc_opt) = ivc.finalize();
         let acc = acc_opt.unwrap();
-        println!("  Steps: {}  Folds: {}  Transcript len: {}",
-            steps, acc.fold_count, acc.randomness_transcript.len());
-        println!("  Accumulator trivially valid: {}", acc.is_valid_trivially());
+        println!(
+            "  Steps: {}  Folds: {}  Transcript len: {}",
+            steps,
+            acc.fold_count,
+            acc.randomness_transcript.len()
+        );
+        println!(
+            "  Accumulator trivially valid: {}",
+            acc.is_valid_trivially()
+        );
     }
     println!();
 

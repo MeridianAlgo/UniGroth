@@ -66,7 +66,7 @@ pub fn compute_witness_4fft<F: PrimeField, D: EvaluationDomain<F>>(
     domain: &D,
     a_evals: Vec<F>, // A matrix evaluations at domain H
     b_evals: Vec<F>, // B matrix evaluations at domain H
-    // c_evals removed: derived from upper coefficients of a·b product polynomial
+                     // c_evals removed: derived from upper coefficients of a·b product polynomial
 ) -> OptimizedWitnessResult<F> {
     let fft_time = start_timer!(|| "5-FFT witness computation (poly-mul approach)");
 
@@ -79,8 +79,16 @@ pub fn compute_witness_4fft<F: PrimeField, D: EvaluationDomain<F>>(
 
     #[cfg(feature = "parallel")]
     let (mut a_poly, mut b_poly) = rayon::join(
-        || { let mut a = a_evals; domain.ifft_in_place(&mut a); a },
-        || { let mut b = b_evals; domain.ifft_in_place(&mut b); b },
+        || {
+            let mut a = a_evals;
+            domain.ifft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_evals;
+            domain.ifft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -106,13 +114,22 @@ pub fn compute_witness_4fft<F: PrimeField, D: EvaluationDomain<F>>(
     a_poly.resize(double_size, F::zero());
     b_poly.resize(double_size, F::zero());
 
-    let poly_mul_time = start_timer!(|| "coset_FFT_2n(a) + coset_FFT_2n(b), pointwise mul, icoset_FFT_2n");
+    let poly_mul_time =
+        start_timer!(|| "coset_FFT_2n(a) + coset_FFT_2n(b), pointwise mul, icoset_FFT_2n");
 
     // coset FFT on 2n domain, in parallel  [2 coset FFTs]
     #[cfg(feature = "parallel")]
     let (a_coset_2n, b_coset_2n) = rayon::join(
-        || { let mut a = a_poly; coset_2n.fft_in_place(&mut a); a },
-        || { let mut b = b_poly; coset_2n.fft_in_place(&mut b); b },
+        || {
+            let mut a = a_poly;
+            coset_2n.fft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_poly;
+            coset_2n.fft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -176,7 +193,11 @@ pub fn parallel_msm<E: Pairing>(
     bases: &[E::G1Affine],
     scalars: &[E::ScalarField],
 ) -> (E::G1, MSMStats) {
-    assert_eq!(bases.len(), scalars.len(), "Bases and scalars must have same length");
+    assert_eq!(
+        bases.len(),
+        scalars.len(),
+        "Bases and scalars must have same length"
+    );
 
     let msm_time = start_timer!(|| format!("MSM n={}", bases.len()));
 
@@ -330,7 +351,11 @@ impl PolymathCompressor {
         a.serialize_compressed(&mut a_bytes)?;
         b.serialize_compressed(&mut b_bytes)?;
         c.serialize_compressed(&mut c_bytes)?;
-        Ok(CompressedProof { a_bytes, b_bytes, c_bytes })
+        Ok(CompressedProof {
+            a_bytes,
+            b_bytes,
+            c_bytes,
+        })
     }
 
     /// Decompress a `CompressedProof` back into (A, B, C) curve elements.
@@ -376,8 +401,16 @@ pub fn compute_h_coset_evals<F: PrimeField, D: EvaluationDomain<F>>(
     // Step 1-2: iFFT on n-domain to get coefficient form  [2 iFFTs]
     #[cfg(feature = "parallel")]
     let (mut a_poly, mut b_poly) = rayon::join(
-        || { let mut a = a_evals; domain.ifft_in_place(&mut a); a },
-        || { let mut b = b_evals; domain.ifft_in_place(&mut b); b },
+        || {
+            let mut a = a_evals;
+            domain.ifft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_evals;
+            domain.ifft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -403,8 +436,16 @@ pub fn compute_h_coset_evals<F: PrimeField, D: EvaluationDomain<F>>(
     // Step 3-4: coset FFT on 2n domain  [2 FFTs]
     #[cfg(feature = "parallel")]
     let (a_coset, b_coset) = rayon::join(
-        || { let mut a = a_poly; coset_2n.fft_in_place(&mut a); a },
-        || { let mut b = b_poly; coset_2n.fft_in_place(&mut b); b },
+        || {
+            let mut a = a_poly;
+            coset_2n.fft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_poly;
+            coset_2n.fft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -428,14 +469,14 @@ pub fn compute_h_coset_evals<F: PrimeField, D: EvaluationDomain<F>>(
     //
     // We batch-invert to avoid per-element field inversion.
     let g_n = F::GENERATOR.pow([domain_size as u64]);
-    let z_even = g_n - F::one();       //  gⁿ − 1  (for even coset indices)
-    let z_odd  = -g_n - F::one();      // −gⁿ − 1  (for odd  coset indices)
+    let z_even = g_n - F::one(); //  gⁿ − 1  (for even coset indices)
+    let z_odd = -g_n - F::one(); // −gⁿ − 1  (for odd  coset indices)
 
     // Batch-invert the two distinct values
     let mut z_invs = [z_even, z_odd];
     ark_ff::batch_inversion(&mut z_invs);
     let z_even_inv = z_invs[0];
-    let z_odd_inv  = z_invs[1];
+    let z_odd_inv = z_invs[1];
 
     let h_coset_evals: Vec<F> = ab_coset
         .iter()
@@ -474,7 +515,10 @@ impl<F: PrimeField, D: EvaluationDomain<F>> CosetDomainCache<F, D> {
     /// Returns None if a 2n domain or coset cannot be constructed.
     pub fn new(domain_size: usize) -> Option<Self> {
         let coset_2n = D::new(2 * domain_size)?.get_coset(F::GENERATOR)?;
-        Some(CosetDomainCache { coset_2n, _phantom: core::marker::PhantomData })
+        Some(CosetDomainCache {
+            coset_2n,
+            _phantom: core::marker::PhantomData,
+        })
     }
 }
 
@@ -500,8 +544,16 @@ pub fn compute_witness_4fft_with_cache<F: PrimeField, D: EvaluationDomain<F>>(
 
     #[cfg(feature = "parallel")]
     let (mut a_poly, mut b_poly) = rayon::join(
-        || { let mut a = a_evals; domain.ifft_in_place(&mut a); a },
-        || { let mut b = b_evals; domain.ifft_in_place(&mut b); b },
+        || {
+            let mut a = a_evals;
+            domain.ifft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_evals;
+            domain.ifft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -520,12 +572,21 @@ pub fn compute_witness_4fft_with_cache<F: PrimeField, D: EvaluationDomain<F>>(
     a_poly.resize(double_size, F::zero());
     b_poly.resize(double_size, F::zero());
 
-    let poly_mul_time = start_timer!(|| "coset_FFT_2n(a) + coset_FFT_2n(b), pointwise mul, icoset_FFT_2n (cached)");
+    let poly_mul_time =
+        start_timer!(|| "coset_FFT_2n(a) + coset_FFT_2n(b), pointwise mul, icoset_FFT_2n (cached)");
 
     #[cfg(feature = "parallel")]
     let (a_coset_2n, b_coset_2n) = rayon::join(
-        || { let mut a = a_poly; cache.coset_2n.fft_in_place(&mut a); a },
-        || { let mut b = b_poly; cache.coset_2n.fft_in_place(&mut b); b },
+        || {
+            let mut a = a_poly;
+            cache.coset_2n.fft_in_place(&mut a);
+            a
+        },
+        || {
+            let mut b = b_poly;
+            cache.coset_2n.fft_in_place(&mut b);
+            b
+        },
     );
 
     #[cfg(not(feature = "parallel"))]
@@ -590,11 +651,7 @@ pub struct CsrMatrix<F: PrimeField> {
 
 impl<F: PrimeField> CsrMatrix<F> {
     /// Convert from arkworks sparse matrix format (`Vec<Vec<(F, usize)>>`).
-    pub fn from_ark_matrix(
-        m: &[Vec<(F, usize)>],
-        num_rows: usize,
-        num_cols: usize,
-    ) -> Self {
+    pub fn from_ark_matrix(m: &[Vec<(F, usize)>], num_rows: usize, num_cols: usize) -> Self {
         let mut values = Vec::new();
         let mut col_indices = Vec::new();
         let mut row_ptrs = Vec::with_capacity(num_rows + 1);
@@ -616,7 +673,14 @@ impl<F: PrimeField> CsrMatrix<F> {
             row_ptrs.push(values.len());
         }
 
-        CsrMatrix { num_rows, num_cols, values, col_indices, row_ptrs, nnz_rows }
+        CsrMatrix {
+            num_rows,
+            num_cols,
+            values,
+            col_indices,
+            row_ptrs,
+            nnz_rows,
+        }
     }
 
     /// Evaluate row `row_idx` against `assignment`.
@@ -669,16 +733,24 @@ impl<F: PrimeField> CsrMatrix<F> {
         {
             use rayon::prelude::*;
             // Collect results from non-zero rows in parallel
-            let a_results: Vec<(usize, F)> = a_csr.nnz_rows.par_iter()
+            let a_results: Vec<(usize, F)> = a_csr
+                .nnz_rows
+                .par_iter()
                 .filter(|&&row| row < num_constraints)
                 .map(|&row| (row, a_csr.eval_row(row, full_assignment)))
                 .collect();
-            let b_results: Vec<(usize, F)> = b_csr.nnz_rows.par_iter()
+            let b_results: Vec<(usize, F)> = b_csr
+                .nnz_rows
+                .par_iter()
                 .filter(|&&row| row < num_constraints)
                 .map(|&row| (row, b_csr.eval_row(row, full_assignment)))
                 .collect();
-            for (row, val) in a_results { a_evals[row] = val; }
-            for (row, val) in b_results { b_evals[row] = val; }
+            for (row, val) in a_results {
+                a_evals[row] = val;
+            }
+            for (row, val) in b_results {
+                b_evals[row] = val;
+            }
         }
 
         #[cfg(not(feature = "parallel"))]
@@ -767,10 +839,7 @@ impl ProverProfile {
     /// - 2-4× from SAP (fewer constraints)
     /// - 1.33× from Dynark FFT (4 vs 6)
     /// - 1.2× from parallel MSM (rayon + cache effects)
-    pub fn estimate_speedup(
-        sap_reduction_factor: f64,
-        dynark_fft: bool,
-    ) -> f64 {
+    pub fn estimate_speedup(sap_reduction_factor: f64, dynark_fft: bool) -> f64 {
         let fft_factor = if dynark_fft { 6.0 / 4.0 } else { 1.0 };
         let msm_factor = 1.2; // Parallel MSM improvement
         sap_reduction_factor * fft_factor * msm_factor
@@ -784,10 +853,13 @@ mod tests {
     use super::*;
     use ark_bn254::{Bn254, Fr, G1Affine};
     use ark_ec::CurveGroup;
+    use ark_ff::Field;
     use ark_ff::{UniformRand, Zero};
     use ark_poly::GeneralEvaluationDomain;
-    use ark_ff::Field;
-    use ark_std::{rand::{RngCore, SeedableRng}, test_rng};
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
 
     #[test]
     fn test_dynark_4fft() {
@@ -913,8 +985,8 @@ mod tests {
         let b: ark_bn254::G2Affine = G2Projective::rand(&mut rng).into_affine();
         let c: ark_bn254::G1Affine = G1Projective::rand(&mut rng).into_affine();
 
-        let compressed = PolymathCompressor::compress::<Bn254>(&a, &b, &c)
-            .expect("compress must succeed");
+        let compressed =
+            PolymathCompressor::compress::<Bn254>(&a, &b, &c).expect("compress must succeed");
 
         // Compressed size should be smaller than uncompressed
         let uncompressed_len = {
@@ -932,8 +1004,8 @@ mod tests {
         assert!(compressed.byte_len() < uncompressed_len);
 
         // Round-trip: decompress and check equality
-        let (a2, b2, c2) = PolymathCompressor::decompress::<Bn254>(&compressed)
-            .expect("decompress must succeed");
+        let (a2, b2, c2) =
+            PolymathCompressor::decompress::<Bn254>(&compressed).expect("decompress must succeed");
         assert_eq!(a, a2);
         assert_eq!(b, b2);
         assert_eq!(c, c2);
@@ -952,8 +1024,15 @@ mod tests {
 
         let (h_evals, fft_count) = compute_h_coset_evals(&domain, a, b);
 
-        assert_eq!(fft_count, 4, "compute_h_coset_evals must use exactly 4 FFTs");
-        assert_eq!(h_evals.len(), 2 * domain_size, "h_coset_evals length must be 2n");
+        assert_eq!(
+            fft_count, 4,
+            "compute_h_coset_evals must use exactly 4 FFTs"
+        );
+        assert_eq!(
+            h_evals.len(),
+            2 * domain_size,
+            "h_coset_evals length must be 2n"
+        );
     }
 
     #[test]
@@ -983,7 +1062,9 @@ mod tests {
         assert_eq!(h_coset_evals.len(), 2 * domain_size);
 
         // Re-derive ab_coset from the 5-FFT result's coset evals (already computed)
-        let ab_coset: Vec<Fr> = result_5fft.a_coset_evals.iter()
+        let ab_coset: Vec<Fr> = result_5fft
+            .a_coset_evals
+            .iter()
             .zip(result_5fft.b_coset_evals.iter())
             .map(|(a, b)| *a * b)
             .collect();
@@ -991,7 +1072,11 @@ mod tests {
         // Compute Z(g·ζⁱ) = gⁿ·(−1)ⁱ − 1 for each coset index
         let g_n = Fr::GENERATOR.pow([domain_size as u64]);
         for (i, (h_eval, ab_eval)) in h_coset_evals.iter().zip(ab_coset.iter()).enumerate() {
-            let sign = if i % 2 == 0 { Fr::from(1u64) } else { -Fr::from(1u64) };
+            let sign = if i % 2 == 0 {
+                Fr::from(1u64)
+            } else {
+                -Fr::from(1u64)
+            };
             let z_val = g_n * sign - Fr::from(1u64);
             let reconstructed_ab = *h_eval * z_val;
             assert_eq!(
@@ -1020,8 +1105,10 @@ mod tests {
         let cache = CosetDomainCache::<Fr, GeneralEvaluationDomain<Fr>>::new(domain_size).unwrap();
         let result_cached = compute_witness_4fft_with_cache(&domain, &cache, a.clone(), b.clone());
 
-        assert_eq!(result_uncached.h_poly, result_cached.h_poly,
-            "cached and uncached 4-FFT must produce identical h_poly");
+        assert_eq!(
+            result_uncached.h_poly, result_cached.h_poly,
+            "cached and uncached 4-FFT must produce identical h_poly"
+        );
         assert_eq!(result_cached.fft_count, 5);
     }
 
@@ -1054,7 +1141,11 @@ mod tests {
         for row in 0..num_rows {
             let dense: Fr = m[row].iter().map(|(c, i)| *c * assignment[*i]).sum();
             let sparse = csr.eval_row(row, &assignment);
-            assert_eq!(dense, sparse, "CSR eval_row {} must match dense evaluation", row);
+            assert_eq!(
+                dense, sparse,
+                "CSR eval_row {} must match dense evaluation",
+                row
+            );
         }
     }
 
@@ -1071,12 +1162,23 @@ mod tests {
         let csr = CsrMatrix::<Fr>::from_ark_matrix(&m, num_rows, num_cols);
 
         // nnz_rows must be exactly {2, 7}
-        assert_eq!(csr.nnz_rows, vec![2usize, 7usize],
-            "nnz_rows must contain exactly the non-empty row indices");
+        assert_eq!(
+            csr.nnz_rows,
+            vec![2usize, 7usize],
+            "nnz_rows must contain exactly the non-empty row indices"
+        );
 
         let assignment = vec![Fr::from(1u64); num_cols];
-        assert_eq!(csr.eval_row(0, &assignment), Fr::zero(), "zero row must evaluate to 0");
-        assert_eq!(csr.eval_row(2, &assignment), Fr::from(10u64), "row 2: 3+7=10");
+        assert_eq!(
+            csr.eval_row(0, &assignment),
+            Fr::zero(),
+            "zero row must evaluate to 0"
+        );
+        assert_eq!(
+            csr.eval_row(2, &assignment),
+            Fr::from(10u64),
+            "row 2: 3+7=10"
+        );
         assert_eq!(csr.eval_row(7, &assignment), Fr::from(2u64), "row 7: 2");
     }
 
@@ -1093,7 +1195,7 @@ mod tests {
         let scalars: Vec<Fr> = (0..n).map(|_| Fr::rand(&mut rng)).collect();
 
         let (result_dispatch, _) = GpuMsmDispatcher::dispatch::<Bn254>(&bases, &scalars);
-        let (result_cpu, _)      = parallel_msm::<Bn254>(&bases, &scalars);
+        let (result_cpu, _) = parallel_msm::<Bn254>(&bases, &scalars);
 
         assert_eq!(
             result_dispatch, result_cpu,

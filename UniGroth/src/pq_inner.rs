@@ -42,7 +42,7 @@
 //! - Hybrid PQ SNARKs: "Lattice-Based Recursive SNARKs" (2025 preprint)
 
 use ark_std::vec::Vec;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 // ─── Core Types ─────────────────────────────────────────────────────────────
 
@@ -74,9 +74,9 @@ impl PqConfig {
     /// Defaults: 128-bit security, 64-bit field for Binius/Plonky3, 254 bits for Hybrid.
     pub fn new(scheme: PqScheme) -> Self {
         let field_size_bits = match scheme {
-            PqScheme::Binius  => 64,
+            PqScheme::Binius => 64,
             PqScheme::Plonky3 => 64,
-            PqScheme::Hybrid  => 254,
+            PqScheme::Hybrid => 254,
         };
         Self {
             scheme,
@@ -175,7 +175,11 @@ fn commit_witness(scheme_tag: u8, security_bits: usize, witness: &[u8]) -> [u8; 
 /// This binds the proof to specific public inputs. During verification,
 /// the verifier recomputes this hash from the witness commitment (embedded
 /// in the proof) and the claimed public inputs, then checks it matches.
-fn commit_public_inputs(scheme_tag: u8, witness_commitment: &[u8; 32], public_inputs: &[u8]) -> [u8; 32] {
+fn commit_public_inputs(
+    scheme_tag: u8,
+    witness_commitment: &[u8; 32],
+    public_inputs: &[u8],
+) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"pub_bind");
     hasher.update([scheme_tag]);
@@ -432,7 +436,10 @@ pub fn aggregate_pq_proofs(proofs: &[PqProof], config: &PqConfig) -> Vec<u8> {
     assert!(!proofs.is_empty(), "Cannot aggregate zero proofs");
 
     for proof in proofs {
-        assert_eq!(proof.scheme, config.scheme, "All proofs must use the same scheme");
+        assert_eq!(
+            proof.scheme, config.scheme,
+            "All proofs must use the same scheme"
+        );
     }
 
     let mut result = Vec::new();
@@ -520,9 +527,9 @@ mod tests {
         let schemes = [PqScheme::Binius, PqScheme::Plonky3, PqScheme::Hybrid];
         for scheme in &schemes {
             let name = match scheme {
-                PqScheme::Binius  => "Binius",
+                PqScheme::Binius => "Binius",
                 PqScheme::Plonky3 => "Plonky3",
-                PqScheme::Hybrid  => "Hybrid",
+                PqScheme::Hybrid => "Hybrid",
             };
             println!("PqScheme::{} matched correctly", name);
         }
@@ -655,7 +662,10 @@ mod tests {
 
         let proof1 = BiniusProver::prove(&config, witness, inputs);
         let proof2 = BiniusProver::prove(&config, witness, inputs);
-        assert_eq!(proof1, proof2, "Same witness+inputs must produce same proof");
+        assert_eq!(
+            proof1, proof2,
+            "Same witness+inputs must produce same proof"
+        );
     }
 
     #[test]
@@ -664,7 +674,10 @@ mod tests {
         let inputs = b"inputs";
         let proof1 = BiniusProver::prove(&config, b"witness_a", inputs);
         let proof2 = BiniusProver::prove(&config, b"witness_b", inputs);
-        assert_ne!(proof1, proof2, "Different witnesses must produce different proofs");
+        assert_ne!(
+            proof1, proof2,
+            "Different witnesses must produce different proofs"
+        );
     }
 
     #[test]
@@ -674,8 +687,11 @@ mod tests {
         let proof1 = BiniusProver::prove(&config, witness, b"inputs_a");
         let proof2 = BiniusProver::prove(&config, witness, b"inputs_b");
         // Proofs differ because public input binding differs
-        assert_ne!(proof1.bytes[32..64], proof2.bytes[32..64],
-            "Different public inputs must produce different pub_bind");
+        assert_ne!(
+            proof1.bytes[32..64],
+            proof2.bytes[32..64],
+            "Different public inputs must produce different pub_bind"
+        );
     }
 
     #[test]
@@ -694,8 +710,10 @@ mod tests {
         let mut proof = BiniusProver::prove(&config, b"witness", b"inputs");
         // Tamper with one byte in the body
         proof.bytes[100] ^= 0xFF;
-        assert!(!BiniusProver::verify(&config, &proof, b"inputs"),
-            "Tampered proof must fail verification");
+        assert!(
+            !BiniusProver::verify(&config, &proof, b"inputs"),
+            "Tampered proof must fail verification"
+        );
     }
 
     #[test]
@@ -704,8 +722,10 @@ mod tests {
         let mut proof = BiniusProver::prove(&config, b"witness", b"inputs");
         // Tamper with the commitment (first 32 bytes)
         proof.bytes[0] ^= 0x01;
-        assert!(!BiniusProver::verify(&config, &proof, b"inputs"),
-            "Tampered commitment must fail verification");
+        assert!(
+            !BiniusProver::verify(&config, &proof, b"inputs"),
+            "Tampered commitment must fail verification"
+        );
     }
 
     #[test]
@@ -714,8 +734,10 @@ mod tests {
         let mut proof = BiniusProver::prove(&config, b"witness", b"inputs");
         // Tamper with the public input binding (bytes 32..64)
         proof.bytes[40] ^= 0xFF;
-        assert!(!BiniusProver::verify(&config, &proof, b"inputs"),
-            "Tampered public input binding must fail verification");
+        assert!(
+            !BiniusProver::verify(&config, &proof, b"inputs"),
+            "Tampered public input binding must fail verification"
+        );
     }
 
     // ── Plonky3 Prover Tests ─────────────────────────────────────────────────
@@ -740,8 +762,10 @@ mod tests {
         let proof = Plonky3Prover::prove(&config, b"witness", b"correct");
 
         assert!(Plonky3Prover::verify(&config, &proof, b"correct"));
-        assert!(!Plonky3Prover::verify(&config, &proof, b"wrong"),
-            "Plonky3 must reject proof with wrong public inputs");
+        assert!(
+            !Plonky3Prover::verify(&config, &proof, b"wrong"),
+            "Plonky3 must reject proof with wrong public inputs"
+        );
     }
 
     #[test]
@@ -759,10 +783,18 @@ mod tests {
                 256 => 1024,
                 _ => unreachable!(),
             };
-            assert_eq!(proof.byte_len(), expected_size,
-                "Plonky3 proof at {}-bit security must be {} bytes", bits, expected_size);
-            assert!(Plonky3Prover::verify(&config, &proof, b"inputs"),
-                "Must verify at {}-bit", bits);
+            assert_eq!(
+                proof.byte_len(),
+                expected_size,
+                "Plonky3 proof at {}-bit security must be {} bytes",
+                bits,
+                expected_size
+            );
+            assert!(
+                Plonky3Prover::verify(&config, &proof, b"inputs"),
+                "Must verify at {}-bit",
+                bits
+            );
         }
     }
 
@@ -772,8 +804,10 @@ mod tests {
         let mut proof = Plonky3Prover::prove(&config, b"witness", b"inputs");
         // Tamper with FRI commitment (bytes 32..64)
         proof.bytes[40] ^= 0xFF;
-        assert!(!Plonky3Prover::verify(&config, &proof, b"inputs"),
-            "Tampered FRI commitment must fail verification");
+        assert!(
+            !Plonky3Prover::verify(&config, &proof, b"inputs"),
+            "Tampered FRI commitment must fail verification"
+        );
     }
 
     #[test]
@@ -782,8 +816,10 @@ mod tests {
         let mut proof = Plonky3Prover::prove(&config, b"witness", b"inputs");
         // Tamper with public input binding (bytes 64..96)
         proof.bytes[70] ^= 0xFF;
-        assert!(!Plonky3Prover::verify(&config, &proof, b"inputs"),
-            "Tampered public input binding must fail verification");
+        assert!(
+            !Plonky3Prover::verify(&config, &proof, b"inputs"),
+            "Tampered public input binding must fail verification"
+        );
     }
 
     // ── Hybrid Prover Tests ──────────────────────────────────────────────────
@@ -809,8 +845,10 @@ mod tests {
         let proof = HybridProver::prove(&config, b"witness", b"correct");
 
         assert!(HybridProver::verify(&config, &proof, b"correct"));
-        assert!(!HybridProver::verify(&config, &proof, b"wrong"),
-            "Hybrid must reject proof with wrong public inputs");
+        assert!(
+            !HybridProver::verify(&config, &proof, b"wrong"),
+            "Hybrid must reject proof with wrong public inputs"
+        );
     }
 
     #[test]
@@ -818,8 +856,10 @@ mod tests {
         let config = PqConfig::new(PqScheme::Hybrid);
         let mut proof = HybridProver::prove(&config, b"witness", b"inputs");
         proof.bytes[0] = 0x00; // corrupt header magic
-        assert!(!HybridProver::verify(&config, &proof, b"inputs"),
-            "Bad header must fail verification");
+        assert!(
+            !HybridProver::verify(&config, &proof, b"inputs"),
+            "Bad header must fail verification"
+        );
     }
 
     // ── Dispatcher Tests ─────────────────────────────────────────────────────
@@ -832,8 +872,11 @@ mod tests {
             let config = PqConfig::new(scheme.clone());
             let proof = prove_pq(&config, witness, inputs);
             assert_eq!(proof.scheme, scheme);
-            assert!(verify_pq(&config, &proof, inputs),
-                "prove_pq/verify_pq dispatch must work for {:?}", config.scheme);
+            assert!(
+                verify_pq(&config, &proof, inputs),
+                "prove_pq/verify_pq dispatch must work for {:?}",
+                config.scheme
+            );
         }
     }
 
@@ -844,8 +887,11 @@ mod tests {
             let config = PqConfig::new(scheme.clone());
             let proof = prove_pq(&config, witness, b"correct");
             assert!(verify_pq(&config, &proof, b"correct"));
-            assert!(!verify_pq(&config, &proof, b"wrong"),
-                "Dispatch verify must reject wrong inputs for {:?}", config.scheme);
+            assert!(
+                !verify_pq(&config, &proof, b"wrong"),
+                "Dispatch verify must reject wrong inputs for {:?}",
+                config.scheme
+            );
         }
     }
 
@@ -892,7 +938,11 @@ mod tests {
         println!("PQ Proof Sizes (128-bit security):");
         println!("  Binius:  {} bytes", binius.byte_len());
         println!("  Plonky3: {} bytes", plonky3.byte_len());
-        println!("  Hybrid:  {} bytes (4B header + {} Plonky3 inner)", hybrid.byte_len(), plonky3.byte_len());
+        println!(
+            "  Hybrid:  {} bytes (4B header + {} Plonky3 inner)",
+            hybrid.byte_len(),
+            plonky3.byte_len()
+        );
 
         // Binius should be smaller than Plonky3 (binary field advantage)
         assert!(binius.byte_len() < plonky3.byte_len());

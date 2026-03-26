@@ -5,16 +5,17 @@ use ark_crypto_primitives::sponge::{
     CryptographicSponge,
 };
 use ark_ff::{PrimeField, UniformRand};
-use ark_r1cs_std::{
-    alloc::AllocVar,
-    eq::EqGadget,
-    fields::fp::FpVar,
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+use ark_relations::gr1cs::{
+    ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError, SynthesisMode,
 };
-use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, ConstraintSystem, SynthesisMode};
+use ark_std::rand::{Rng, RngCore, SeedableRng};
 use ark_std::test_rng;
-use ark_std::rand::{Rng, SeedableRng, RngCore};
-use unigroth::{Groth16, R1CSToSAP, SAPStats, SecurityWrapper, SEConfig, prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction};
 use std::time::Instant;
+use unigroth::{
+    prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction, Groth16, R1CSToSAP, SAPStats,
+    SEConfig, SecurityWrapper,
+};
 
 /// SecretPhrase circuit: proves knowledge of `secret` such that Poseidon(secret) == `expected_hash`
 struct SecretPhraseCircuit<F: PrimeField> {
@@ -62,7 +63,15 @@ fn get_poseidon_config<F: PrimeField>() -> PoseidonConfig<F> {
     let round_constants = (0..(full_rounds + partial_rounds))
         .map(|_| vec![F::rand(&mut rng), F::rand(&mut rng), F::rand(&mut rng)])
         .collect();
-    PoseidonConfig::new(full_rounds, partial_rounds, alpha, mds, round_constants, 2, 1)
+    PoseidonConfig::new(
+        full_rounds,
+        partial_rounds,
+        alpha,
+        mds,
+        round_constants,
+        2,
+        1,
+    )
 }
 
 #[test]
@@ -87,9 +96,18 @@ fn test_unigroth_advanced_features() {
     let sap_stats = SAPStats::analyze(cs.clone());
     println!("\n[Arithmetization: SAP vs R1CS]");
     println!("Total R1CS constraints: {}", sap_stats.total_constraints);
-    println!("SAP Addition-only gates: {} ({:.1}%)", sap_stats.addition_gates, sap_stats.addition_percentage);
-    println!("SAP Multiplication gates: {}", sap_stats.multiplication_gates);
-    println!("Estimated Prover Speedup (SAP): {:.1}%", sap_stats.estimated_reduction());
+    println!(
+        "SAP Addition-only gates: {} ({:.1}%)",
+        sap_stats.addition_gates, sap_stats.addition_percentage
+    );
+    println!(
+        "SAP Multiplication gates: {}",
+        sap_stats.multiplication_gates
+    );
+    println!(
+        "Estimated Prover Speedup (SAP): {:.1}%",
+        sap_stats.estimated_reduction()
+    );
 
     // 2. Performance Comparison (SAP vs Standard)
     let setup_start = Instant::now();
@@ -115,13 +133,14 @@ fn test_unigroth_advanced_features() {
     };
 
     let prove_start = Instant::now();
-    let proof = Groth16::<Bls12_377, LibsnarkReduction>::prove(&pk, circuit_prove, &mut rng).unwrap();
+    let proof =
+        Groth16::<Bls12_377, LibsnarkReduction>::prove(&pk, circuit_prove, &mut rng).unwrap();
     println!("Proving time (SAP): {:?}", prove_start.elapsed());
 
     // 3. Security: Simulation-Extractability & Subversion-ZK
     println!("\n[Security: SE + S-ZK]");
     let se_config = SEConfig::default(); // Use ROM blinding by default
-    
+
     let secure_prove_start = Instant::now();
     let secure_proof = SecurityWrapper::<Bls12_377>::prove(
         &pk,
@@ -139,7 +158,7 @@ fn test_unigroth_advanced_features() {
     let is_valid = SecurityWrapper::verify(&pvk, &[expected_hash], &secure_proof);
     println!("Secure Verification time: {:?}", verify_start.elapsed());
     assert!(is_valid);
-    
+
     println!("\nConclusion: UniGroth is now providing simulation-extractability and ");
     println!("detecting SAP optimization opportunities that are invisible to standard Groth16.");
 }
