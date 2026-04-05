@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## UniGroth v0.3.2 (April 2026)
+
+### Documentation
+
+- **Post-Quantum Migration Path** — Expanded root README with full PQ architecture diagram, scheme comparison table, usage examples, proof aggregation, security properties, and phased migration strategy
+- **Dedicated PQ Documentation** — Created `docs/post-quantum.md` with comprehensive coverage:
+  - Architecture and design principles
+  - Binius, Plonky3, and Hybrid scheme specifications with proof layouts
+  - Full API reference (PqConfig, PqScheme, PqInnerProver trait, PqProof, aggregation)
+  - Security model: commitment structure, threat model, security levels
+  - Proof size comparison across all modes (classical, SE, PQ, vs STARKs)
+  - 4-phase migration strategy with compatibility matrix
+  - Integration guide with other UniGroth features
+
+---
+
 ## UniGroth v0.1.1 (March 2026)
 
 ### Infrastructure & CI/CD

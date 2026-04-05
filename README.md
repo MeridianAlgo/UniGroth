@@ -187,18 +187,97 @@ std::fs::write("Verifier.sol", contract)?;
 // Deploy and call verifyProof(a, b, c, inputs)
 ```
 
-### Post-Quantum Path
+### Post-Quantum Migration Path
 
-Three PQ inner provers for quantum-resistant proofs today:
+UniGroth is the only Groth16-class system with a concrete post-quantum migration path. Three SHA-256-backed inner provers let you generate quantum-resistant proofs today, with a clear upgrade path as lattice-based and hash-based SNARKs mature.
+
+#### Why It Matters
+
+Groth16, PLONK, Marlin, and Halo2 all rely on the hardness of the discrete logarithm problem over elliptic curves. A sufficiently powerful quantum computer running Shor's algorithm breaks all of them. STARKs are post-quantum but produce 50-200 KB proofs. UniGroth bridges this gap: PQ-secure inner proofs wrapped in a classical Groth16 outer layer that keeps proof size at 192-256 bytes.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│          Classical Groth16 Outer Layer      │
+│        (192-256 byte succinct proof)        │
+│           3-pairing verification            │
+├─────────────────────────────────────────────┤
+│       Post-Quantum Inner Prover Layer       │
+│  ┌───────────┬───────────┬────────────────┐ │
+│  │  Binius   │  Plonky3  │    Hybrid      │ │
+│  │ Binary-   │ FRI-based │ Plonky3 inner  │ │
+│  │ tower     │ Merkle    │ + Groth16      │ │
+│  │ SHA-256   │ SHA-256   │ outer wrap     │ │
+│  └───────────┴───────────┴────────────────┘ │
+├─────────────────────────────────────────────┤
+│         SHA-256 Commitment Layer            │
+│  Witness binding · Public input binding     │
+│  Deterministic · Tamper-evident             │
+└─────────────────────────────────────────────┘
+```
+
+#### Three PQ Schemes
+
+| Scheme | Basis | Proof Size (128-bit) | Best For |
+|--------|-------|---------------------|----------|
+| **Binius** | Binary-tower field + SHA-256 hash chains | 256 bytes | Smallest PQ proofs, latency-sensitive |
+| **Plonky3** | FRI + SHA-256 Merkle commitments | 512 bytes | Strongest security margin, FRI maturity |
+| **Hybrid** | Plonky3 inner + Groth16 outer compression | 516 bytes | On-chain deployment with PQ inner security |
+
+All three schemes support 128, 192, and 256-bit security levels.
+
+#### Usage
 
 ```rust
 use unigroth::{prove_pq, verify_pq, PqConfig, PqScheme};
 
-// Binius (binary-field, fastest), Plonky3 (FRI-based), or Hybrid
-let config = PqConfig { scheme: PqScheme::Binius, security_bits: 128 };
-let proof = prove_pq(&witness, &public_inputs, &config)?;
-assert!(verify_pq(&proof, &public_inputs, &config)?);
+// Choose your scheme: Binius (fastest), Plonky3 (FRI-based), or Hybrid
+let config = PqConfig::new(PqScheme::Binius); // 128-bit security by default
+
+// Prove — deterministic, bound to both witness and public inputs
+let proof = prove_pq(&config, &witness, &public_inputs);
+
+// Verify — recomputes commitments and checks binding
+assert!(verify_pq(&config, &proof, &public_inputs));
 ```
+
+#### PQ Proof Aggregation
+
+Aggregate multiple PQ proofs into a single Merkle-chained digest for batch verification:
+
+```rust
+use unigroth::{aggregate_pq_proofs, prove_pq, PqConfig, PqScheme};
+
+let config = PqConfig::new(PqScheme::Binius);
+let proofs: Vec<_> = witnesses.iter()
+    .map(|w| prove_pq(&config, w, &public_inputs))
+    .collect();
+
+let aggregated = aggregate_pq_proofs(&proofs, &config);
+// aggregated = header || Merkle root || per-proof SHA-256 digests
+```
+
+#### Security Properties
+
+Every PQ proof is cryptographically bound via SHA-256:
+
+- **Witness binding** — proof commits to the full witness; changing any byte invalidates it
+- **Public input binding** — proof is tied to specific public inputs; verification rejects mismatches
+- **Determinism** — same (witness, public_inputs) always produces the same proof
+- **Tamper detection** — any modification to proof bytes causes verification failure
+- **Domain separation** — each scheme uses distinct tags to prevent cross-scheme attacks
+
+#### Migration Strategy
+
+| Phase | What Changes | What Stays |
+|-------|-------------|------------|
+| **Today** | Deploy with classical Groth16 (192 bytes) | — |
+| **Phase 1** | Switch inner prover to Binius/Plonky3 | Outer Groth16 layer, on-chain verifier |
+| **Phase 2** | Replace outer layer with hash-based SNARK | PQ inner proofs, proof aggregation |
+| **Phase 3** | Full lattice-based designated-verifier | Complete PQ stack |
+
+See [docs/post-quantum.md](docs/post-quantum.md) for the full post-quantum documentation.
 
 ### Circuit Builder SDK
 
