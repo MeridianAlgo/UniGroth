@@ -11,13 +11,15 @@
 //!
 //! References: Pipelined Groth16 (2024), Parallelized SNARK Proving
 
-use ark_ec::pairing::Pairing;
-use ark_relations::gr1cs::ConstraintSynthesizer;
-use ark_std::rand::SeedableRng;
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ff::{One, UniformRand, Zero};
+use ark_relations::gr1cs::{ConstraintSynthesizer, Result as R1CSResult, SynthesisError};
+use ark_std::rand::{Rng, SeedableRng};
 use ark_std::vec::Vec;
+use core::ops::{AddAssign, Mul, Neg};
 
 use crate::security::{make_sim_extractable, SEConfig, SimExtractableProof};
-use crate::{r1cs_to_qap::R1CSToQAP, Groth16, ProvingKey, VerifyingKey};
+use crate::{r1cs_to_qap::R1CSToQAP, Groth16, PreparedVerifyingKey, ProvingKey, VerifyingKey};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -156,6 +158,164 @@ pub fn batch_verify<E: Pairing>(
         .iter()
         .map(|(proof, inputs)| Groth16::<E>::verify_proof(&pvk, proof, inputs).unwrap_or(false))
         .collect()
+}
+
+/// Cryptographically-sound batch verifier: k proofs → 1 final exponentiation.
+///
+/// Standard `batch_verify` runs k independent verifications, each paying the
+/// cost of 3 Miller loops + 1 final exponentiation. Final exponentiation on
+/// BN254 is ~60% of total verification time.
+///
+/// This function uses a random linear combination to merge k verification
+/// equations into a single multi-Miller-loop call followed by ONE final
+/// exponentiation, reducing the dominant cost dramatically:
+///
+/// | k     | Individual final-exps | batch_verify_optimized final-exps |
+/// |-------|----------------------|-----------------------------------|
+/// | 8     | 8                    | 1 (8× reduction)                  |
+/// | 32    | 32                   | 1 (32× reduction)                 |
+/// | 128   | 128                  | 1 (128× reduction)                |
+///
+/// # Security
+/// Random scalars rᵢ are sampled from a CSPRNG. A malicious prover cannot
+/// cause a false batch-accept with probability > k/|F| ≈ 2^{-200} for k=128.
+///
+/// # Requirement
+/// All proofs must use the same circuit (same VK). For proofs with SE elements
+/// (BG18 mode), falls back to individual verification per proof.
+///
+/// # Returns
+/// `Ok(true)` iff all k proofs verify. `Ok(false)` if any is invalid.
+pub fn batch_verify_optimized<E: Pairing>(
+    pvk: &PreparedVerifyingKey<E>,
+    proofs_and_inputs: &[(SimExtractableProof<E>, Vec<E::ScalarField>)],
+    rng: &mut impl Rng,
+) -> R1CSResult<bool> {
+    if proofs_and_inputs.is_empty() {
+        return Ok(true);
+    }
+
+    // Check input arity for all proofs up-front; reject early on mismatch.
+    let expected_inputs = pvk.vk.gamma_abc_g1.len().saturating_sub(1);
+    for (_, inputs) in proofs_and_inputs.iter() {
+        if inputs.len() != expected_inputs {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+    }
+
+    // If any proof carries a BG18 SE element, fall back to individual verify
+    // (SE batch is handled by `batch_verify_se`).
+    let has_se = proofs_and_inputs.iter().any(|(p, _)| p.se_element.is_some());
+    if has_se {
+        for (proof, inputs) in proofs_and_inputs.iter() {
+            let ok = Groth16::<E>::verify_proof(pvk, proof, inputs).unwrap_or(false);
+            if !ok {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+
+    // Identity check on all proof elements: A=0 or C=0 trivially satisfies pairings.
+    for (proof, _) in proofs_and_inputs.iter() {
+        let p = &proof.groth16_proof;
+        if p.a.is_zero() || p.c.is_zero() {
+            return Ok(false);
+        }
+    }
+
+    let k = proofs_and_inputs.len();
+
+    // Sample k non-zero random scalars r₁…rₖ ∈ F for the linear combination.
+    // These prevent a cheating prover from cancelling errors across proofs.
+    let rs: Vec<E::ScalarField> = (0..k)
+        .map(|_| {
+            let mut r = E::ScalarField::zero();
+            while r.is_zero() {
+                r = E::ScalarField::rand(rng);
+            }
+            r
+        })
+        .collect();
+
+    // Aggregated G1 points via MSM:
+    //   agg_C   = Σᵢ rᵢ · Cᵢ
+    //   agg_inp = Σᵢ rᵢ · prepared_inputsᵢ
+    let c_bases: Vec<E::G1Affine> = proofs_and_inputs
+        .iter()
+        .map(|(p, _)| p.groth16_proof.c)
+        .collect();
+    let agg_c = E::G1::msm(&c_bases, &rs).map_err(|_| SynthesisError::Unsatisfiable)?;
+
+    // Compute Σᵢ rᵢ · prepared_inputsᵢ using MSM over aggregated input points.
+    let inp_acc: Vec<E::G1> = proofs_and_inputs
+        .iter()
+        .map(|(_, inputs)| Groth16::<E>::prepare_inputs(pvk, inputs))
+        .collect::<R1CSResult<_>>()?;
+    let inp_bases: Vec<E::G1Affine> = inp_acc.iter().map(|p| p.into_affine()).collect();
+    let agg_inp =
+        E::G1::msm(&inp_bases, &rs).map_err(|_| SynthesisError::Unsatisfiable)?;
+
+    // r_sum = Σᵢ rᵢ  (used for the α·β term)
+    let r_sum: E::ScalarField = rs.iter().copied().fold(E::ScalarField::zero(), |acc, r| {
+        let mut s = acc;
+        s.add_assign(r);
+        s
+    });
+
+    // Build multi-Miller-loop input list:
+    //   Pairs 0..k:  (rᵢ·Aᵢ, Bᵢ)         — per-proof randomized A paired with B
+    //   Pair k:      (agg_inp, -γH)        — aggregated public input term
+    //   Pair k+1:    (agg_C, -δH)          — aggregated C term
+    //   Pair k+2:    (-r_sum·αG, βH)       — aggregated α·β term (negated on G1)
+    //
+    // Derivation: batch of individual checks e(Aᵢ, Bᵢ)·e(inpᵢ,-γ)·e(Cᵢ,-δ) = e(α,β)
+    // Multiply equation i by rᵢ, take product over i, use MSM linearity on G1.
+
+    // Scale each Aᵢ by rᵢ
+    let scaled_a: Vec<E::G1> = proofs_and_inputs
+        .iter()
+        .zip(rs.iter())
+        .map(|((p, _), &r)| p.groth16_proof.a.into_group().mul(r))
+        .collect();
+    let scaled_a_affine: Vec<E::G1Affine> = E::G1::normalize_batch(&scaled_a);
+
+    // -r_sum · αG
+    let neg_r_alpha = pvk
+        .vk
+        .alpha_g1
+        .into_group()
+        .mul(r_sum)
+        .neg()
+        .into_affine();
+
+    let mut g1_inputs: Vec<E::G1Prepared> = scaled_a_affine
+        .into_iter()
+        .map(|a| a.into())
+        .collect();
+    g1_inputs.push(agg_inp.into_affine().into());
+    g1_inputs.push(agg_c.into_affine().into());
+    g1_inputs.push(neg_r_alpha.into());
+
+    let b_elems: Vec<E::G2Affine> = proofs_and_inputs
+        .iter()
+        .map(|(p, _)| p.groth16_proof.b)
+        .collect();
+    let mut g2_inputs: Vec<E::G2Prepared> = b_elems.into_iter().map(|b| b.into()).collect();
+    g2_inputs.push(pvk.gamma_g2_neg_pc.clone());
+    g2_inputs.push(pvk.delta_g2_neg_pc.clone());
+    g2_inputs.push(pvk.vk.beta_g2.into());
+
+    // One multi-Miller-loop + one final exponentiation for all k proofs.
+    let ml = E::multi_miller_loop(g1_inputs, g2_inputs);
+    let result = match E::final_exponentiation(ml) {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    // GT identity check: the combined equation reduces to 1_GT if all proofs valid.
+    // 1_GT = multiplicative identity of E::TargetField = One::one().
+    Ok(result.0 == E::TargetField::one())
 }
 
 /// Estimate proving throughput for a batch.

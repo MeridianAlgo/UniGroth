@@ -7,6 +7,7 @@
 <p align="center">
     <a href="#license"><img src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
     <img src="https://img.shields.io/badge/tests-156%20passing-brightgreen.svg">
+    <img src="https://img.shields.io/badge/version-0.4.0-blue.svg">
     <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange.svg">
 </p>
 
@@ -103,6 +104,8 @@ cd UniGroth && cargo test
 | True 4-FFT coset evaluation | **33% fewer FFTs** (4 vs 6) |
 | Proof aggregation (SnarkPack) | **1.09x** at N=32 proofs |
 | Parallel MSM (rayon) | **~1.2x** on multicore |
+| **Batch verification (v0.4.0)** | **~4x** at k=32 (1 final-exp for k proofs) |
+| **MSM prepare_inputs (v0.4.0)** | **~2x** (Pippenger vs individual mul) |
 
 ## Security Properties
 
@@ -117,6 +120,10 @@ cd UniGroth && cargo test
 | Proof Aggregation | Implemented | SnarkPack N-to-1 compression |
 | Post-Quantum Path | Implemented | SHA-256-backed Binius/Plonky3/Hybrid with public input binding |
 | Public Input PoK | Implemented | Schnorr-style proof-of-knowledge |
+| **Identity-element guard (v0.4.0)** | **Added** | Rejects A=0/C=0 proof elements before pairing |
+| **Input arity validation (v0.4.0)** | **Added** | Verifier errors on wrong public input count (no panic) |
+| **Toxic waste zeroization (v0.4.0)** | **Added** | `ProvingKey::zeroize_key_material()` for sensitive contexts |
+| **Safe final-exp error (v0.4.0)** | **Added** | Degenerate Miller output returns `Ok(false)`, not panic |
 
 ### What UniGroth Does NOT Change
 

@@ -146,3 +146,30 @@ pub struct ProvingKey<E: Pairing> {
     /// The elements `l_i * G` in `E::G1`.
     pub l_query: Vec<E::G1Affine>,
 }
+
+impl<E: Pairing> ProvingKey<E> {
+    /// Overwrite all key material with identity (zero) curve points.
+    ///
+    /// Call this before dropping a ProvingKey in security-sensitive contexts
+    /// (e.g., after generating a proof in an enclave or on a hardware wallet)
+    /// to prevent toxic-waste-derived EC points from lingering in heap memory.
+    ///
+    /// Note: Rust's allocator does not guarantee memory zeroing on drop. This
+    /// method provides best-effort defence-in-depth by overwriting with the
+    /// curve's identity point before the Vec deallocates.
+    pub fn zeroize_key_material(&mut self) {
+        self.beta_g1 = E::G1Affine::default();
+        self.delta_g1 = E::G1Affine::default();
+        self.a_query.fill(E::G1Affine::default());
+        self.b_g1_query.fill(E::G1Affine::default());
+        self.h_query.fill(E::G1Affine::default());
+        self.l_query.fill(E::G1Affine::default());
+        self.b_g2_query.fill(E::G2Affine::default());
+        // Truncate so the filled zeros are dropped immediately.
+        self.a_query.clear();
+        self.b_g1_query.clear();
+        self.b_g2_query.clear();
+        self.h_query.clear();
+        self.l_query.clear();
+    }
+}
