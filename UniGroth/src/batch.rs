@@ -205,7 +205,9 @@ pub fn batch_verify_optimized<E: Pairing>(
 
     // If any proof carries a BG18 SE element, fall back to individual verify
     // (SE batch is handled by `batch_verify_se`).
-    let has_se = proofs_and_inputs.iter().any(|(p, _)| p.se_element.is_some());
+    let has_se = proofs_and_inputs
+        .iter()
+        .any(|(p, _)| p.se_element.is_some());
     if has_se {
         for (proof, inputs) in proofs_and_inputs.iter() {
             let ok = Groth16::<E>::verify_proof(pvk, proof, inputs).unwrap_or(false);
@@ -253,8 +255,7 @@ pub fn batch_verify_optimized<E: Pairing>(
         .map(|(_, inputs)| Groth16::<E>::prepare_inputs(pvk, inputs))
         .collect::<R1CSResult<_>>()?;
     let inp_bases: Vec<E::G1Affine> = inp_acc.iter().map(|p| p.into_affine()).collect();
-    let agg_inp =
-        E::G1::msm(&inp_bases, &rs).map_err(|_| SynthesisError::Unsatisfiable)?;
+    let agg_inp = E::G1::msm(&inp_bases, &rs).map_err(|_| SynthesisError::Unsatisfiable)?;
 
     // r_sum = Σᵢ rᵢ  (used for the α·β term)
     let r_sum: E::ScalarField = rs.iter().copied().fold(E::ScalarField::zero(), |acc, r| {
@@ -281,18 +282,9 @@ pub fn batch_verify_optimized<E: Pairing>(
     let scaled_a_affine: Vec<E::G1Affine> = E::G1::normalize_batch(&scaled_a);
 
     // -r_sum · αG
-    let neg_r_alpha = pvk
-        .vk
-        .alpha_g1
-        .into_group()
-        .mul(r_sum)
-        .neg()
-        .into_affine();
+    let neg_r_alpha = pvk.vk.alpha_g1.into_group().mul(r_sum).neg().into_affine();
 
-    let mut g1_inputs: Vec<E::G1Prepared> = scaled_a_affine
-        .into_iter()
-        .map(|a| a.into())
-        .collect();
+    let mut g1_inputs: Vec<E::G1Prepared> = scaled_a_affine.into_iter().map(|a| a.into()).collect();
     g1_inputs.push(agg_inp.into_affine().into());
     g1_inputs.push(agg_c.into_affine().into());
     g1_inputs.push(neg_r_alpha.into());

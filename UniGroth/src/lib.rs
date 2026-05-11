@@ -146,7 +146,10 @@ pub use self::streaming::{
 
 /// Batch prover: parallel multi-circuit proving.
 pub mod batch;
-pub use self::batch::{batch_prove, batch_verify, batch_verify_optimized, BatchConfig, BatchProofResult, BatchResult, BatchThroughputEstimate};
+pub use self::batch::{
+    batch_prove, batch_verify, batch_verify_optimized, BatchConfig, BatchProofResult, BatchResult,
+    BatchThroughputEstimate,
+};
 
 /// Solidity verifier contract generation for on-chain verification.
 #[cfg(any(feature = "solidity", test))]

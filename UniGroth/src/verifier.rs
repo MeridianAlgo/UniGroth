@@ -79,11 +79,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         } else {
             // Batch MSM replaces n individual mul_bigint calls.
             // Pippenger's algorithm: ~O(n / log n) group ops vs O(n * log p) naive.
-            let ic_acc =
-                E::G1::msm(&pvk.vk.gamma_abc_g1[1..], public_inputs).map_err(|e| {
-                    let _ = e;
-                    SynthesisError::Unsatisfiable
-                })?;
+            let ic_acc = E::G1::msm(&pvk.vk.gamma_abc_g1[1..], public_inputs).map_err(|e| {
+                let _ = e;
+                SynthesisError::Unsatisfiable
+            })?;
             pvk.vk.gamma_abc_g1[0].into_group() + ic_acc
         };
 
