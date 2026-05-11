@@ -7,6 +7,7 @@ use ark_relations::gr1cs::{
     SynthesisError, SynthesisMode,
 };
 use ark_std::{cfg_into_iter, cfg_iter, rand::Rng};
+use zeroize::Zeroize;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -126,8 +127,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         // gamma_inverse is no longer needed after gamma_abc is collected.
         // Zero it immediately. (delta_inverse is still needed for h_query_scalars.)
-        gamma_inverse = E::ScalarField::zero();
-        let _ = core::hint::black_box(&gamma_inverse);
+        gamma_inverse.zeroize();
 
         // Compute B window table
         let g2_time = start_timer!(|| "Compute G2 table");
@@ -157,12 +157,9 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         // alpha, beta, delta no longer needed as scalars after this point.
         // Zero them to prevent toxic waste lingering in stack memory.
-        alpha = E::ScalarField::zero();
-        beta = E::ScalarField::zero();
-        delta = E::ScalarField::zero();
-        let _ = core::hint::black_box(&alpha);
-        let _ = core::hint::black_box(&beta);
-        let _ = core::hint::black_box(&delta);
+        alpha.zeroize();
+        beta.zeroize();
+        delta.zeroize();
 
         // Compute the A-query
         let a_time = start_timer!(|| "Calculate A");
@@ -184,8 +181,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         end_timer!(h_time);
 
         // delta_inverse last used above; zero it now.
-        delta_inverse = E::ScalarField::zero();
-        let _ = core::hint::black_box(&delta_inverse);
+        delta_inverse.zeroize();
 
         // Compute the L-query
         let l_time = start_timer!(|| "Calculate L");
@@ -202,8 +198,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         drop(g1_table);
 
         // gamma last used above; zero it now.
-        gamma = E::ScalarField::zero();
-        let _ = core::hint::black_box(&gamma);
+        gamma.zeroize();
 
         end_timer!(verifying_key_time);
 
@@ -227,5 +222,159 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             h_query,
             l_query,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::{Bn254, Fr};
+    use ark_relations::{
+        gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+        lc,
+    };
+    use ark_serialize::CanonicalSerialize;
+    use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
+    use ark_std::rand::SeedableRng;
+
+    struct TestCircuit {
+        a: Fr,
+        b: Fr,
+    }
+
+    impl ConstraintSynthesizer<Fr> for TestCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| Ok(self.a))?;
+            let b = cs.new_witness_variable(|| Ok(self.b))?;
+            let c = cs.new_input_variable(|| Ok(self.a * self.b))?;
+            cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_circuit_specific_setup() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(1u64);
+        let result = Groth16::<Bn254>::setup(
+            TestCircuit {
+                a: Fr::from(1u64),
+                b: Fr::from(1u64),
+            },
+            &mut rng,
+        );
+        assert!(result.is_ok(), "Setup must succeed for a valid circuit");
+        let (pk, vk) = result.unwrap();
+        assert!(
+            !pk.a_query.is_empty(),
+            "ProvingKey a_query must be non-empty after setup"
+        );
+        assert!(
+            vk.gamma_abc_g1.len() >= 2,
+            "VerifyingKey must hold at least 2 gamma_abc_g1 elements for TestCircuit"
+        );
+    }
+
+    #[test]
+    fn test_proving_key_has_correct_sizes() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(2u64);
+        let (pk, _vk) = Groth16::<Bn254>::setup(
+            TestCircuit {
+                a: Fr::from(3u64),
+                b: Fr::from(4u64),
+            },
+            &mut rng,
+        )
+        .unwrap();
+        assert!(
+            !pk.a_query.is_empty(),
+            "a_query must be non-empty: got {}",
+            pk.a_query.len()
+        );
+        assert!(
+            !pk.l_query.is_empty(),
+            "l_query must be non-empty: got {}",
+            pk.l_query.len()
+        );
+        assert!(
+            !pk.h_query.is_empty(),
+            "h_query must be non-empty: got {}",
+            pk.h_query.len()
+        );
+    }
+
+    #[test]
+    fn test_zeroized_toxic_waste() {
+        use ark_ff::UniformRand;
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(3u64);
+        let alpha = Fr::rand(&mut rng);
+        let beta = Fr::rand(&mut rng);
+        let gamma = Fr::rand(&mut rng);
+        let delta = Fr::rand(&mut rng);
+        let g1 = ark_bn254::G1Projective::rand(&mut rng);
+        let g2 = ark_bn254::G2Projective::rand(&mut rng);
+        let pk_res = Groth16::<Bn254>::generate_parameters_with_qap(
+            TestCircuit {
+                a: Fr::from(5u64),
+                b: Fr::from(7u64),
+            },
+            alpha,
+            beta,
+            gamma,
+            delta,
+            g1,
+            g2,
+            &mut rng,
+        );
+        assert!(
+            pk_res.is_ok(),
+            "generate_parameters_with_qap must succeed: {:?}",
+            pk_res.err()
+        );
+        let pk = pk_res.unwrap();
+        let vk = pk.vk.clone();
+        let proof = Groth16::<Bn254>::prove(
+            &pk,
+            TestCircuit {
+                a: Fr::from(5u64),
+                b: Fr::from(7u64),
+            },
+            &mut rng,
+        )
+        .unwrap();
+        let pvk = crate::prepare_verifying_key(&vk);
+        let inputs = vec![Fr::from(5u64) * Fr::from(7u64)];
+        let ok = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &proof).unwrap();
+        assert!(ok, "Proof under explicit toxic waste must verify");
+    }
+
+    #[test]
+    fn test_setup_determinism_with_seed() {
+        let seed = 99u64;
+        let mut rng1 = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
+        let (_pk1, vk1) = Groth16::<Bn254>::setup(
+            TestCircuit {
+                a: Fr::from(1u64),
+                b: Fr::from(2u64),
+            },
+            &mut rng1,
+        )
+        .unwrap();
+        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
+        let (_pk2, vk2) = Groth16::<Bn254>::setup(
+            TestCircuit {
+                a: Fr::from(1u64),
+                b: Fr::from(2u64),
+            },
+            &mut rng2,
+        )
+        .unwrap();
+        let mut bytes1 = Vec::new();
+        let mut bytes2 = Vec::new();
+        vk1.serialize_uncompressed(&mut bytes1).unwrap();
+        vk2.serialize_uncompressed(&mut bytes2).unwrap();
+        assert_eq!(
+            bytes1, bytes2,
+            "Setup with identical seeds must produce identical verifying keys"
+        );
     }
 }

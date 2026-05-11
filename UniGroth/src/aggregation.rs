@@ -182,7 +182,10 @@ pub fn verify_aggregated<E: Pairing>(vk: &VerifyingKey<E>, agg: &AggregatedProof
     let gamma_abc_0_scaled = (vk.gamma_abc_g1[0].into_group() * agg.pow_sum).into_affine();
     let scalars: Vec<E::ScalarField> = agg.inputs_agg.clone();
     let bases: Vec<E::G1Affine> = vk.gamma_abc_g1[1..].to_vec();
-    let inputs_sum_proj = E::G1::msm(&bases, &scalars).expect("MSM failed");
+    let inputs_sum_proj = match E::G1::msm(&bases, &scalars) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
     let pi_agg = (gamma_abc_0_scaled.into_group() + inputs_sum_proj).into_affine();
 
     let rhs = E::pairing(alpha_scaled, vk.beta_g2)

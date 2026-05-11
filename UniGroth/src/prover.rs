@@ -305,3 +305,175 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         res
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::{Bn254, Fr};
+    use ark_relations::{
+        gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+        lc,
+    };
+    use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
+    use ark_std::{
+        rand::{RngCore, SeedableRng},
+        test_rng,
+    };
+
+    struct TestCircuit {
+        a: Fr,
+        b: Fr,
+    }
+
+    impl ConstraintSynthesizer<Fr> for TestCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| Ok(self.a))?;
+            let b = cs.new_witness_variable(|| Ok(self.b))?;
+            let c = cs.new_input_variable(|| Ok(self.a * self.b))?;
+            cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
+            Ok(())
+        }
+    }
+
+    fn setup_and_prove(
+        a: Fr,
+        b: Fr,
+        seed: u64,
+    ) -> (
+        crate::ProvingKey<Bn254>,
+        crate::VerifyingKey<Bn254>,
+        crate::SimExtractableProof<Bn254>,
+    ) {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
+        let (pk, vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng).unwrap();
+        let proof = Groth16::<Bn254>::prove(&pk, TestCircuit { a, b }, &mut rng).unwrap();
+        (pk, vk, proof)
+    }
+
+    #[test]
+    fn test_create_proof_valid() {
+        let a = Fr::from(3u64);
+        let b = Fr::from(5u64);
+        let (_pk, vk, proof) = setup_and_prove(a, b, 42u64);
+        let pvk = crate::prepare_verifying_key(&vk);
+        let inputs = vec![a * b];
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &proof);
+        assert!(
+            matches!(result, Ok(true)),
+            "Valid proof must verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_create_proof_wrong_witness() {
+        // Build the keys from a correct circuit (a=3,b=5), then create a proof
+        // with the witness lying about public output (999 instead of 15).
+        let a = Fr::from(3u64);
+        let b = Fr::from(5u64);
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+        let (pk, vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng).unwrap();
+
+        struct LyingCircuit;
+        impl ConstraintSynthesizer<Fr> for LyingCircuit {
+            fn generate_constraints(
+                self,
+                cs: ConstraintSystemRef<Fr>,
+            ) -> Result<(), SynthesisError> {
+                let a = cs.new_witness_variable(|| Ok(Fr::from(3u64)))?;
+                let b = cs.new_witness_variable(|| Ok(Fr::from(5u64)))?;
+                let c = cs.new_input_variable(|| Ok(Fr::from(999u64)))?;
+                cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
+                Ok(())
+            }
+        }
+
+        let proof = Groth16::<Bn254>::prove(&pk, LyingCircuit, &mut rng);
+        assert!(
+            proof.is_ok(),
+            "Prover must not panic even with wrong public input"
+        );
+
+        let pvk = crate::prepare_verifying_key(&vk);
+        let correct_inputs = vec![a * b];
+        let result =
+            Groth16::<Bn254>::verify_with_processed_vk(&pvk, &correct_inputs, &proof.unwrap());
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "Proof with wrong witness must not verify against correct inputs"
+        );
+    }
+
+    #[test]
+    fn test_proof_is_circuit_bound() {
+        let a = Fr::from(7u64);
+        let b = Fr::from(11u64);
+        let mut rng1 = ark_std::rand::rngs::StdRng::seed_from_u64(100u64);
+        let mut rng2 = ark_std::rand::rngs::StdRng::seed_from_u64(200u64);
+        let (pk, _vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng1).unwrap();
+
+        let proof1 = Groth16::<Bn254>::create_random_proof_with_reduction(
+            TestCircuit { a, b },
+            &pk,
+            &mut rng1,
+        )
+        .unwrap();
+        let proof2 = Groth16::<Bn254>::create_random_proof_with_reduction(
+            TestCircuit { a, b },
+            &pk,
+            &mut rng2,
+        )
+        .unwrap();
+
+        assert!(
+            proof1.a != proof2.a || proof1.b != proof2.b || proof1.c != proof2.c,
+            "Proofs generated with different RNG seeds must differ"
+        );
+    }
+
+    #[test]
+    fn test_rerandomize_proof_verifies() {
+        let a = Fr::from(2u64);
+        let b = Fr::from(6u64);
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(77u64);
+        let (pk, vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng).unwrap();
+
+        let raw_proof = Groth16::<Bn254>::create_random_proof_with_reduction(
+            TestCircuit { a, b },
+            &pk,
+            &mut rng,
+        )
+        .unwrap();
+
+        let rerandomized = Groth16::<Bn254>::rerandomize_proof(&vk, &raw_proof, &mut rng);
+
+        let se_proof = crate::SimExtractableProof {
+            groth16_proof: rerandomized.clone(),
+            se_element: None,
+            proof_hash: crate::security::compute_proof_hash::<Bn254>(&rerandomized),
+        };
+
+        let pvk = crate::prepare_verifying_key(&vk);
+        let inputs = vec![a * b];
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &se_proof);
+        assert!(
+            matches!(result, Ok(true)),
+            "Rerandomized proof must still verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_zero_witness_fails_verification() {
+        let a = Fr::from(0u64);
+        let b = Fr::from(0u64);
+        let (_pk, vk, proof) = setup_and_prove(a, b, 55u64);
+        let pvk = crate::prepare_verifying_key(&vk);
+        let wrong_inputs = vec![Fr::from(1u64)];
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &wrong_inputs, &proof);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "Zero-witness proof must fail with wrong public inputs"
+        );
+    }
+}

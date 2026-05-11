@@ -162,3 +162,149 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         Self::verify_proof_with_prepared_inputs(pvk, proof, &prepared_inputs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::{Bn254, Fr, G1Affine};
+    use ark_ec::AffineRepr;
+    use ark_relations::{
+        gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
+        lc,
+    };
+    use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
+    use ark_std::rand::SeedableRng;
+
+    struct TestCircuit {
+        a: Fr,
+        b: Fr,
+    }
+
+    impl ConstraintSynthesizer<Fr> for TestCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| Ok(self.a))?;
+            let b = cs.new_witness_variable(|| Ok(self.b))?;
+            let c = cs.new_input_variable(|| Ok(self.a * self.b))?;
+            cs.enforce_r1cs_constraint(|| lc!() + a, || lc!() + b, || lc!() + c)?;
+            Ok(())
+        }
+    }
+
+    // Circuit with no public inputs: a == b via a*1 == b.
+    struct NoPublicInputCircuit {
+        a: Fr,
+        b: Fr,
+    }
+
+    impl ConstraintSynthesizer<Fr> for NoPublicInputCircuit {
+        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
+            let a = cs.new_witness_variable(|| Ok(self.a))?;
+            let b = cs.new_witness_variable(|| Ok(self.b))?;
+            // a * b == a*b (always satisfiable; no public output declared)
+            cs.enforce_r1cs_constraint(
+                || lc!() + a,
+                || lc!() + b,
+                || lc!() + (Fr::from(1u64), ark_relations::gr1cs::Variable::One),
+            )?;
+            Ok(())
+        }
+    }
+
+    fn setup_and_prove(
+        a: Fr,
+        b: Fr,
+        seed: u64,
+    ) -> (
+        crate::PreparedVerifyingKey<Bn254>,
+        crate::SimExtractableProof<Bn254>,
+        Vec<Fr>,
+    ) {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
+        let (pk, vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng).unwrap();
+        let pvk = prepare_verifying_key(&vk);
+        let proof = Groth16::<Bn254>::prove(&pk, TestCircuit { a, b }, &mut rng).unwrap();
+        let inputs = vec![a * b];
+        (pvk, proof, inputs)
+    }
+
+    #[test]
+    fn test_verify_valid_proof() {
+        let (pvk, proof, inputs) = setup_and_prove(Fr::from(3u64), Fr::from(5u64), 10u64);
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &proof);
+        assert!(
+            matches!(result, Ok(true)),
+            "Valid proof must verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_wrong_inputs_fails() {
+        let (pvk, proof, _inputs) = setup_and_prove(Fr::from(3u64), Fr::from(5u64), 11u64);
+        let wrong_inputs = vec![Fr::from(999u64)];
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &wrong_inputs, &proof);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "Wrong inputs must not verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_empty_inputs_no_public() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(12u64);
+        let a = Fr::from(1u64);
+        let b = Fr::from(1u64);
+        let (pk, vk) = Groth16::<Bn254>::setup(NoPublicInputCircuit { a, b }, &mut rng).unwrap();
+        let pvk = prepare_verifying_key(&vk);
+        let proof = Groth16::<Bn254>::prove(&pk, NoPublicInputCircuit { a, b }, &mut rng).unwrap();
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &[], &proof);
+        assert!(
+            matches!(result, Ok(true)),
+            "No-public-input proof must verify with empty inputs: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_flipped_proof_fails() {
+        let (pvk, valid_proof, inputs) = setup_and_prove(Fr::from(2u64), Fr::from(8u64), 13u64);
+
+        let bad_raw = crate::Proof::<Bn254> {
+            a: G1Affine::generator(),
+            b: valid_proof.groth16_proof.b,
+            c: valid_proof.groth16_proof.c,
+        };
+        let bad_proof = crate::SimExtractableProof::<Bn254> {
+            groth16_proof: bad_raw.clone(),
+            se_element: None,
+            proof_hash: crate::security::compute_proof_hash::<Bn254>(&bad_raw),
+        };
+
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &bad_proof);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "Flipped proof must not verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_prepare_verifying_key() {
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(14u64);
+        let (pk, vk) = Groth16::<Bn254>::setup(
+            TestCircuit {
+                a: Fr::from(1u64),
+                b: Fr::from(1u64),
+            },
+            &mut rng,
+        )
+        .unwrap();
+        let _ = pk;
+        let pvk = prepare_verifying_key(&vk);
+        assert_eq!(
+            pvk.vk, vk,
+            "PreparedVerifyingKey must embed the original VerifyingKey unchanged"
+        );
+    }
+}

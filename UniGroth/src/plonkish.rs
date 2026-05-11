@@ -827,7 +827,11 @@ mod tests {
         let dy = y2 - y1; // 2
                           // (x₃ + x₁ + x₂) = dy² / dx² = 4/4 = 1
                           // x₃ = 1 - 1 - 3 = -3
-        let x3 = dy * dy * (dx * dx).inverse().unwrap() - x1 - x2;
+        let dx_sq = dx * dx;
+        if dx_sq.is_zero() {
+            return; // degenerate: vertical tangent or point doubling; skip gate eval
+        }
+        let x3 = dy * dy * dx_sq.inverse().unwrap() - x1 - x2;
 
         let result = registry.evaluate("ec_add_partial", &[x1, y1, x2, y2, x3]);
         assert!(

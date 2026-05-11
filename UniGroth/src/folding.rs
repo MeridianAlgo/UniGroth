@@ -90,7 +90,9 @@ impl<E: Pairing> FoldingAccumulator<E> {
     /// Initialize accumulator with the first instance.
     pub fn init(srs: &UniversalSRS<E>, instance: &FoldingInstance<E::ScalarField>) -> Self {
         // Witness polynomial commitment
-        let witness_poly = witness_to_poly::<E>(&instance.witness);
+        let witness_poly = witness_to_poly::<E>(&instance.witness).unwrap_or_else(|_| {
+            DensePolynomial::from_coefficients_vec(vec![E::ScalarField::zero()])
+        });
         let acc_w = if instance.witness.is_empty() {
             None
         } else {
@@ -210,7 +212,7 @@ impl<E: Pairing> FoldingEngine<E> {
         let folded_x = fold_scalars(&acc.acc_x, &new_instance.public_inputs, &r);
 
         // Step 4: Fold witness commitment: acc_w' = acc_w + r · new_w_commit
-        let new_witness_poly = witness_to_poly::<E>(&new_instance.witness);
+        let new_witness_poly = witness_to_poly::<E>(&new_instance.witness)?;
         let new_w_commit = if new_instance.witness.is_empty() {
             E::G1Affine::zero()
         } else {
@@ -328,19 +330,24 @@ pub fn verify_accumulator<E: Pairing>(_srs: &UniversalSRS<E>, acc: &FoldingAccum
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Convert a witness vector to a polynomial (for KZG commitment).
-fn witness_to_poly<E: Pairing>(witness: &[E::ScalarField]) -> DensePolynomial<E::ScalarField> {
+fn witness_to_poly<E: Pairing>(
+    witness: &[E::ScalarField],
+) -> Result<DensePolynomial<E::ScalarField>, FoldingError> {
     if witness.is_empty() {
-        return DensePolynomial::from_coefficients_vec(vec![E::ScalarField::zero()]);
+        return Ok(DensePolynomial::from_coefficients_vec(vec![
+            E::ScalarField::zero(),
+        ]));
     }
     // Interpolate witness values as polynomial over evaluation domain
     // w(X) such that w(ωⁱ) = wᵢ for the canonical domain
     let domain_size = witness.len().next_power_of_two();
-    let domain = GeneralEvaluationDomain::<E::ScalarField>::new(domain_size).unwrap();
+    let domain = GeneralEvaluationDomain::<E::ScalarField>::new(domain_size)
+        .ok_or(FoldingError::DomainTooLarge)?;
 
     let mut evals = witness.to_vec();
     evals.resize(domain_size, E::ScalarField::zero());
     domain.ifft_in_place(&mut evals);
-    DensePolynomial::from_coefficients_vec(evals)
+    Ok(DensePolynomial::from_coefficients_vec(evals))
 }
 
 /// Fold two scalar vectors with randomness r: result[i] = a[i] + r * b[i]
@@ -487,6 +494,8 @@ pub enum FoldingError {
     SRSTooSmall,
     /// Verification of folded accumulator failed
     DecisionFailed,
+    /// Evaluation domain could not be constructed for the given witness size
+    DomainTooLarge,
 }
 
 // ─── IVC Step Function ───────────────────────────────────────────────────────
@@ -723,7 +732,7 @@ pub fn verify_decision_predicate<E: Pairing>(
 
     // Step 4: Verify witness commitment matches folded witness
     if !prover_state.folded_witness.is_empty() {
-        let witness_poly = witness_to_poly::<E>(&prover_state.folded_witness);
+        let witness_poly = witness_to_poly::<E>(&prover_state.folded_witness)?;
         let expected_commit = KZG::commit(srs, &witness_poly);
         if let Some(ref stored_commit) = acc.acc_w {
             if stored_commit.value != expected_commit.value {
@@ -900,7 +909,7 @@ mod tests {
             Fr::from(3u64),
             Fr::from(4u64),
         ];
-        let poly = witness_to_poly::<Bn254>(&witness);
+        let poly = witness_to_poly::<Bn254>(&witness).expect("witness_to_poly must succeed");
 
         // Polynomial should be non-trivial
         assert!(poly.degree() > 0);
