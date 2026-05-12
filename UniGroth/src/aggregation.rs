@@ -42,7 +42,7 @@
 use crate::{Proof, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
-use ark_std::{rand::Rng, vec, vec::Vec, One, Zero};
+use ark_std::{rand::Rng, vec::Vec, One, Zero};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;

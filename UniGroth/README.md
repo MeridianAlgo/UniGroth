@@ -105,37 +105,37 @@ Standard Groth16 implementations compute `t^i` via `.pow([i])` per element — O
 
 ### 5. Lookup Arguments: Plookup vs LogUp
 
-Benchmarks for the new lookup argument implementations (`cargo bench --bench lookup-benches`).
+Measured on BN254 (`cargo bench --bench lookup-benches --features "std parallel"`).
 
-| Table Size | Query Count | Plookup Prove | LogUp Prove | LogUp Speedup | LogUp Verify |
-|---|---:|---:|---:|---:|---:|
-| 2^6 (64) | 16 | ~12 µs | ~4 µs | **3×** | ~2 µs |
-| 2^8 (256) | 64 | ~38 µs | ~12 µs | **3.2×** | ~5 µs |
-| 2^10 (1024) | 256 | ~160 µs | ~45 µs | **3.6×** | ~18 µs |
-| 2^12 (4096) | 1024 | ~700 µs | ~180 µs | **3.9×** | ~70 µs |
+| Table Size | Queries | Plookup Prove | LogUp Prove | Prove Speedup | Plookup Verify | LogUp Verify |
+|---|---:|---:|---:|---:|---:|---:|
+| 2^6 (64) | 16 | 8.3 µs | 2.8 µs | **3.0×** | 5.8 µs | 72 µs |
+| 2^8 (256) | 64 | 23.1 µs | 14.0 µs | **1.7×** | 23.5 µs | 441 µs |
+| 2^10 (1 024) | 256 | 128.5 µs | 78.0 µs | **1.6×** | 93.4 µs | 1 974 µs |
+| 2^12 (4 096) | 1 024 | 516 µs | 370 µs | **1.4×** | 378 µs | 8 150 µs |
 
-> LogUp's O(n) multiplicity-sum approach consistently outperforms Plookup's O(n log n) grand-product sort by **3–4×**. Both produce succinct ZK proofs; Plookup is the Gabizon-Williamson-Ciobotaru standard, LogUp is the modern Haböck 2022 variant used in Plonky3.
+**Prover trade-off**: LogUp's O(n) multiplicity-sum prover is 1.4–3× faster than Plookup's O(n log n) grand-product sort. **Verifier trade-off**: Plookup verify is a single product comparison (O(n) field mults); LogUp verify computes n field inversions (one per query/table entry), making it 12–22× slower. Choose Plookup when verification latency matters; LogUp when prover throughput is the bottleneck.
 
-Multi-table LogUp scales linearly:
+Multi-table LogUp (multiple independent range tables, verified jointly):
 
-| Tables × Entries | Total Queries | Prove+Verify | Throughput |
-|---|---:|---:|---:|
-| 2 × 256 | 128 | ~20 µs | 6 400 queries/ms |
-| 4 × 256 | 256 | ~38 µs | 6 700 queries/ms |
-| 8 × 256 | 512 | ~72 µs | 7 100 queries/ms |
+| Tables × Entries | Total Queries | Prove | Verify | Throughput |
+|---|---:|---:|---:|---:|
+| 2 × 256 | 128 | 29 µs | 927 µs | 134 queries/ms |
+| 4 × 256 | 256 | 57 µs | 1 922 µs | 129 queries/ms |
+| 8 × 256 | 512 | 115 µs | 2 725 µs | 180 queries/ms |
 
 ### 6. SnarkPack Aggregation: N Proofs → 1
 
-Aggregated verification is dramatically faster than N individual verifications for large batches (`cargo bench --bench aggregation-benches`).
+Measured on BLS12-381 (`cargo bench --bench aggregation-benches --features "std parallel"`).
 
-| N Proofs | Individual Verify | Aggregated Verify | Verify Speedup |
-|---|---:|---:|---:|
-| 2 | ~4 ms | ~2.5 ms | **1.6×** |
-| 4 | ~8 ms | ~2.7 ms | **3×** |
-| 8 | ~16 ms | ~3 ms | **5.3×** |
-| 16 | ~32 ms | ~3.5 ms | **9.1×** |
+| N | Individual Verify | Agg Prove | Agg Verify | Verify Speedup | Total Speedup |
+|---|---:|---:|---:|---:|---:|
+| 2 | 3 282 µs | 546 µs | 5 037 µs | 0.65× | 1.70× **slower** |
+| 4 | 6 624 µs | 653 µs | 4 695 µs | **1.41×** | **1.24× faster** |
+| 8 | 13 094 µs | 815 µs | 5 318 µs | **2.46×** | **2.14× faster** |
+| 16 | 25 791 µs | 1 722 µs | 5 739 µs | **4.49×** | **3.46× faster** |
 
-> Aggregation overhead (the `aggregate_proofs` call) is ~5–15 ms; amortized over 8+ proofs, total latency falls well below N individual verifications. The aggregated proof is ~300 bytes regardless of N.
+> Aggregation pays off at **N ≥ 4 proofs**. At N=2 the `aggregate_proofs` overhead dominates; at N=16 total latency is 3.5× better than individual verification. Aggregated verify throughput scales to **2 100 proofs/sec** at N=16 vs 615 proofs/sec individual. The aggregated proof is ~300 bytes regardless of N.
 
 ### 7. Proof Size
 

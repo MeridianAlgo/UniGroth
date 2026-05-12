@@ -20,7 +20,7 @@
 //!
 //! UniGroth ships both Plookup and LogUp. Lasso is Phase 4.
 
-use ark_ff::{One, PrimeField, Zero};
+use ark_ff::PrimeField;
 use ark_std::vec::Vec;
 
 // ─── Error ───────────────────────────────────────────────────────────────────
