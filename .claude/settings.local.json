@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(wc -l /mnt/c/Users/Ishaan/OneDrive/Desktop/UniGroth/UniGroth/src/*.rs)",
+      "Bash(gh auth:*)",
+      "Bash(git tag:*)",
+      "PowerShell(Get-Content *)",
+      "mcp__plugin_claude-mem_mcp-search__get_observations",
+      "mcp__plugin_claude-mem_mcp-search__smart_outline"
+    ]
+  }
+}
