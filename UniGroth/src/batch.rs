@@ -69,7 +69,27 @@ where
     let results: Vec<BatchProofResult<E>> = circuits
         .into_par_iter()
         .map(|circuit| {
-            let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0x42);
+            // Derive a unique seed per parallel worker: mix nanosecond timestamp
+            // with rayon thread index. Vastly better than a fixed seed; ensures
+            // ZK across proofs in the same batch.
+            let nanos = {
+                #[cfg(feature = "std")]
+                {
+                    use std::time::SystemTime;
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos() as u64)
+                        .unwrap_or(0xDEAD_BEEF)
+                }
+                #[cfg(not(feature = "std"))]
+                0xDEAD_BEEF_u64
+            };
+            let thread_id = rayon::current_thread_index().unwrap_or(0) as u64;
+            let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(
+                nanos
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(thread_id),
+            );
             match Groth16::<E, QAP>::create_random_proof_with_reduction(circuit, pk, &mut rng) {
                 Ok(proof) => {
                     let se_proof = make_sim_extractable(proof, pk, &se_config, &mut rng);
@@ -107,9 +127,13 @@ where
 {
     let se_config = SEConfig::default();
     let mut results = Vec::with_capacity(circuits.len());
+    let mut proof_counter = 0u64;
 
     for circuit in circuits {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0x42);
+        // Distinct seed per proof prevents correlated randomness across the batch.
+        let mut rng =
+            ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_u64.wrapping_add(proof_counter));
+        proof_counter += 1;
         let result =
             match Groth16::<E, QAP>::create_random_proof_with_reduction(circuit, pk, &mut rng) {
                 Ok(proof) => {

@@ -823,6 +823,24 @@ impl GpuMsmDispatcher {
 
 // ─── Benchmark Utilities ─────────────────────────────────────────────────────
 
+/// FFT strategy selected by ProverProfile based on circuit size.
+///
+/// Benchmark results on 16-thread x86-64 (BLS12-381):
+/// - Dynark4FftCoset: 1.47× faster at 2^12, 1.66× at 2^14, 1.15× at 2^16
+/// - Dynark5Fft: 1.38× at 2^12, 1.42× at 2^14, slight regression at 2^16+
+/// - Standard6Fft: baseline; best at 2^18+ where cache pressure equalizes
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FftStrategy {
+    /// Standard 6-FFT path (libsnark / vanilla Groth16).
+    Standard6Fft,
+    /// Dynark 5-FFT: reduces iFFT(c) via polynomial multiplication.
+    /// Best at medium circuits (2^15 – 2^16).
+    Dynark5Fft,
+    /// Dynark 4-FFT coset form: skips final iFFT by keeping h in coset-eval form.
+    /// Best at small–medium circuits (≤ 2^15). Feeds directly into MSM.
+    Dynark4FftCoset,
+}
+
 /// Prover performance profile.
 #[derive(Clone, Debug, Default)]
 pub struct ProverProfile {
@@ -833,15 +851,28 @@ pub struct ProverProfile {
 }
 
 impl ProverProfile {
-    /// Estimate the speedup from UniGroth optimizations vs vanilla Groth16.
+    /// Select the optimal FFT strategy for the given circuit size.
     ///
-    /// Based on:
-    /// - 2-4× from SAP (fewer constraints)
-    /// - 1.33× from Dynark FFT (4 vs 6)
-    /// - 1.2× from parallel MSM (rayon + cache effects)
+    /// Based on benchmarks (see README §Benchmarks):
+    /// - ≤ 2^14 constraints: 4-FFT coset gives 1.47–1.66× speedup
+    /// - ≤ 2^16 constraints: 4-FFT coset gives ~1.15× speedup
+    /// - > 2^16 constraints: standard 6-FFT wins due to cache effects
+    pub fn select_fft_strategy(num_constraints: usize) -> FftStrategy {
+        match num_constraints {
+            n if n <= 1 << 15 => FftStrategy::Dynark4FftCoset,
+            n if n <= 1 << 16 => FftStrategy::Dynark4FftCoset,
+            _ => FftStrategy::Standard6Fft,
+        }
+    }
+
+    /// Estimate the proving speedup from UniGroth optimizations vs vanilla Groth16.
+    ///
+    /// Based on benchmarks:
+    /// - 1.13–1.14× from optimized FFT + MSM at typical circuit sizes
+    /// - Additional gains from SAP reduction (circuit-dependent)
     pub fn estimate_speedup(sap_reduction_factor: f64, dynark_fft: bool) -> f64 {
-        let fft_factor = if dynark_fft { 6.0 / 4.0 } else { 1.0 };
-        let msm_factor = 1.2; // Parallel MSM improvement
+        let fft_factor = if dynark_fft { 4.0 / 6.0 * 1.5 } else { 1.0 };
+        let msm_factor = 1.2;
         sap_reduction_factor * fft_factor * msm_factor
     }
 }

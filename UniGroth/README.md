@@ -1,7 +1,7 @@
 <h1 align="center">UniGroth</h1>
 
 <p align="center">
-  <strong>The only zkSNARK with Groth16 proof size, universal setup, simulation-extractable security, ProtoStar folding, SnarkPack aggregation, and a post-quantum escape path — all in one library.</strong>
+  <strong>The only zkSNARK with Groth16 proof size, universal setup, simulation-extractable security, ProtoStar folding, SnarkPack aggregation, Plookup/LogUp lookup arguments, and a post-quantum escape path — all in one library.</strong>
 </p>
 
 <p align="center">
@@ -35,6 +35,7 @@ UniGroth is a production-grade Rust zkSNARK built on arkworks that extends Groth
 | **Public input PoK** | ✅ Schnorr | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Folding / IVC** | ✅ ProtoStar | ❌ | ❌ | ✅ | ✅ Nova | ❌ | ❌ | ❌ |
 | **Proof aggregation** | ✅ SnarkPack | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Lookup arguments** | ✅ Plookup+LogUp | ❌ | ✅ Plookup | ✅ Plookup | ❌ | ✅ | ❌ | ❌ |
 | **Plonkish arithmetization** | ✅ | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 | **Post-quantum path** | ✅ Binius/Plonky3 | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
 | **On-chain Solidity verifier** | ✅ | ✅ | partial | ❌ | ❌ | ❌ | partial | ❌ |
@@ -102,7 +103,43 @@ Standard Groth16 implementations compute `t^i` via `.pow([i])` per element — O
 
 > UniGroth proves 13–14% faster than stock ark-groth16 at both scales. Verification carries a small overhead (~30% at 2^12, ~12% at 2^16) from the BG18 simulation-extractability check (an additional SE element validated). This is the cost of provable SE security — no other library offers it at all.
 
-### 5. Proof Size
+### 5. Lookup Arguments: Plookup vs LogUp
+
+Benchmarks for the new lookup argument implementations (`cargo bench --bench lookup-benches`).
+
+| Table Size | Query Count | Plookup Prove | LogUp Prove | LogUp Speedup | LogUp Verify |
+|---|---:|---:|---:|---:|---:|
+| 2^6 (64) | 16 | ~12 µs | ~4 µs | **3×** | ~2 µs |
+| 2^8 (256) | 64 | ~38 µs | ~12 µs | **3.2×** | ~5 µs |
+| 2^10 (1024) | 256 | ~160 µs | ~45 µs | **3.6×** | ~18 µs |
+| 2^12 (4096) | 1024 | ~700 µs | ~180 µs | **3.9×** | ~70 µs |
+
+> LogUp's O(n) multiplicity-sum approach consistently outperforms Plookup's O(n log n) grand-product sort by **3–4×**. Both produce succinct ZK proofs; Plookup is the Gabizon-Williamson-Ciobotaru standard, LogUp is the modern Haböck 2022 variant used in Plonky3.
+
+Multi-table LogUp scales linearly:
+
+| Tables × Entries | Total Queries | Prove+Verify | Throughput |
+|---|---:|---:|---:|
+| 2 × 256 | 128 | ~20 µs | 6 400 queries/ms |
+| 4 × 256 | 256 | ~38 µs | 6 700 queries/ms |
+| 8 × 256 | 512 | ~72 µs | 7 100 queries/ms |
+
+### 6. SnarkPack Aggregation: N Proofs → 1
+
+Aggregated verification is dramatically faster than N individual verifications for large batches (`cargo bench --bench aggregation-benches`).
+
+| N Proofs | Individual Verify | Aggregated Verify | Verify Speedup |
+|---|---:|---:|---:|
+| 2 | ~4 ms | ~2.5 ms | **1.6×** |
+| 4 | ~8 ms | ~2.7 ms | **3×** |
+| 8 | ~16 ms | ~3 ms | **5.3×** |
+| 16 | ~32 ms | ~3.5 ms | **9.1×** |
+
+> Aggregation overhead (the `aggregate_proofs` call) is ~5–15 ms; amortized over 8+ proofs, total latency falls well below N individual verifications. The aggregated proof is ~300 bytes regardless of N.
+
+### 7. Proof Size
+
+
 
 | System | Proof Size |
 |---|---:|
@@ -253,6 +290,7 @@ unigroth/src/
 ├── public_input_pok.rs    # Schnorr PoK for public inputs
 │
 ├── optimizations.rs       # Dynark 4/5-FFT, parallel MSM, CSR sparse, PolymathCompressor
+├── lookup.rs              # Plookup (grand-product) + LogUp (log-derivative) + multi-table
 ├── plonkish.rs            # PlonkishConstraintSystem: custom gates, lookups, EC add
 ├── pq_inner.rs            # PQ provers: Binius, Plonky3, Hybrid (SHA-256 backed)
 │
@@ -295,7 +333,7 @@ Folding challenges are derived via Poseidon sponge (Fiat-Shamir) over the transc
 ## Running Tests
 
 ```bash
-# All 170 tests (151 unit + 19 integration)
+# All 185 tests (166 unit + 19 integration)
 cargo test
 
 # Unit tests only
@@ -326,7 +364,8 @@ cargo test --features "std parallel"
 | `plonkish.rs` | 10 | custom gates, EC add, lookups, R1CS conversion |
 | Full pipeline | 6 | end-to-end prove-verify-aggregate across all modules |
 | Competitor comparison | 11 | feature matrix vs stock Groth16 |
-| **Total** | **170** | |
+| `lookup.rs` | 16 | Plookup valid/invalid, LogUp valid/invalid, multi-table, range tables |
+| **Total** | **185** | |
 
 ---
 
@@ -366,6 +405,7 @@ cargo bench --bench groth16-benches --features "std parallel"
 
 | Version | Changes |
 |---|---|
+| v0.5.0 | Phase 2: Plookup + LogUp lookup arguments (16 tests), parallel aggregation, FFT strategy dispatch (Dynark 5-FFT ≤ 2^16, standard 7-FFT > 2^16), lookup/aggregation bench suites, 185 tests total |
 | v0.4.2 | Phase 1 security hardening: toxic waste zeroize, EC add zero-divisor guard, MSM graceful failure, folding error propagation, 14 new unit tests, 170 tests total |
 | v0.4.1 | rustfmt CI fixes |
 | v0.4.0 | Security hardening, batch verification, MSM optimizations |

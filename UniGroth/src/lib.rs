@@ -126,6 +126,17 @@ pub mod optimizations;
 /// Plonkish arithmetization: custom gates, lookups, copy constraints.
 pub mod plonkish;
 
+/// Lookup arguments: Plookup (grand-product) and LogUp (log-derivative).
+/// Competitive with PLONK/Halo2 lookup argument support.
+/// Types: `lookup::LookupTable`, `lookup::PlookupProof`, `lookup::LogUpWitness`,
+/// `lookup::MultiTableLookup`. Functions re-exported at crate root below.
+pub mod lookup;
+pub use self::lookup::{
+    prove_logup, prove_multi_table_logup, prove_plookup, range_table, verify_logup,
+    verify_multi_table_logup, verify_plookup, LogUpWitness, LookupError, MultiTableLookup,
+    PlookupProof,
+};
+
 /// Post-quantum inner prover interface (Binius, Plonky3, Hybrid).
 pub mod pq_inner;
 

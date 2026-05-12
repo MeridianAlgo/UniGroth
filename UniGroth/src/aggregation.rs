@@ -44,6 +44,9 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
 use ark_std::{rand::Rng, vec, vec::Vec, One, Zero};
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 /// An aggregated proof for N individual Groth16 proofs.
 ///
 /// Stores the data needed to evaluate the multi-pairing batch identity:
@@ -109,6 +112,14 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
     }
 
     // scaled_a_vec[i] = rⁱ · Aᵢ  (G₁ scalar multiplications, batch-normalized)
+    // Parallel: each scalar multiplication is independent.
+    #[cfg(feature = "parallel")]
+    let scaled_a_proj: Vec<E::G1> = proofs
+        .par_iter()
+        .zip(powers.par_iter())
+        .map(|(p, ri)| p.a.into_group() * ri)
+        .collect();
+    #[cfg(not(feature = "parallel"))]
     let scaled_a_proj: Vec<E::G1> = proofs
         .iter()
         .zip(powers.iter())
@@ -127,17 +138,35 @@ pub fn aggregate_proofs<E: Pairing, R: Rng>(
 
     // inputs_agg[j] = Σᵢ rⁱ · inputs[i][j]  (partial sum, γ_abc[0] handled in verify)
     let num_inputs = public_inputs[0].len();
-    let mut inputs_agg = vec![E::ScalarField::zero(); num_inputs];
-    for (i, inputs_i) in public_inputs.iter().enumerate() {
+    for inputs_i in public_inputs.iter() {
         assert_eq!(
             inputs_i.len(),
             num_inputs,
             "All public input vectors must have the same length"
         );
-        for (j, &inp) in inputs_i.iter().enumerate() {
-            inputs_agg[j] += powers[i] * inp;
-        }
     }
+    // Parallel over output index j: each column is an independent dot product.
+    #[cfg(feature = "parallel")]
+    let inputs_agg: Vec<E::ScalarField> = (0..num_inputs)
+        .into_par_iter()
+        .map(|j| {
+            public_inputs
+                .iter()
+                .zip(powers.iter())
+                .map(|(inputs_i, &ri)| ri * inputs_i[j])
+                .fold(E::ScalarField::zero(), |acc, x| acc + x)
+        })
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let inputs_agg: Vec<E::ScalarField> = {
+        let mut agg = vec![E::ScalarField::zero(); num_inputs];
+        for (i, inputs_i) in public_inputs.iter().enumerate() {
+            for (j, &inp) in inputs_i.iter().enumerate() {
+                agg[j] += powers[i] * inp;
+            }
+        }
+        agg
+    };
 
     AggregatedProof {
         scaled_a_vec,
@@ -193,6 +222,15 @@ pub fn verify_aggregated<E: Pairing>(vk: &VerifyingKey<E>, agg: &AggregatedProof
         + E::pairing(agg.c_agg, vk.delta_g2);
 
     // --- LHS: Σᵢ e(rⁱ·Aᵢ, Bᵢ) ---
+    // Parallel: each individual pairing is independent.
+    #[cfg(feature = "parallel")]
+    let lhs = agg
+        .scaled_a_vec
+        .par_iter()
+        .zip(agg.b_vec.par_iter())
+        .map(|(&sa, &b)| E::pairing(sa, b))
+        .reduce(|| PairingOutput::zero(), |a, b| a + b);
+    #[cfg(not(feature = "parallel"))]
     let lhs = agg
         .scaled_a_vec
         .iter()
