@@ -9,11 +9,11 @@ use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError, SynthesisMode,
 };
-use ark_std::rand::{Rng, RngCore, SeedableRng};
+use ark_std::rand::{RngCore, SeedableRng};
 use ark_std::test_rng;
 use std::time::Instant;
 use unigroth::{
-    prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction, Groth16, R1CSToSAP, SAPStats,
+    prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction, Groth16, SAPStats,
     SEConfig, SecurityWrapper,
 };
 
