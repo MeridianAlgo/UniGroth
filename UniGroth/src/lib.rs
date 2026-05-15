@@ -17,7 +17,7 @@
 //! ## Current Status
 //!
 //! **Production-Ready** — All modules implemented, tested, and connected.
-//! 156 tests pass across unit and integration suites.
+//! 200+ tests pass across unit and integration suites.
 //!
 //! ## Example Usage
 //!
@@ -137,6 +137,23 @@ pub use self::lookup::{
     PlookupProof,
 };
 
+/// Custom gate library: SHA-256 Σ/σ, elliptic-curve addition, Montgomery multiplication,
+/// Poseidon full/partial rounds, Keccak-f XOR — all with optimised constraint counts
+/// versus naive flat R1CS encodings (3–16× reduction per gate).
+pub mod gates;
+pub use self::gates::{
+    EcAddGate, GateLibrary, GateType, KeccakXorGate, MontgomeryMulGate, PoseidonRoundGate,
+    PoseidonRoundType, Sha256GateType, Sha256SigmaGate,
+};
+
+/// Polynomial commitment schemes: FRI (transparent, hash-based) and IPA (discrete-log).
+/// Provides a ceremony-free alternative to KZG; both support the `CommitmentScheme` enum.
+pub mod commitment;
+pub use self::commitment::{
+    fri_commit, fri_prove, fri_verify, ipa_commit, ipa_prove, ipa_verify, CommitmentScheme,
+    FriCommitment, FriConfig, FriProof, IpaCommitment, IpaConfig, IpaProof,
+};
+
 /// Post-quantum inner prover interface (Binius, Plonky3, Hybrid).
 pub mod pq_inner;
 
@@ -192,6 +209,20 @@ pub mod recursion;
 pub use self::recursion::{
     create_recursive_proof, verify_recursive_chain, CurvePair, RecursionConfig, RecursiveProof,
 };
+
+/// ZK gadget library for composing circuits: range checks, Merkle proofs, Poseidon hashing,
+/// ECDSA/EdDSA signature verification, and recursive Groth16 proof verification gadgets.
+pub mod gadgets;
+pub use self::gadgets::{
+    EcdsaVerifyGadget, EddsaVerifyGadget, GadgetInfo, GadgetLibrary as ZkGadgetLibrary,
+    MerkleProofGadget, MemoryAccessGadget, PoseidonHashGadget, RangeCheckGadget,
+    RecursiveVerifierGadget,
+};
+
+/// Transparent (ceremony-free) setup modes: KZG (trusted) vs hash-based transparent option.
+/// Allows deployments that cannot participate in a trusted setup ceremony.
+pub mod transparent;
+pub use self::transparent::{SetupMode, TransparentConfig, TransparentProofSize};
 
 #[cfg(test)]
 mod test;

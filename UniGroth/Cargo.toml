@@ -1,6 +1,6 @@
 [package]
 name = "unigroth"
-version = "0.6.0"
+version = "0.7.0"
 authors = [ "MeridianAlgo", "arkworks contributors" ]
 description = "UniGroth: Next-generation universal zkSNARK framework built on Groth16 - combining universal setup, flexible arithmetization, and Groth16-level performance"
 homepage = "https://github.com/MeridianAlgo/UniGroth"
@@ -111,6 +111,18 @@ required-features = ["std"]
 [[bench]]
 name = "aggregation-benches"
 path = "benches/aggregation_bench.rs"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "commitment-benches"
+path = "benches/commitment_bench.rs"
+harness = false
+required-features = ["std"]
+
+[[bench]]
+name = "recursion-benches"
+path = "benches/recursion_bench.rs"
 harness = false
 required-features = ["std"]
 
