@@ -36,7 +36,7 @@ use crate::{PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
 ///
 /// **proof_hash**: ROM blinding hash H(A,B,C). Computed when se_element is None.
 /// ROM-based SE has near-zero overhead but requires Random Oracle assumption.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SimExtractableProof<E: Pairing> {
     /// The standard Groth16 proof (A, B, C)
     pub groth16_proof: Proof<E>,
@@ -44,6 +44,25 @@ pub struct SimExtractableProof<E: Pairing> {
     pub se_element: Option<E::G2Affine>,
     /// Proof hash used for ROM blinding (Fiat-Shamir style)
     pub proof_hash: E::ScalarField,
+}
+
+#[cfg(feature = "serde")]
+impl<E: Pairing> ::serde::Serialize for SimExtractableProof<E> {
+    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use ::serde::ser::Error as _;
+        let mut b = ark_std::vec::Vec::new();
+        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        ::serde::Serialize::serialize(&b, s)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, E: Pairing> ::serde::Deserialize<'de> for SimExtractableProof<E> {
+    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use ::serde::de::Error as _;
+        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+    }
 }
 
 pub fn compute_proof_hash<E: Pairing>(proof: &Proof<E>) -> E::ScalarField {

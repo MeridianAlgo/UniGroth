@@ -63,6 +63,42 @@ pub struct VKOpeningProof<E: Pairing> {
     pub eval_point: E::ScalarField,
 }
 
+#[cfg(feature = "serde")]
+impl<E: Pairing> ::serde::Serialize for CompressedVerifyingKey<E> {
+    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use ::serde::ser::Error as _;
+        let mut b = ark_std::vec::Vec::new();
+        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        ::serde::Serialize::serialize(&b, s)
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de, E: Pairing> ::serde::Deserialize<'de> for CompressedVerifyingKey<E> {
+    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use ::serde::de::Error as _;
+        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<E: Pairing> ::serde::Serialize for VKOpeningProof<E> {
+    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use ::serde::ser::Error as _;
+        let mut b = ark_std::vec::Vec::new();
+        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        ::serde::Serialize::serialize(&b, s)
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de, E: Pairing> ::serde::Deserialize<'de> for VKOpeningProof<E> {
+    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use ::serde::de::Error as _;
+        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+    }
+}
+
 /// Compress a verifying key using KZG commitments.
 ///
 /// Commits to the `gamma_abc_g1` vector as a polynomial evaluated at

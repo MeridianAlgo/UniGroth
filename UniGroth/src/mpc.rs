@@ -30,6 +30,7 @@
 
 use ark_std::{format, rand::RngCore, string::String, vec, vec::Vec};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
 // ─── Additive Secret Sharing ──────────────────────────────────────────────────
 
@@ -38,7 +39,8 @@ use sha2::{Digest, Sha256};
 /// The secret `s` is split into N shares where `s = Σ shares[i]`.
 /// All arithmetic is over the native field represented as bytes here
 /// (in production, use the concrete `PrimeField` type).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Zeroize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AdditiveShare {
     /// Party index (0-based).
     pub party_idx: usize,
@@ -82,7 +84,8 @@ impl AdditiveShare {
 ///
 /// This is a placeholder type — full field arithmetic over a concrete `PrimeField`
 /// would be needed for production; the structure documents the interface.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Zeroize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShamirShare {
     /// Threshold (minimum shares to reconstruct).
     pub threshold: usize,
@@ -97,7 +100,8 @@ pub struct ShamirShare {
 // ─── MPC Configuration ────────────────────────────────────────────────────────
 
 /// Configuration for a multi-party proving session.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MpcConfig {
     /// Number of parties.
     pub num_parties: usize,
@@ -110,7 +114,8 @@ pub struct MpcConfig {
 }
 
 /// The sharing scheme used in the MPC session.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MpcScheme {
     /// Additive sharing: `s = s_1 + ... + s_N`. Threshold = N (all parties needed).
     Additive,
@@ -145,7 +150,8 @@ impl MpcConfig {
 // ─── Witness Sharing ─────────────────────────────────────────────────────────
 
 /// One party's share of the private witness.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MpcWitnessShare {
     /// Session configuration.
     pub config: MpcConfig,
@@ -153,6 +159,14 @@ pub struct MpcWitnessShare {
     pub party_idx: usize,
     /// Additive shares of each witness element.
     pub shares: Vec<AdditiveShare>,
+}
+
+impl Zeroize for MpcWitnessShare {
+    fn zeroize(&mut self) {
+        self.shares.iter_mut().for_each(|s| s.zeroize());
+        self.shares.clear();
+        self.party_idx.zeroize();
+    }
 }
 
 impl MpcWitnessShare {
@@ -300,7 +314,7 @@ pub fn aggregate_partial_proofs(
 // ─── MPC Error ────────────────────────────────────────────────────────────────
 
 /// Errors from the MPC protocol.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MpcError {
     /// Binding tag verification failed for this party.
     InvalidBinding { party_idx: usize },

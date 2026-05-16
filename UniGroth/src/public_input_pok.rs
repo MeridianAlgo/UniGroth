@@ -37,7 +37,7 @@
 //! Imports
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand};
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::Rng, vec::Vec};
 use sha2::{Digest, Sha256};
 
@@ -45,7 +45,7 @@ use crate::{Proof, VerifyingKey};
 
 /// Schnorr proof-of-knowledge binding the prover to their public input choices.
 /// Produced by [`prove_public_input_pok`] and checked by [`verify_public_input_pok`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PublicInputPoK<E: Pairing> {
     /// Commitment `R = Σ rᵢ · γᵢ₊₁` (G₁ element, one per public input)
     pub commitment: E::G1Affine,
@@ -53,6 +53,24 @@ pub struct PublicInputPoK<E: Pairing> {
     pub challenge: E::ScalarField,
     /// Responses `sᵢ = rᵢ + c · xᵢ` for each public input `xᵢ`
     pub responses: Vec<E::ScalarField>,
+}
+
+#[cfg(feature = "serde")]
+impl<E: Pairing> ::serde::Serialize for PublicInputPoK<E> {
+    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use ::serde::ser::Error as _;
+        let mut b = ark_std::vec::Vec::new();
+        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        ::serde::Serialize::serialize(&b, s)
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de, E: Pairing> ::serde::Deserialize<'de> for PublicInputPoK<E> {
+    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use ::serde::de::Error as _;
+        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+    }
 }
 
 /// Generate a Schnorr PoK binding the prover to the given public inputs.

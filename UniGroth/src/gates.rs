@@ -34,7 +34,7 @@ use ark_std::{format, string::String, vec, vec::Vec};
 ///
 /// Each variant corresponds to a distinct rotation/shift pattern applied to a
 /// 32-bit word during hashing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Sha256GateType {
     /// Compression function upper-sigma-0: ROTR2 ⊕ ROTR13 ⊕ ROTR22.
     UpperSigma0,
@@ -333,7 +333,7 @@ impl MontgomeryMulGate {
 /// - A **partial round** applies the S-box only to the *first* state element,
 ///   leaving the rest linear.  This reduces the per-round constraint cost and
 ///   is used in the inner rounds of the Poseidon permutation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PoseidonRoundType {
     /// S-box applied to every state element (outer rounds).
     FullRound,
@@ -521,7 +521,7 @@ impl Default for KeccakXorGate {
 /// Unified discriminant for all gate types in the library.
 ///
 /// Used by [`GateLibrary`] to store and query gates in a type-erased collection.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GateType {
     /// A SHA-256 Σ/σ mixing gate of the specified variant.
     Sha256Sigma(Sha256GateType),

@@ -33,7 +33,7 @@ use ark_std::{format, string::String, vec::Vec};
 ///
 /// Controls the security level and the underlying hash-based commitment scheme
 /// used for polynomial evaluations.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransparentConfig {
     /// Target security level in bits. Must be at least 80; 128 recommended.
     pub security_bits: usize,
@@ -42,7 +42,7 @@ pub struct TransparentConfig {
 }
 
 /// Hash-based polynomial commitment scheme variants.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TransparentScheme {
     /// FRI (Fast Reed-Solomon IOP of Proximity).
     /// Proof size: O(log² n) — plausibly post-quantum.
@@ -103,7 +103,7 @@ impl TransparentConfig {
 ///
 /// Pass this to the prover/verifier infrastructure to select the polynomial
 /// commitment scheme used for the proving system.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SetupMode {
     /// KZG polynomial commitment. Requires a Powers-of-Tau ceremony.
     /// Produces the smallest proofs (192 B) with the fastest verification.

@@ -261,6 +261,10 @@ pub use self::mpc::{
 #[cfg(test)]
 mod test;
 
+/// Serde compatibility helpers for arkworks EC-parameterized types (feature: `serde`).
+#[cfg(feature = "serde")]
+pub mod serde_compat;
+
 pub use self::folding::{
     compute_cross_term_vector, fold_prover_state, verify_decision_predicate, FoldingAccumulator,
     FoldingEngine, FoldingInstance, ProverState, R1CSMatrices, IVC,

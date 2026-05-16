@@ -85,7 +85,7 @@ fn bytes_to_field<F: PrimeField>(bytes: &[u8; 32]) -> F {
 /// Configuration for the FRI polynomial commitment scheme.
 ///
 /// Controls the security level, blowup factor, and number of soundness queries.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FriConfig {
     /// Target security level in bits (typically 128).
     pub security_bits: usize,
@@ -559,7 +559,7 @@ where
 /// A Pedersen commitment to a coefficient vector.
 ///
 /// `C = <a, G> + r * H = Σ aᵢ Gᵢ + r H`
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IpaCommitment<G: CurveGroup> {
     /// The committed group element.
     pub commitment: G,
@@ -875,7 +875,7 @@ pub fn ipa_verify<G: CurveGroup>(
 ///
 /// Provides scheme-level properties without generic parameters, useful for
 /// configuration, logging, and benchmarking.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CommitmentScheme {
     /// KZG polynomial commitment (requires trusted setup).
     /// Implementation lives in [`crate::kzg`].

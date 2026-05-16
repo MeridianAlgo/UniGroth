@@ -26,7 +26,8 @@ use ark_std::vec::Vec;
 use sha2::{Digest, Sha256};
 
 /// A recursive proof wrapping an inner proof with verification metadata.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RecursiveProof {
     /// The inner proof bytes
     pub inner_proof: Vec<u8>,

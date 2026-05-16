@@ -47,7 +47,7 @@ use sha2::{Digest, Sha256};
 // ─── Core Types ─────────────────────────────────────────────────────────────
 
 /// Selects the post-quantum inner proving scheme.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PqScheme {
     /// Binius: binary-tower-field SNARK (Reed-Solomon + FRI)
     Binius,
@@ -58,7 +58,7 @@ pub enum PqScheme {
 }
 
 /// Configuration for a post-quantum inner prover.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PqConfig {
     /// Which PQ scheme to use
     pub scheme: PqScheme,

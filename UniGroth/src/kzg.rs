@@ -27,7 +27,7 @@ use rayon::prelude::*;
 
 /// Universal Structured Reference String (SRS) for KZG commitments.
 /// This is generated once and can be reused for any circuit up to `max_degree`.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct UniversalSRS<E: Pairing> {
     /// Powers of tau in G1: [G, τG, τ²G, ..., τⁿG]
     pub powers_of_g: Vec<E::G1Affine>,
@@ -150,14 +150,14 @@ impl<E: Pairing> UniversalSRS<E> {
 }
 
 /// A KZG commitment to a polynomial.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Commitment<E: Pairing> {
     /// The commitment value in G1
     pub value: E::G1Affine,
 }
 
 /// A KZG opening proof for a polynomial evaluation.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Opening<E: Pairing> {
     /// The proof value in G1
     pub proof: E::G1Affine,

@@ -25,7 +25,7 @@ use ark_std::{format, string::String, vec::Vec};
 // ─── Circuit Profile ──────────────────────────────────────────────────────────
 
 /// FFT variant to use for polynomial arithmetic.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FftVariant {
     /// Standard 6-FFT path (libsnark/Groth16 baseline).
     Standard,
@@ -65,7 +65,7 @@ impl FftVariant {
 }
 
 /// MSM backend selection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MsmBackend {
     /// CPU Pippenger algorithm (always available).
     CpuPippenger,
@@ -106,7 +106,7 @@ impl MsmBackend {
 }
 
 /// Lookup argument backend.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LookupBackend {
     /// No lookups in this circuit.
     None,

@@ -40,6 +40,7 @@ rayon = { version = "1", optional = true }
 sha2 = { version = "0.10", default-features = false }
 zeroize = { version = "1.8", default-features = false, features = ["derive"] }
 subtle = { version = "2.6", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"], optional = true }
 
 # Optional dependencies for the compare binary
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ], optional = true }
@@ -82,6 +83,7 @@ r1cs = [
     "educe",
 ]
 print-trace = ["ark-std/print-trace"]
+serde = ["dep:serde", "std"]
 # UniGroth-specific features
 universal = []  # Enable universal setup
 sap = []        # Enable SAP arithmetization

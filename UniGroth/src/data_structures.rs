@@ -3,9 +3,35 @@ use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
 use ark_serialize::*;
 use ark_std::vec::Vec;
+use zeroize::Zeroize;
+
+#[cfg(feature = "serde")]
+macro_rules! serde_via_canonical {
+    ($name:ident < $g:ident >) => {
+        impl<$g: Pairing> ::serde::Serialize for $name<$g> {
+            fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                use ::serde::ser::Error as _;
+                let mut b = ark_std::vec::Vec::new();
+                CanonicalSerialize::serialize_compressed(self, &mut b)
+                    .map_err(S::Error::custom)?;
+                ::serde::Serialize::serialize(&b, s)
+            }
+        }
+        impl<'de, $g: Pairing> ::serde::Deserialize<'de> for $name<$g> {
+            fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                use ::serde::de::Error as _;
+                let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+                Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+            }
+        }
+    };
+}
+
+#[cfg(feature = "serde")]
+use serde_via_canonical;
 
 /// A proof in the Groth16 SNARK.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Proof<E: Pairing> {
     /// The `A` element in `G1`.
     pub a: E::G1Affine,
@@ -14,6 +40,9 @@ pub struct Proof<E: Pairing> {
     /// The `C` element in `G1`.
     pub c: E::G1Affine,
 }
+
+#[cfg(feature = "serde")]
+serde_via_canonical!(Proof<E>);
 
 impl<E: Pairing> Default for Proof<E> {
     fn default() -> Self {
@@ -28,7 +57,7 @@ impl<E: Pairing> Default for Proof<E> {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// A verification key in the Groth16 SNARK.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct VerifyingKey<E: Pairing> {
     /// The `alpha * G`, where `G` is the generator of `E::G1`.
     pub alpha_g1: E::G1Affine,
@@ -42,6 +71,9 @@ pub struct VerifyingKey<E: Pairing> {
     /// the generator of `E::G1`.
     pub gamma_abc_g1: Vec<E::G1Affine>,
 }
+
+#[cfg(feature = "serde")]
+serde_via_canonical!(VerifyingKey<E>);
 
 impl<E: Pairing> Default for VerifyingKey<E> {
     fn default() -> Self {
@@ -84,7 +116,7 @@ where
 
 /// Preprocessed verification key parameters that enable faster verification
 /// at the expense of larger size in memory.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PreparedVerifyingKey<E: Pairing> {
     /// The unprepared verification key.
     pub vk: VerifyingKey<E>,
@@ -99,6 +131,9 @@ pub struct PreparedVerifyingKey<E: Pairing> {
     /// for simulation-extractability checks.
     pub delta_g1_prepared: E::G1Prepared,
 }
+
+#[cfg(feature = "serde")]
+serde_via_canonical!(PreparedVerifyingKey<E>);
 
 impl<E: Pairing> From<PreparedVerifyingKey<E>> for VerifyingKey<E> {
     fn from(other: PreparedVerifyingKey<E>) -> Self {
@@ -127,7 +162,7 @@ impl<E: Pairing> Default for PreparedVerifyingKey<E> {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// The prover key for for the Groth16 zkSNARK.
-#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProvingKey<E: Pairing> {
     /// The underlying verification key.
     pub vk: VerifyingKey<E>,
@@ -145,6 +180,15 @@ pub struct ProvingKey<E: Pairing> {
     pub h_query: Vec<E::G1Affine>,
     /// The elements `l_i * G` in `E::G1`.
     pub l_query: Vec<E::G1Affine>,
+}
+
+#[cfg(feature = "serde")]
+serde_via_canonical!(ProvingKey<E>);
+
+impl<E: Pairing> Zeroize for ProvingKey<E> {
+    fn zeroize(&mut self) {
+        self.zeroize_key_material();
+    }
 }
 
 impl<E: Pairing> ProvingKey<E> {

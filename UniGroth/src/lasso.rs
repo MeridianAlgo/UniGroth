@@ -281,7 +281,7 @@ pub struct LassoProof<F: PrimeField> {
 }
 
 /// Error type for Lasso lookup failures.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LassoError {
     /// Index out of table bounds.
     IndexOutOfRange { idx: usize, table_size: usize },

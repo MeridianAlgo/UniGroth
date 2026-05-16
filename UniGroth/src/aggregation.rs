@@ -42,6 +42,7 @@
 use crate::{Proof, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::UniformRand;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{rand::Rng, vec::Vec, One, Zero};
 
 #[cfg(feature = "parallel")]
@@ -51,7 +52,7 @@ use rayon::prelude::*;
 ///
 /// Stores the data needed to evaluate the multi-pairing batch identity:
 ///   Σᵢ e(rⁱ·Aᵢ, Bᵢ) = pow_sum·e(α, β) + e(PI_agg, γ) + e(C_agg, δ)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct AggregatedProof<E: Pairing> {
     /// Scaled G₁ elements: scaled_a_vec[i] = rⁱ · Aᵢ  (for multi-pairing LHS)
     pub scaled_a_vec: Vec<E::G1Affine>,
@@ -68,6 +69,24 @@ pub struct AggregatedProof<E: Pairing> {
     pub n: usize,
     /// The random challenge used for aggregation (r).
     pub challenge: E::ScalarField,
+}
+
+#[cfg(feature = "serde")]
+impl<E: Pairing> ::serde::Serialize for AggregatedProof<E> {
+    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use ::serde::ser::Error as _;
+        let mut b = ark_std::vec::Vec::new();
+        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        ::serde::Serialize::serialize(&b, s)
+    }
+}
+#[cfg(feature = "serde")]
+impl<'de, E: Pairing> ::serde::Deserialize<'de> for AggregatedProof<E> {
+    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use ::serde::de::Error as _;
+        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
+        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
+    }
 }
 
 /// Aggregate N Groth16 proofs into a single `AggregatedProof`.

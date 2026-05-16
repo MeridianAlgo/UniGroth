@@ -303,7 +303,8 @@ pub struct PolymathCompressor;
 ///
 /// Compressed sizes (BLS12-381): A = 48 B, B = 96 B, C = 48 B → 192 B total.
 /// Compared to uncompressed (A = 96, B = 192, C = 96 → 384 B), this saves ~50%.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CompressedProof {
     /// Compressed serialization of the A ∈ G₁ element.
     pub a_bytes: Vec<u8>,
@@ -829,7 +830,7 @@ impl GpuMsmDispatcher {
 /// - Dynark4FftCoset: 1.47× faster at 2^12, 1.66× at 2^14, 1.15× at 2^16
 /// - Dynark5Fft: 1.38× at 2^12, 1.42× at 2^14, slight regression at 2^16+
 /// - Standard6Fft: baseline; best at 2^18+ where cache pressure equalizes
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FftStrategy {
     /// Standard 6-FFT path (libsnark / vanilla Groth16).
     Standard6Fft,
