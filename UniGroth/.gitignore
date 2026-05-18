@@ -6,6 +6,8 @@ target
 *.pyc
 *.sage.py
 params
+keys
+wasm-auth/pkg
 *.swp
 *.swo
 compare_output.txt

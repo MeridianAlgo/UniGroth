@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "wasm-auth"]
+resolver = "2"
+
 [package]
 name = "unigroth"
 version = "0.7.0"
@@ -92,11 +96,18 @@ wasm = ["std"]  # WASM compilation target for browser-based proving
 solidity = ["std", "ark-bn254"]  # Solidity verifier contract generation
 # Feature enabling the compare binary's extra dependencies
 compare = ["std", "ark-bn254", "ark-groth16"]
+# Feature enabling the auth_setup binary's extra dependencies
+auth-bin = ["std", "ark-bn254"]
 
 [[bin]]
 name = "compare"
 path = "src/bin/compare.rs"
 required-features = ["compare"]
+
+[[bin]]
+name = "auth_setup"
+path = "src/bin/auth_setup.rs"
+required-features = ["auth-bin"]
 
 [[bench]]
 name = "groth16-benches"

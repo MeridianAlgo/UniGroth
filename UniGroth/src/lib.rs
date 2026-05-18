@@ -198,6 +198,11 @@ pub use self::key_compression::{
 pub mod circuit_builder;
 pub use self::circuit_builder::{BuiltCircuit, CircuitBuilder, CircuitStats, Wire};
 
+/// Authentication circuit: prove knowledge of secret with replay-resistant nullifier.
+/// Used by secure-sharing / login platforms. See [`auth::AuthCircuit`].
+pub mod auth;
+pub use self::auth::{mimc_hash, mimc_round_constants, AuthCircuit, MIMC_ROUNDS};
+
 /// Circuit library: Poseidon, Merkle trees, range checks.
 pub mod circuits;
 pub use self::circuits::{
