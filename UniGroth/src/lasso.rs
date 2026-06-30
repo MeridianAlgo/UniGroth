@@ -30,8 +30,6 @@ use sha2::{Digest, Sha256};
 
 // ─── Fiat-Shamir helper ───────────────────────────────────────────────────────
 
-use ark_serialize::CanonicalSerialize;
-
 fn sha256_bytes(data: &[u8]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(data);
@@ -296,11 +294,19 @@ pub struct LassoProof<F: PrimeField> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LassoError {
     /// Index out of table bounds.
-    IndexOutOfRange { idx: usize, table_size: usize },
+    IndexOutOfRange {
+        /// The index that was requested.
+        idx: usize,
+        /// Number of entries in the table.
+        table_size: usize,
+    },
     /// Table value mismatch (prover cheated).
     ValueMismatch {
+        /// The index whose value disagreed.
         idx: usize,
+        /// Value the prover claimed.
         claimed: String,
+        /// Value actually stored.
         actual: String,
     },
     /// Sumcheck verification failed.
@@ -317,8 +323,6 @@ pub fn prove_lasso<F: PrimeField>(
     indices: &[usize],
     rng: &mut impl ark_std::rand::RngCore,
 ) -> Result<LassoProof<F>, LassoError> {
-    use ark_ff::UniformRand;
-
     // Validate indices
     for &idx in indices {
         if idx >= table.entries.len() {
@@ -445,6 +449,7 @@ pub fn verify_lasso<F: PrimeField>(
 ///
 /// `eq(r, b) = Π_{k=0}^{t-1} (r_k * b_k + (1 - r_k) * (1 - b_k))`
 /// where `b_k` is the k-th bit of `b`.
+#[allow(dead_code)]
 fn eq_poly_eval<F: PrimeField>(r: &[F], b: usize, num_bits: usize) -> F {
     let mut result = F::one();
     for k in 0..num_bits {

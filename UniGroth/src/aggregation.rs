@@ -249,7 +249,7 @@ pub fn verify_aggregated<E: Pairing>(vk: &VerifyingKey<E>, agg: &AggregatedProof
         .par_iter()
         .zip(agg.b_vec.par_iter())
         .map(|(&sa, &b)| E::pairing(sa, b))
-        .reduce(|| PairingOutput::zero(), |a, b| a + b);
+        .reduce(PairingOutput::zero, |a, b| a + b);
     #[cfg(not(feature = "parallel"))]
     let lhs = agg
         .scaled_a_vec

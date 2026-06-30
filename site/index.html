@@ -3,359 +3,430 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>UniGroth — Everything Groth16 is. Everything it isn't.</title>
-<meta name="description" content="Interactive demo of UniGroth: Groth16-size proofs with universal setup, aggregation, folding, and a post-quantum path. Prove and verify in your browser." />
+<title>UniGroth</title>
+<meta name="description" content="UniGroth gives you Groth16 size proofs with universal setup, aggregation, folding and a post quantum path. Prove and verify live in your browser." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0a0b10; --panel:#12141d; --panel2:#171a26; --line:#222637;
-    --ink:#e7e9f2; --dim:#9aa0b8; --faint:#666c86;
-    --acc:#7c5cff; --acc2:#21d4a8; --warn:#ff6b6b; --gold:#ffcf6b;
-    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
-    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Inter,sans-serif;
+    --bg:#0b1020; --bg2:#0e1428; --surf:#141d38; --surf2:#1b2748;
+    --line:#27325a; --line2:#33406e;
+    --ink:#eef1fb; --dim:#9aa4c6; --faint:#626d94;
+    --blue:#5b8cff; --cyan:#57d6e6; --amber:#ffb454;
+    --good:#46d6a0; --bad:#ff7089;
+    --disp:"Bricolage Grotesque",system-ui,sans-serif;
+    --body:"Inter Tight",system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
-  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#1a1240 0,transparent 60%),radial-gradient(900px 500px at -10% 10%,#062b27 0,transparent 55%),var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased}
-  a{color:var(--acc2);text-decoration:none}
-  a:hover{text-decoration:underline}
-  .wrap{max-width:1040px;margin:0 auto;padding:0 22px}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.55;font-size:16px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{color:#fff}
+  .wrap{width:100%;max-width:1080px;margin:0 auto;padding:0 24px}
   code,.mono{font-family:var(--mono)}
-  .tag{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--acc2);border:1px solid var(--line);background:var(--panel);padding:4px 10px;border-radius:999px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--amber)}
 
   /* nav */
-  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);background:rgba(10,11,16,.7);border-bottom:1px solid var(--line)}
-  nav .wrap{display:flex;align-items:center;gap:18px;height:56px}
-  nav .logo{font-family:var(--mono);font-weight:700;letter-spacing:.02em}
-  nav .logo b{color:var(--acc)}
-  nav .links{margin-left:auto;display:flex;gap:18px;font-size:14px}
-  nav .links a{color:var(--dim)}
-  nav .links a:hover{color:var(--ink);text-decoration:none}
-  @media(max-width:680px){nav .links a:not(.gh){display:none}}
+  nav{position:sticky;top:0;z-index:30;background:rgba(11,16,32,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;gap:20px;height:60px}
+  .brand{font-family:var(--disp);font-weight:800;font-size:20px;letter-spacing:-.01em}
+  .brand b{color:var(--blue)}
+  .navlinks{margin-left:auto;display:flex;gap:24px;font-size:14px;font-weight:500}
+  .navlinks a{color:var(--dim)}
+  .navlinks a:hover{color:var(--ink)}
+  @media(max-width:720px){.navlinks a:not(.prime){display:none}}
+  .prime{color:var(--blue)!important}
 
   /* hero */
-  header.hero{padding:84px 0 40px;text-align:center}
-  h1{font-size:clamp(38px,7vw,76px);line-height:1.02;margin:14px 0 10px;letter-spacing:-.02em;
-     background:linear-gradient(180deg,#fff,#b6b0e8);-webkit-background-clip:text;background-clip:text;color:transparent}
-  .sub{font-size:clamp(16px,2.4vw,21px);color:var(--dim);max-width:680px;margin:0 auto}
-  .cta{margin-top:26px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
-  .btn{font-family:var(--mono);font-size:14px;padding:11px 18px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;transition:.15s}
-  .btn:hover{border-color:var(--acc);transform:translateY(-1px);text-decoration:none}
-  .btn.p{background:linear-gradient(180deg,#8b6bff,#6b4cf0);border-color:transparent;color:#fff}
-  .stats{margin-top:46px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 20px;min-width:140px}
-  .stat b{display:block;font-family:var(--mono);font-size:24px;color:var(--acc2)}
-  .stat span{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em}
+  .hero{padding:88px 0 56px;position:relative}
+  .hero::before{content:"";position:absolute;inset:0;background:
+     radial-gradient(720px 380px at 78% -8%,rgba(91,140,255,.22),transparent 62%),
+     radial-gradient(640px 360px at 8% 18%,rgba(255,180,84,.10),transparent 60%);
+     pointer-events:none}
+  .hero .wrap{position:relative}
+  h1{font-family:var(--disp);font-weight:800;font-size:clamp(40px,8vw,82px);line-height:.98;letter-spacing:-.025em;margin:18px 0 18px;max-width:14ch}
+  h1 .alt{color:var(--blue)}
+  .lede{font-size:clamp(17px,2.2vw,21px);color:var(--dim);max-width:54ch;margin:0}
+  .cta{margin-top:30px;display:flex;gap:12px;flex-wrap:wrap}
+  .btn{font-family:var(--mono);font-size:14px;font-weight:500;padding:12px 20px;border-radius:11px;border:1px solid var(--line2);background:var(--surf);color:var(--ink);cursor:pointer;transition:.15s;display:inline-block}
+  .btn:hover{border-color:var(--blue);color:#fff;transform:translateY(-1px)}
+  .btn.fill{background:var(--blue);border-color:var(--blue);color:#06122e;font-weight:700}
+  .btn.fill:hover{background:#79a1ff}
 
-  section{padding:64px 0;border-top:1px solid var(--line)}
-  h2{font-size:clamp(26px,4vw,38px);letter-spacing:-.01em;margin:0 0 6px}
-  .lead{color:var(--dim);max-width:660px;margin:0 0 30px}
+  .ribbon{margin-top:52px;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  @media(max-width:640px){.ribbon{grid-template-columns:repeat(2,1fr)}}
+  .ribbon div{background:var(--bg2);padding:18px 20px}
+  .ribbon b{font-family:var(--disp);font-weight:700;display:block;font-size:26px;color:var(--ink)}
+  .ribbon span{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em}
 
-  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:24px}
+  /* sections */
+  section{padding:72px 0;border-top:1px solid var(--line)}
+  .head{max-width:60ch;margin-bottom:34px}
+  h2{font-family:var(--disp);font-weight:700;font-size:clamp(28px,4.4vw,42px);letter-spacing:-.02em;margin:10px 0 8px;line-height:1.05}
+  .head p{color:var(--dim);margin:0;font-size:17px}
+
+  .panel{background:linear-gradient(180deg,var(--surf),var(--bg2));border:1px solid var(--line);border-radius:18px;padding:26px}
 
   /* proof size chart */
-  .bars{display:grid;gap:12px;margin-top:8px}
-  .bar-row{display:grid;grid-template-columns:120px 1fr 90px;align-items:center;gap:12px;font-size:14px}
-  .bar-track{background:#0c0e16;border:1px solid var(--line);border-radius:8px;height:30px;overflow:hidden}
-  .bar-fill{height:100%;border-radius:7px 0 0 7px;transition:width 1.1s cubic-bezier(.2,.8,.2,1);background:linear-gradient(90deg,#3a3f5c,#565d82)}
-  .bar-row.me .bar-fill{background:linear-gradient(90deg,var(--acc),var(--acc2))}
-  .bar-row.me{color:#fff;font-weight:600}
-  .bar-val{font-family:var(--mono);font-size:13px;color:var(--dim);text-align:right}
-  .scalebar{display:flex;gap:10px;align-items:center;margin:18px 0 4px;color:var(--faint);font-size:13px}
-  input[type=range]{accent-color:var(--acc)}
+  .control{display:flex;align-items:center;gap:14px;margin-bottom:18px;font-family:var(--mono);font-size:13px;color:var(--dim);flex-wrap:wrap}
+  .control input[type=range]{accent-color:var(--blue);flex:1;min-width:160px}
+  .control .read{color:var(--cyan);min-width:96px;text-align:right}
+  .bars{display:grid;gap:11px}
+  .row{display:grid;grid-template-columns:104px 1fr 86px;align-items:center;gap:14px;font-size:14px}
+  @media(max-width:520px){.row{grid-template-columns:84px 1fr 70px;gap:8px;font-size:13px}}
+  .track{background:#0a0f20;border:1px solid var(--line);border-radius:9px;height:30px;overflow:hidden}
+  .fill{height:100%;border-radius:8px 0 0 8px;transition:width 1s cubic-bezier(.2,.8,.2,1);background:linear-gradient(90deg,#39456f,#4a5887)}
+  .row.me{color:#fff;font-weight:600}
+  .row.me .fill{background:linear-gradient(90deg,var(--blue),var(--cyan))}
+  .val{font-family:var(--mono);font-size:13px;color:var(--dim);text-align:right}
+  .note{font-size:13px;color:var(--faint);margin-top:16px}
 
-  /* prover playground */
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  @media(max-width:760px){.grid2{grid-template-columns:1fr}}
-  label.f{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin:0 0 6px}
-  .inp{width:100%;background:#0c0e16;border:1px solid var(--line);color:var(--ink);font-family:var(--mono);font-size:13px;padding:10px 12px;border-radius:9px}
-  .inp:focus{outline:none;border-color:var(--acc)}
-  .scheme{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 0}
-  .chip{font-family:var(--mono);font-size:12px;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:#0c0e16;color:var(--dim);cursor:pointer}
-  .chip.on{border-color:var(--acc);color:#fff;background:rgba(124,92,255,.15)}
-  .proofout{margin-top:16px;background:#08090f;border:1px solid var(--line);border-radius:12px;padding:16px;font-family:var(--mono);font-size:12.5px;word-break:break-all;line-height:1.7}
-  .kv{color:var(--faint)}
-  .digest{color:var(--gold)}
-  .verline{display:flex;align-items:center;gap:10px;margin-top:14px;font-family:var(--mono);font-size:14px}
-  .badge{padding:5px 12px;border-radius:8px;font-weight:700;font-size:13px}
-  .ok{background:rgba(33,212,168,.15);color:var(--acc2);border:1px solid rgba(33,212,168,.4)}
-  .bad{background:rgba(255,107,107,.13);color:var(--warn);border:1px solid rgba(255,107,107,.4)}
-  .hint{font-size:13px;color:var(--faint);margin-top:10px}
+  /* prover */
+  .steps{display:grid;grid-template-columns:1.05fr 1fr;gap:18px}
+  @media(max-width:780px){.steps{grid-template-columns:1fr}}
+  .field{margin-bottom:18px}
+  .field .lab{display:flex;align-items:baseline;gap:8px;margin-bottom:7px}
+  .field .lab .n{font-family:var(--mono);font-size:12px;color:var(--amber)}
+  .field .lab .t{font-weight:600;font-size:14px}
+  .field .lab .h{font-size:12.5px;color:var(--faint)}
+  .inp{width:100%;background:#0a0f20;border:1px solid var(--line);color:var(--ink);font-family:var(--mono);font-size:14px;padding:12px 13px;border-radius:11px}
+  .inp:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(91,140,255,.16)}
+  .schemes{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-family:var(--mono);font-size:12.5px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);background:#0a0f20;color:var(--dim);cursor:pointer;transition:.12s}
+  .chip:hover{border-color:var(--line2)}
+  .chip.on{border-color:var(--blue);color:#fff;background:rgba(91,140,255,.16)}
 
-  /* aggregation */
-  .aggwrap{margin-top:10px}
-  .proofdots{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
-  .pdot{font-family:var(--mono);font-size:11px;background:#0c0e16;border:1px solid var(--line);border-radius:7px;padding:7px 9px;color:var(--dim)}
-  .arrow{text-align:center;color:var(--acc);font-size:22px;margin:6px 0}
-  .agg{background:#08090f;border:1px solid var(--acc);border-radius:12px;padding:14px;font-family:var(--mono);font-size:12.5px;color:var(--gold);word-break:break-all}
+  .seal{background:#080c1a;border:1px solid var(--line);border-radius:14px;padding:18px;height:100%;display:flex;flex-direction:column}
+  .seal .cap{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
+  .digest{font-family:var(--mono);font-size:13px;line-height:1.85;word-break:break-all;color:var(--dim)}
+  .digest .k{color:var(--faint)}
+  .digest .v{color:var(--amber)}
+  .digest .big{display:block;margin-top:6px;color:var(--cyan)}
+  .seal.broke{border-color:rgba(255,112,137,.5)}
+  .seal.broke .digest .big{color:var(--bad)}
+  .verify{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .status{font-family:var(--mono);font-weight:700;font-size:13px;padding:7px 13px;border-radius:9px}
+  .status.ok{background:rgba(70,214,160,.14);color:var(--good);border:1px solid rgba(70,214,160,.45)}
+  .status.no{background:rgba(255,112,137,.13);color:var(--bad);border:1px solid rgba(255,112,137,.45)}
+  .vmsg{font-size:12.5px;color:var(--faint);flex-basis:100%}
+
+  /* aggregate */
+  .agg .pile{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0}
+  .leaf{font-family:var(--mono);font-size:11px;background:#0a0f20;border:1px solid var(--line);border-radius:7px;padding:6px 9px;color:var(--dim)}
+  .merge{display:flex;align-items:center;justify-content:center;gap:10px;color:var(--blue);font-family:var(--mono);font-size:13px;margin:8px 0}
+  .merge::before,.merge::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,transparent,var(--line2),transparent)}
+  .root{background:#080c1a;border:1px solid var(--blue);border-radius:12px;padding:15px;font-family:var(--mono);font-size:13px;color:var(--amber);word-break:break-all}
+  .cost{margin-top:14px;font-size:14px;color:var(--dim)}
+  .cost b{font-family:var(--mono)}
 
   /* features */
   .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-  @media(max-width:760px){.feat{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;transition:.15s}
-  .card:hover{border-color:var(--acc);transform:translateY(-2px)}
-  .card h3{margin:0 0 6px;font-size:16px}
+  @media(max-width:780px){.feat{grid-template-columns:1fr 1fr}}
+  @media(max-width:520px){.feat{grid-template-columns:1fr}}
+  .card{background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:18px;transition:.15s}
+  .card:hover{border-color:var(--blue);transform:translateY(-2px)}
+  .card .n{font-family:var(--mono);font-size:12px;color:var(--blue)}
+  .card h3{font-family:var(--disp);font-weight:600;margin:6px 0 6px;font-size:17px}
   .card p{margin:0;font-size:13.5px;color:var(--dim)}
-  .card .ic{font-size:20px}
 
-  /* comparison table */
-  .tbl{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;display:block;overflow-x:auto}
-  .tbl th,.tbl td{border:1px solid var(--line);padding:9px 11px;text-align:center;white-space:nowrap}
-  .tbl th{background:var(--panel2);color:var(--dim);font-weight:600;position:sticky;left:0}
-  .tbl td:first-child,.tbl th:first-child{text-align:left;color:var(--ink)}
-  .tbl .mecol{background:rgba(124,92,255,.12);color:#fff;font-weight:600}
-  .tbl .yes{color:var(--acc2)} .tbl .no{color:var(--faint)}
+  /* table */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:680px}
+  th,td{padding:12px 14px;text-align:center;border-bottom:1px solid var(--line)}
+  thead th{background:var(--surf2);font-family:var(--mono);font-size:12px;font-weight:500;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+  tbody td:first-child,thead th:first-child{text-align:left;color:var(--ink);font-weight:500;white-space:nowrap}
+  tr td.me,tr th.me{background:rgba(91,140,255,.12);color:#fff;font-weight:600}
+  thead th.me{color:var(--blue)}
+  td.y{color:var(--good)} td.x{color:var(--faint)}
+  tbody tr:last-child td{border-bottom:none}
 
-  /* arch */
-  pre.arch{background:#08090f;border:1px solid var(--line);border-radius:12px;padding:18px;overflow-x:auto;font-size:12px;color:var(--dim);line-height:1.45}
+  /* stack grid */
+  .stack{display:grid;gap:10px}
+  .layer{display:grid;grid-template-columns:170px 1fr;gap:18px;align-items:center;background:var(--surf);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:12px;padding:16px 18px}
+  @media(max-width:560px){.layer{grid-template-columns:1fr;gap:4px}}
+  .layer .ttl{font-family:var(--disp);font-weight:600;font-size:15px}
+  .layer .dsc{font-size:13.5px;color:var(--dim)}
+  .layer.core{border-left-color:var(--amber)}
 
-  footer{padding:48px 0;border-top:1px solid var(--line);color:var(--faint);font-size:13px;text-align:center}
-  footer a{color:var(--dim)}
-  .pulse{animation:pulse 1.4s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+  /* footer */
+  footer{border-top:1px solid var(--line);padding:48px 0;background:var(--bg2)}
+  .fgrid{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:flex-start}
+  .fgrid .blurb{max-width:34ch;color:var(--faint);font-size:13.5px}
+  .fcol{display:flex;flex-direction:column;gap:8px;font-size:14px}
+  .fcol .ft{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:2px}
+  .fcol a{color:var(--dim)}
+  .built{margin-top:34px;padding-top:20px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--faint);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .built b{color:var(--blue)}
 </style>
 </head>
 <body>
 
 <nav><div class="wrap">
-  <span class="logo"><b>Uni</b>Groth</span>
-  <div class="links">
-    <a href="#compare">Proof Size</a>
-    <a href="#prove">Prove It</a>
+  <span class="brand"><b>Uni</b>Groth</span>
+  <div class="navlinks">
+    <a href="#size">Proof size</a>
+    <a href="#prove">Prove</a>
     <a href="#aggregate">Aggregate</a>
-    <a href="#features">Features</a>
-    <a class="gh" href="https://github.com/MeridianAlgo/UniGroth">GitHub →</a>
+    <a href="#compare">Compare</a>
+    <a class="prime" href="https://github.com/MeridianAlgo/UniGroth">GitHub</a>
   </div>
 </div></nav>
 
 <header class="hero"><div class="wrap">
-  <span class="tag">zk-SNARK · BN254 · Rust · 156 tests passing</span>
-  <h1>Everything Groth16 is.<br/>Everything it isn't.</h1>
-  <p class="sub">192-byte proofs with universal setup, simulation-extractability, folding, N-to-1 aggregation, and a post-quantum path — in one system. Prove and verify, live, in this page.</p>
+  <span class="eyebrow">zk SNARK on BN254 . written in Rust . 156 tests pass</span>
+  <h1>Everything Groth16 is.<br/><span class="alt">Everything it is not.</span></h1>
+  <p class="lede">A 192 byte proof you can verify in one page, now with universal setup, aggregation, folding and a post quantum path. One system, no tradeoffs.</p>
   <div class="cta">
-    <a class="btn p" href="#prove">▶ Try the prover</a>
-    <a class="btn" href="https://github.com/MeridianAlgo/UniGroth">View source</a>
+    <a class="btn fill" href="#prove">Try the prover</a>
+    <a class="btn" href="https://github.com/MeridianAlgo/UniGroth">Read the source</a>
   </div>
-  <div class="stats">
-    <div class="stat"><b>192–256 B</b><span>Proof size</span></div>
-    <div class="stat"><b>3–5</b><span>Pairings to verify</span></div>
-    <div class="stat"><b>N → 1</b><span>Aggregation</span></div>
-    <div class="stat"><b>PQ</b><span>Migration path</span></div>
+  <div class="ribbon">
+    <div><b>192</b><span>bytes per proof</span></div>
+    <div><b>3 to 5</b><span>pairings to verify</span></div>
+    <div><b>N to 1</b><span>proof aggregation</span></div>
+    <div><b>PQ</b><span>migration path</span></div>
   </div>
 </div></header>
 
-<!-- COMPARISON CHART -->
-<section id="compare"><div class="wrap">
-  <span class="tag">Why it matters</span>
-  <h2>Proof size, to scale</h2>
-  <p class="lead">Smaller proofs mean cheaper on-chain verification and less bandwidth. Drag the constraint count — UniGroth stays flat where others blow up.</p>
+<!-- PROOF SIZE -->
+<section id="size"><div class="wrap">
+  <div class="head">
+    <span class="eyebrow">Why size matters</span>
+    <h2>Proof size, to scale</h2>
+    <p>Smaller proofs cost less to verify onchain and move faster across a network. Drag the slider. UniGroth stays flat while the others grow.</p>
+  </div>
   <div class="panel">
-    <div class="scalebar">
-      <span>Circuit size:</span>
-      <input id="cc" type="range" min="10" max="20" value="14" style="flex:1"/>
-      <span class="mono" id="ccLbl" style="color:var(--acc2);min-width:90px">2¹⁴ gates</span>
+    <div class="control">
+      <span>Circuit size</span>
+      <input id="cc" type="range" min="10" max="20" value="14" />
+      <span class="read mono" id="ccLbl">2 to the 14</span>
     </div>
     <div class="bars" id="bars"></div>
-    <p class="hint">Bars are log-scaled to fit STARKs alongside a 192-byte proof. Hover a row for the number.</p>
+    <p class="note">Bars use a log scale so a 50 KB STARK proof and a 192 byte proof fit side by side. Hover a row for the exact size.</p>
   </div>
 </div></section>
 
-<!-- PROVER PLAYGROUND -->
+<!-- PROVE -->
 <section id="prove"><div class="wrap">
-  <span class="tag">Interactive · real crypto</span>
-  <h2>Prove it yourself</h2>
-  <p class="lead">UniGroth's post-quantum prover binds a proof to your <em>witness</em> and <em>public inputs</em> with SHA-256 — deterministic and tamper-evident. This demo runs the real hash binding in your browser via Web Crypto. Change one byte and verification fails.</p>
+  <div class="head">
+    <span class="eyebrow">Live and real</span>
+    <h2>Prove something without revealing it</h2>
+    <p>Enter a secret only you know and a public statement about it. UniGroth seals both into a tiny proof using SHA256. Anyone can check the proof fits the statement, yet no one learns the secret. This runs in your browser, nothing is sent anywhere.</p>
+  </div>
   <div class="panel">
-    <div class="grid2">
+    <div class="steps">
       <div>
-        <label class="f">Secret witness (private)</label>
-        <input class="inp" id="wit" value="my-secret-preimage-42"/>
+        <div class="field">
+          <div class="lab"><span class="n">01</span><span class="t">Your secret</span><span class="h">stays private</span></div>
+          <input class="inp" id="wit" value="the password is open sesame" />
+        </div>
+        <div class="field">
+          <div class="lab"><span class="n">02</span><span class="t">Public statement</span><span class="h">everyone sees this</span></div>
+          <input class="inp" id="pub" value="I know the password" />
+        </div>
+        <div class="field">
+          <div class="lab"><span class="n">03</span><span class="t">Prover</span><span class="h">pick a post quantum scheme</span></div>
+          <div class="schemes" id="schemes">
+            <span class="chip on" data-s="Binius">Binius . 256 B</span>
+            <span class="chip" data-s="Plonky3">Plonky3 . 512 B</span>
+            <span class="chip" data-s="Hybrid">Hybrid . 516 B</span>
+          </div>
+        </div>
       </div>
-      <div>
-        <label class="f">Public input</label>
-        <input class="inp" id="pub" value="0x9f3c..commitment"/>
+      <div class="seal" id="seal">
+        <div class="cap">Sealed proof</div>
+        <div class="digest" id="digest"></div>
+        <div class="verify">
+          <span id="status" class="status ok">VALID</span>
+          <button class="btn" id="tamper" style="padding:8px 14px;font-size:13px">Tamper with it</button>
+          <span class="vmsg" id="vmsg"></span>
+        </div>
       </div>
     </div>
-    <div style="margin-top:14px">
-      <label class="f">PQ scheme (domain separation tag)</label>
-      <div class="scheme" id="scheme">
-        <span class="chip on" data-s="Binius">Binius · 256 B</span>
-        <span class="chip" data-s="Plonky3">Plonky3 · 512 B</span>
-        <span class="chip" data-s="Hybrid">Hybrid · 516 B</span>
-      </div>
-    </div>
-    <div class="proofout" id="proof"></div>
-    <div class="verline">
-      <button class="btn" id="tamper">⚡ Tamper with the proof</button>
-      <span id="verbadge" class="badge ok">VERIFIED</span>
-      <span class="mono" id="vermsg" style="color:var(--faint);font-size:13px"></span>
-    </div>
-    <p class="hint">Same (witness, public input) → same proof, every time. Flip a character above, or hit tamper, and the recomputed commitment no longer matches.</p>
+    <p class="note">Change one character above, or press tamper, and the check fails at once. The same secret and statement always seal to the same proof.</p>
   </div>
 </div></section>
 
-<!-- AGGREGATION -->
+<!-- AGGREGATE -->
 <section id="aggregate"><div class="wrap">
-  <span class="tag">N proofs → 1</span>
-  <h2>Aggregate a batch</h2>
-  <p class="lead">SnarkPack-style aggregation compresses N independent proofs into one constant-size aggregate — verification drops from N pairings to one. The PQ path Merkle-chains per-proof digests into a single root.</p>
-  <div class="panel aggwrap">
-    <div class="scalebar">
-      <span>Proofs in batch:</span>
-      <input id="nproofs" type="range" min="2" max="64" value="8" style="flex:1"/>
-      <span class="mono" id="nLbl" style="color:var(--acc2);min-width:70px">8</span>
+  <div class="head">
+    <span class="eyebrow">Many into one</span>
+    <h2>Fold a batch into a single proof</h2>
+    <p>Checking many proofs one by one is slow. UniGroth folds a whole batch into one constant size proof, so the verifier does one check instead of many. Drag to set the batch size.</p>
+  </div>
+  <div class="panel agg">
+    <div class="control">
+      <span>Proofs in the batch</span>
+      <input id="nproofs" type="range" min="2" max="64" value="8" />
+      <span class="read mono" id="nLbl">8</span>
     </div>
-    <div class="proofdots" id="dots"></div>
-    <div class="arrow">▼ fold into Merkle root ▼</div>
-    <div class="agg" id="aggout"></div>
-    <p class="hint" id="aggcost"></p>
+    <div class="pile" id="pile"></div>
+    <div class="merge">fold into one root</div>
+    <div class="root" id="root"></div>
+    <p class="cost" id="cost"></p>
   </div>
 </div></section>
 
 <!-- FEATURES -->
 <section id="features"><div class="wrap">
-  <span class="tag">One system</span>
-  <h2>What's in the box</h2>
-  <p class="lead">Every Groth16 limitation, removed — without giving up the 192-byte proof.</p>
+  <div class="head">
+    <span class="eyebrow">One system</span>
+    <h2>What it adds to Groth16</h2>
+    <p>Every limitation removed, and the tiny proof stays.</p>
+  </div>
   <div class="feat">
-    <div class="card"><div class="ic">🌍</div><h3>Universal setup</h3><p>One updatable KZG ceremony covers every circuit of a given size. No per-circuit trusted setup.</p></div>
-    <div class="card"><div class="ic">🛡️</div><h3>Simulation-extractable</h3><p>Every proof is SE by default via ROM hash blinding — near-zero overhead, no config.</p></div>
-    <div class="card"><div class="ic">📦</div><h3>N-to-1 aggregation</h3><p>Compress N proofs into one. Verify a batch of 32 in a single multi-pairing — ~32× cheaper.</p></div>
-    <div class="card"><div class="ic">♾️</div><h3>Folding / IVC</h3><p>ProtoStar accumulation with a full relaxed-R1CS decision predicate. Fold, verify once.</p></div>
-    <div class="card"><div class="ic">⚛️</div><h3>Post-quantum path</h3><p>Binius, Plonky3 &amp; Hybrid inner provers — quantum-resistant proofs today, classical proof size.</p></div>
-    <div class="card"><div class="ic">⛓️</div><h3>Auto Solidity verifier</h3><p>Generate a ~250k-gas on-chain verifier from any VK using EIP-196/197 precompiles.</p></div>
-    <div class="card"><div class="ic">🧩</div><h3>Plonkish gates</h3><p>Custom gates (Poseidon, EC add), lookup tables, and Plonkish-to-R1CS conversion.</p></div>
-    <div class="card"><div class="ic">🗜️</div><h3>VK compression</h3><p>O(n) → O(1) verifying keys via KZG. Built for zkEVMs with thousands of public inputs.</p></div>
-    <div class="card"><div class="ic">🌊</div><h3>Streaming prover</h3><p>Bounded-memory MSMs in chunks — prove circuits too large to fit in RAM.</p></div>
+    <div class="card"><span class="n">001</span><h3>Universal setup</h3><p>One updatable ceremony covers every circuit of a given size. No setup per circuit.</p></div>
+    <div class="card"><span class="n">002</span><h3>Forgery resistant</h3><p>Every proof is simulation extractable by default, with near zero overhead and no config.</p></div>
+    <div class="card"><span class="n">003</span><h3>Aggregation</h3><p>Fold N proofs into one. Verify a batch of 32 for the cost of one, about 32 times cheaper.</p></div>
+    <div class="card"><span class="n">004</span><h3>Folding and IVC</h3><p>ProtoStar accumulation with a full relaxed R1CS decision predicate. Fold, then verify once.</p></div>
+    <div class="card"><span class="n">005</span><h3>Post quantum path</h3><p>Binius, Plonky3 and Hybrid inner provers give quantum resistant proofs at classical size.</p></div>
+    <div class="card"><span class="n">006</span><h3>Onchain verifier</h3><p>Generate a Solidity verifier from any key. About 250k gas using the BN254 precompiles.</p></div>
+    <div class="card"><span class="n">007</span><h3>Custom gates</h3><p>Plonkish gates like Poseidon and EC add, lookup tables, and a path back to R1CS.</p></div>
+    <div class="card"><span class="n">008</span><h3>Key compression</h3><p>Shrink a verifying key from order n to order one. Built for large zkEVM circuits.</p></div>
+    <div class="card"><span class="n">009</span><h3>Streaming prover</h3><p>Run the heavy steps in chunks with bounded memory, for circuits too large for RAM.</p></div>
   </div>
 </div></section>
 
-<!-- COMPARISON TABLE -->
-<section id="table"><div class="wrap">
-  <span class="tag">Head to head</span>
-  <h2>Against the field</h2>
-  <table class="tbl">
-    <thead><tr><th></th><th>Groth16</th><th>PLONK</th><th>Halo2</th><th>STARKs</th><th class="mecol">UniGroth</th></tr></thead>
+<!-- COMPARE -->
+<section id="compare"><div class="wrap">
+  <div class="head">
+    <span class="eyebrow">Head to head</span>
+    <h2>Against the field</h2>
+    <p>The same comparison the whitepaper draws, in full.</p>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr>
+      <th></th><th>Groth16</th><th>PLONK</th><th>Marlin</th><th>Halo2</th><th>STARKs</th><th class="me">UniGroth</th>
+    </tr></thead>
     <tbody>
-      <tr><td>Proof size</td><td>192 B</td><td>1–2 KB</td><td>5–15 KB</td><td>50–200 KB</td><td class="mecol">192–256 B</td></tr>
-      <tr><td>Trusted setup</td><td class="no">Per-circuit</td><td>Universal</td><td>Transparent</td><td>None</td><td class="mecol">Universal</td></tr>
-      <tr><td>Sim-extractable</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td>—</td><td class="mecol yes">✓</td></tr>
-      <tr><td>Folding / IVC</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">Varies</td><td class="mecol yes">✓</td></tr>
-      <tr><td>Aggregation</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="no">Varies</td><td class="mecol yes">✓</td></tr>
-      <tr><td>Post-quantum</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td><td class="mecol yes">✓ (path)</td></tr>
-      <tr><td>On-chain verifier</td><td>Manual</td><td>Manual</td><td class="no">✗</td><td class="no">✗</td><td class="mecol yes">Auto</td></tr>
+      <tr><td>Proof size</td><td>192 B</td><td>1 to 2 KB</td><td>2 to 5 KB</td><td>5 to 15 KB</td><td>50 to 200 KB</td><td class="me">192 to 256 B</td></tr>
+      <tr><td>Verify cost</td><td>3 pairings</td><td>10 plus</td><td>15 plus</td><td>varies</td><td>fast hash</td><td class="me">3 to 5 pairings</td></tr>
+      <tr><td>Trusted setup</td><td class="x">per circuit</td><td>universal</td><td>universal</td><td>none</td><td>none</td><td class="me">universal</td></tr>
+      <tr><td>Forgery resistant</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td>n a</td><td class="me y">yes</td></tr>
+      <tr><td>Folding and IVC</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">varies</td><td class="me y">yes</td></tr>
+      <tr><td>Aggregation</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">varies</td><td class="me y">yes</td></tr>
+      <tr><td>Post quantum</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="y">yes</td><td class="me y">path</td></tr>
+      <tr><td>Public input proof</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="me y">yes</td></tr>
+      <tr><td>Key compression</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td>n a</td><td class="me y">yes</td></tr>
+      <tr><td>Custom gates</td><td class="x">no</td><td class="y">yes</td><td class="x">no</td><td class="y">yes</td><td class="y">yes</td><td class="me y">yes</td></tr>
+      <tr><td>Onchain verifier</td><td>manual</td><td>manual</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="me y">auto</td></tr>
     </tbody>
-  </table>
+  </table></div>
 </div></section>
 
-<!-- ARCH -->
-<section id="arch"><div class="wrap">
-  <span class="tag">Under the hood</span>
-  <h2>The stack</h2>
-  <pre class="arch">                    Application Layer
-         (zkEVM · zkML · Private Transactions)
-                         │
-              Flexible Arithmetization
-       SAP / Plonkish + Custom Gates + Lookups
-                         │
-             Folding &amp; Recursion Engine
-      ProtoStar IVC + Full Decision Predicate
-                         │
-          Universal Polynomial Commitments
-                 KZG (Powers-of-Tau)
-                         │
-           Groth16-Style Compression Core
-      Linear Interactive Proof + Pairing Encoding
-            (192–256 byte final proof)</pre>
-  <p class="hint">~11,870 lines across 28 Rust modules. 156 tests, 0 clippy warnings. <a href="https://github.com/MeridianAlgo/UniGroth">Read the source →</a></p>
+<!-- STACK -->
+<section id="stack"><div class="wrap">
+  <div class="head">
+    <span class="eyebrow">How it fits together</span>
+    <h2>The stack</h2>
+    <p>Five layers, from your application down to the tiny pairing based proof.</p>
+  </div>
+  <div class="stack">
+    <div class="layer"><div class="ttl">Application</div><div class="dsc">zkEVM, zkML and private transactions sit on top.</div></div>
+    <div class="layer"><div class="ttl">Arithmetization</div><div class="dsc">SAP or Plonkish with custom gates and lookups.</div></div>
+    <div class="layer"><div class="ttl">Folding and recursion</div><div class="dsc">ProtoStar IVC with a full decision predicate.</div></div>
+    <div class="layer"><div class="ttl">Commitments</div><div class="dsc">KZG built from a universal powers of tau setup.</div></div>
+    <div class="layer core"><div class="ttl">Compression core</div><div class="dsc">Groth16 style pairing encoding. The final 192 to 256 byte proof.</div></div>
+  </div>
+  <p class="note">About 11,870 lines across 28 Rust modules. 156 tests, zero clippy warnings. <a href="https://github.com/MeridianAlgo/UniGroth">Read the source</a>.</p>
 </div></section>
 
 <footer><div class="wrap">
-  Built with <span style="color:var(--acc)">UniGroth</span> · research software, audit before mainnet ·
-  <a href="https://github.com/MeridianAlgo/UniGroth">github.com/MeridianAlgo/UniGroth</a><br/>
-  <span style="color:#3a3f55">MIT / Apache-2.0 · the prover demo runs entirely in your browser, nothing leaves this page.</span>
+  <div class="fgrid">
+    <div>
+      <span class="brand"><b>Uni</b>Groth</span>
+      <p class="blurb">Research software. Audit before you ship to mainnet. The prover on this page runs entirely in your browser.</p>
+    </div>
+    <div class="fcol">
+      <span class="ft">Project</span>
+      <a href="https://github.com/MeridianAlgo/UniGroth">GitHub</a>
+      <a href="https://github.com/MeridianAlgo/UniGroth/blob/main/docs/post-quantum.md">Post quantum docs</a>
+      <a href="#prove">Try the prover</a>
+    </div>
+    <div class="fcol">
+      <span class="ft">Built with</span>
+      <span style="color:var(--dim)">Built with Groth16</span>
+      <span style="color:var(--dim)">Built with Groth16</span>
+      <span style="color:var(--dim)">Built with Groth16</span>
+    </div>
+  </div>
+  <div class="built">
+    <span><b>Built with Groth16</b> . MIT and Apache 2.0</span>
+    <span>github.com/MeridianAlgo/UniGroth</span>
+  </div>
 </div></footer>
 
 <script>
-// ---- helpers ----
 const $=s=>document.querySelector(s);
 async function sha256(str){
-  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
-  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 
-// ---- proof-size chart (log scaled) ----
-// bytes ~ base + per-constraint growth factor; UniGroth & Groth16 flat.
-const systems=[
-  {n:'Groth16', flat:192, grow:0, cls:''},
-  {n:'PLONK',   flat:480, grow:0.04, cls:''},
-  {n:'Halo2',   flat:5000,grow:0.5, cls:''},
-  {n:'STARKs',  flat:45000,grow:9, cls:''},
-  {n:'UniGroth',flat:208, grow:0, cls:'me'},
+/* proof size chart */
+const sys=[
+  {n:'Groth16',flat:192,grow:0},
+  {n:'PLONK',flat:480,grow:0.04},
+  {n:'Halo2',flat:5000,grow:0.5},
+  {n:'STARKs',flat:45000,grow:9},
+  {n:'UniGroth',flat:208,grow:0,me:1},
 ];
-function fmtB(b){return b<1024?Math.round(b)+' B':(b/1024).toFixed(1)+' KB';}
-function drawBars(){
-  const log2n=+$('#cc').value;
-  const sup='⁰¹²³⁴⁵⁶⁷⁸⁹';
-  $('#ccLbl').textContent='2'+String(log2n).split('').map(d=>sup[+d]).join('')+' gates';
-  const n=Math.pow(2,log2n);
-  const rows=systems.map(s=>({...s,bytes:s.flat+s.grow*n}));
+const fmt=b=>b<1024?Math.round(b)+' B':(b/1024).toFixed(1)+' KB';
+function bars(){
+  const e=+$('#cc').value;
+  $('#ccLbl').textContent='2 to the '+e;
+  const n=2**e;
+  const rows=sys.map(s=>({...s,bytes:s.flat+s.grow*n}));
   const max=Math.max(...rows.map(r=>Math.log10(r.bytes)));
   $('#bars').innerHTML=rows.map(r=>{
     const pct=Math.max(4,(Math.log10(r.bytes)/max)*100);
-    return `<div class="bar-row ${r.cls}" title="${fmtB(r.bytes)}">
-      <span>${r.n}</span>
-      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-      <span class="bar-val">${fmtB(r.bytes)}</span></div>`;
+    return `<div class="row ${r.me?'me':''}" title="${fmt(r.bytes)}">
+      <span>${r.n}</span><div class="track"><div class="fill" style="width:${pct}%"></div></div>
+      <span class="val">${fmt(r.bytes)}</span></div>`;
   }).join('');
 }
-$('#cc').addEventListener('input',drawBars);
+$('#cc').addEventListener('input',bars);
 
-// ---- prover playground ----
-let scheme='Binius', tampered=false;
-const tags={Binius:'UNIGROTH-PQ-BINIUS-v1',Plonky3:'UNIGROTH-PQ-PLONKY3-v1',Hybrid:'UNIGROTH-PQ-HYBRID-v1'};
-document.querySelectorAll('#scheme .chip').forEach(c=>c.onclick=()=>{
-  document.querySelectorAll('#scheme .chip').forEach(x=>x.classList.remove('on'));
-  c.classList.add('on'); scheme=c.dataset.s; runProver();
+/* prover */
+let scheme='Binius',broke=false;
+const tag={Binius:'UNIGROTH-PQ-BINIUS',Plonky3:'UNIGROTH-PQ-PLONKY3',Hybrid:'UNIGROTH-PQ-HYBRID'};
+document.querySelectorAll('#schemes .chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('#schemes .chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');scheme=c.dataset.s;broke=false;prove();
 });
-$('#wit').addEventListener('input',()=>{tampered=false;runProver();});
-$('#pub').addEventListener('input',()=>{tampered=false;runProver();});
-$('#tamper').onclick=()=>{tampered=!tampered;runProver();};
-
-async function runProver(){
-  const w=$('#wit').value, p=$('#pub').value, tag=tags[scheme];
-  // proof = SHA256(tag || witness || public)  — witness + public-input binding
-  const witC=await sha256(tag+'|wit|'+w);
-  const pubC=await sha256(tag+'|pub|'+p);
-  let proof=await sha256(tag+'|'+witC+'|'+pubC);
-  const stored=proof;
-  // verifier recomputes commitment from inputs and compares to the (maybe tampered) proof
-  const onWire = tampered ? (proof.slice(0,-1)+(proof.slice(-1)==='0'?'1':'0')) : proof;
-  const recomputed=await sha256(tag+'|'+witC+'|'+pubC);
-  const ok = onWire===recomputed;
-  $('#proof').innerHTML=
-    `<span class="kv">scheme    </span> ${scheme}  <span class="kv">(${tag})</span><br/>`+
-    `<span class="kv">witness ⟶ </span> commit  <span class="digest">${witC.slice(0,32)}…</span><br/>`+
-    `<span class="kv">public  ⟶ </span> commit  <span class="digest">${pubC.slice(0,32)}…</span><br/>`+
-    `<span class="kv">proof   = </span> <span class="digest">${onWire}</span>`;
-  const b=$('#verbadge'), m=$('#vermsg');
-  if(ok){b.className='badge ok';b.textContent='✓ VERIFIED';m.textContent='recomputed commitment matches the proof on the wire';}
-  else{b.className='badge bad';b.textContent='✗ REJECTED';m.textContent='proof byte altered — binding broken, verifier rejects';}
+$('#wit').addEventListener('input',()=>{broke=false;prove();});
+$('#pub').addEventListener('input',()=>{broke=false;prove();});
+$('#tamper').onclick=()=>{broke=!broke;prove();};
+async function prove(){
+  const w=$('#wit').value,p=$('#pub').value,t=tag[scheme];
+  const cw=await sha256(t+'|w|'+w), cp=await sha256(t+'|p|'+p);
+  let proof=await sha256(t+'|'+cw+'|'+cp);
+  const wire=broke?proof.slice(0,-1)+(proof.slice(-1)==='0'?'1':'0'):proof;
+  const ok=wire===await sha256(t+'|'+cw+'|'+cp);
+  $('#digest').innerHTML=
+    `<span class="k">scheme</span> ${scheme}<br/>`+
+    `<span class="k">secret sealed as</span> <span class="v">${cw.slice(0,28)}...</span><br/>`+
+    `<span class="k">statement sealed as</span> <span class="v">${cp.slice(0,28)}...</span>`+
+    `<span class="big">${wire}</span>`;
+  const seal=$('#seal'),s=$('#status'),m=$('#vmsg');
+  if(ok){seal.classList.remove('broke');s.className='status ok';s.textContent='VALID';m.textContent='The proof matches the statement. The secret never appears.';}
+  else{seal.classList.add('broke');s.className='status no';s.textContent='REJECTED';m.textContent='One byte changed, so the seal no longer matches. The verifier says no.';}
 }
 
-// ---- aggregation ----
-async function drawAgg(){
-  const n=+$('#nproofs').value; $('#nLbl').textContent=n;
-  $('#dots').innerHTML=Array.from({length:n},(_,i)=>`<span class="pdot">π${i}</span>`).join('');
-  // merkle-chain n leaf digests into one root (faithful to the README's per-proof SHA-256 chain)
-  let acc=await sha256('UNIGROTH-AGG-ROOT');
-  for(let i=0;i<n;i++) acc=await sha256(acc+'|leaf'+i);
-  $('#aggout').innerHTML=`<span class="kv">aggregate root </span>0x${acc}`;
-  $('#aggcost').innerHTML=`Naive verify: <b style="color:var(--warn)">${n} pairings</b> &nbsp;→&nbsp; Aggregated: <b style="color:var(--acc2)">1 multi-pairing</b> &nbsp;·&nbsp; ~${n}× cheaper, constant-size output.`;
+/* aggregate */
+async function agg(){
+  const n=+$('#nproofs').value;$('#nLbl').textContent=n;
+  $('#pile').innerHTML=Array.from({length:n},(_,i)=>`<span class="leaf">proof ${i+1}</span>`).join('');
+  let acc=await sha256('UNIGROTH-AGG');
+  for(let i=0;i<n;i++)acc=await sha256(acc+'|'+i);
+  $('#root').innerHTML=`<span style="color:var(--faint)">one root for ${n} proofs</span><br/>0x${acc}`;
+  $('#cost').innerHTML=`One by one costs <b style="color:var(--bad)">${n} pairings</b>. Folded costs <b style="color:var(--good)">1</b>. About ${n} times cheaper, same tiny output.`;
 }
-$('#nproofs').addEventListener('input',drawAgg);
+$('#nproofs').addEventListener('input',agg);
 
-// init
-drawBars(); runProver(); drawAgg();
+bars();prove();agg();
 </script>
 </body>
 </html>

@@ -550,10 +550,10 @@ impl GateType {
     pub fn name(&self) -> String {
         match self {
             Self::Sha256Sigma(t) => format!("Sha256Sigma({})", t.label()),
-            Self::EcAdd => format!("EcAdd"),
+            Self::EcAdd => "EcAdd".to_string(),
             Self::MontgomeryMul { modulus_bits } => format!("MontgomeryMul({}b)", modulus_bits),
             Self::PoseidonRound(t) => format!("PoseidonRound({})", t.label()),
-            Self::KeccakXor => format!("KeccakXor"),
+            Self::KeccakXor => "KeccakXor".to_string(),
         }
     }
 }

@@ -872,7 +872,7 @@ impl ProverProfile {
     /// - 1.13–1.14× from optimized FFT + MSM at typical circuit sizes
     /// - Additional gains from SAP reduction (circuit-dependent)
     pub fn estimate_speedup(sap_reduction_factor: f64, dynark_fft: bool) -> f64 {
-        let fft_factor = if dynark_fft { 4.0 / 6.0 * 1.5 } else { 1.0 };
+        let fft_factor = if dynark_fft { 4.0 / 6.0 } else { 1.0 };
         let msm_factor = 1.2;
         sap_reduction_factor * fft_factor * msm_factor
     }

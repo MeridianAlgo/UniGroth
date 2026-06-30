@@ -58,15 +58,17 @@ pub enum TransparentScheme {
     Brakedown,
 }
 
-impl TransparentConfig {
+impl Default for TransparentConfig {
     /// Default: 128-bit FRI with blowup factor 4.
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self {
             security_bits: 128,
             scheme: TransparentScheme::Fri { blowup_factor: 4 },
         }
     }
+}
 
+impl TransparentConfig {
     /// FRI configuration.
     pub fn fri(security_bits: usize, blowup_factor: usize) -> Self {
         assert!(security_bits >= 80, "security_bits must be at least 80");
@@ -133,7 +135,7 @@ impl SetupMode {
     /// Human-readable name.
     pub fn name(&self) -> String {
         match self {
-            SetupMode::Kzg => format!("KZG (trusted setup)"),
+            SetupMode::Kzg => "KZG (trusted setup)".to_string(),
             SetupMode::Transparent(cfg) => {
                 format!("Transparent/{} ({}b)", cfg.scheme_name(), cfg.security_bits)
             },

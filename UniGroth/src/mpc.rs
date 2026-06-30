@@ -55,7 +55,7 @@ impl AdditiveShare {
     fn compute_tag(party_idx: usize, session_id: &[u8; 32], value: &[u8]) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(b"mpc-share-binding");
-        h.update(&(party_idx as u64).to_le_bytes());
+        h.update((party_idx as u64).to_le_bytes());
         h.update(session_id);
         h.update(value);
         h.finalize().into()
@@ -124,7 +124,10 @@ pub enum MpcScheme {
     /// Additive sharing: `s = s_1 + ... + s_N`. Threshold = N (all parties needed).
     Additive,
     /// Shamir t-of-N threshold sharing.
-    Shamir { threshold: usize },
+    Shamir {
+        /// Minimum number of parties required to reconstruct.
+        threshold: usize,
+    },
 }
 
 impl MpcConfig {
@@ -290,7 +293,7 @@ impl PartialProofElement {
     pub fn new(party_idx: usize, session_id: &[u8; 32], element: Vec<u8>) -> Self {
         let mut h = Sha256::new();
         h.update(b"mpc-partial-proof");
-        h.update(&(party_idx as u64).to_le_bytes());
+        h.update((party_idx as u64).to_le_bytes());
         h.update(session_id);
         h.update(&element);
         let binding = h.finalize().into();
@@ -344,9 +347,17 @@ pub fn aggregate_partial_proofs(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MpcError {
     /// Binding tag verification failed for this party.
-    InvalidBinding { party_idx: usize },
+    InvalidBinding {
+        /// Index of the party whose binding tag failed.
+        party_idx: usize,
+    },
     /// Not enough parties provided (threshold not met).
-    ThresholdNotMet { have: usize, need: usize },
+    ThresholdNotMet {
+        /// Number of shares provided.
+        have: usize,
+        /// Number of shares required.
+        need: usize,
+    },
     /// Empty party set (no shares provided).
     EmptyPartySet,
     /// Witness length mismatch across parties.
@@ -363,8 +374,8 @@ impl MpcError {
             Self::ThresholdNotMet { have, need } => {
                 format!("threshold not met: have {} shares, need {}", have, need)
             },
-            Self::EmptyPartySet => format!("empty party set"),
-            Self::WitnessLengthMismatch => format!("witness length mismatch across parties"),
+            Self::EmptyPartySet => "empty party set".to_string(),
+            Self::WitnessLengthMismatch => "witness length mismatch across parties".to_string(),
         }
     }
 }

@@ -81,7 +81,10 @@ pub enum MsmBackend {
     /// GPU via Icicle backend (requires `feature = "gpu"`).
     IcicleGpu,
     /// Distributed MSM across proving cluster.
-    Distributed { num_workers: usize },
+    Distributed {
+        /// Number of worker nodes in the cluster.
+        num_workers: usize,
+    },
 }
 
 impl MsmBackend {
@@ -296,7 +299,7 @@ impl AdaptiveDispatcher {
             ));
             MsmBackend::IcicleGpu
         } else {
-            rationale.push(format!("CPU Pippenger MSM (GPU not available or n < 4096)"));
+            rationale.push("CPU Pippenger MSM (GPU not available or n < 4096)".to_string());
             MsmBackend::CpuPippenger
         };
 

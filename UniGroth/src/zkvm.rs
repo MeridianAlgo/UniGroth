@@ -286,7 +286,10 @@ impl Default for ProgramTrace {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ZkvmConstraintKind {
     /// Constrains a value to lie in [0, 2^bits).
-    RangeCheck { bits: usize },
+    RangeCheck {
+        /// Number of bits the value is constrained to.
+        bits: usize,
+    },
     /// Ensures two values are equal.
     Equality,
     /// ALU multiply gate (for complex ops).
@@ -454,6 +457,12 @@ pub struct TraceBuilder {
     trace: ProgramTrace,
     regs: RegisterFile,
     memory: BTreeMap<u32, u32>,
+}
+
+impl Default for TraceBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TraceBuilder {
