@@ -1,7 +1,7 @@
 <h1 align="center">UniGroth</h1>
 
 <p align="center">
-  <strong>The only zkSNARK with Groth16 proof size, universal setup, simulation-extractable security, ProtoStar folding, SnarkPack aggregation, Plookup/LogUp lookup arguments, and a post-quantum escape path — all in one library.</strong>
+  <strong>A research extension of ark-groth16 that adds universal setup, simulation-extractable security, ProtoStar folding, SnarkPack aggregation, Plookup/LogUp lookups, and a post-quantum direction — each as its own path, around a small classical core.</strong>
 </p>
 
 <p align="center">
@@ -17,9 +17,19 @@
 
 ## What Is UniGroth?
 
-UniGroth is a production-grade Rust zkSNARK built on arkworks that extends Groth16 without sacrificing its legendary 192-byte proof size or millisecond verification time. Every competitor forces a trade-off: PLONK sacrifices proof size for universality, STARKs sacrifice proof size and verification time for transparency, Halo2 sacrifices simplicity for recursion. UniGroth makes none of those trades.
+UniGroth is a Rust zkSNARK built on arkworks that extends `ark-groth16`. It keeps Groth16's small proof and fast verification on the classical core, and adds universal setup, simulation-extractability, folding, aggregation, lookups, and a post-quantum direction as separate paths. PLONK trades proof size for universality, STARKs trade size and speed for transparency, Halo2 trades simplicity for recursion; UniGroth explores keeping the small core while offering each capability on the side.
 
-**Proof size: 192–256 bytes. Verification: ~2 ms. Setup: universal. Security: simulation-extractable. Recursion: built-in.**
+The classical core proof is 2 G1 + 1 G2: ~128 bytes on BN254, ~192 bytes on BLS12-381, verified in ~2 ms. The simulation-extractable, aggregated, and post-quantum paths are larger and are distinct proof objects — see **[Status and honest scope](#status-and-honest-scope)** below. This is research software; audit before production use.
+
+---
+
+## Status and honest scope
+
+- **Proof size is curve and feature dependent.** ~128 B (BN254) / ~192 B (BLS12-381) for the classical core; up to ~256 B with simulation-extractability; SnarkPack aggregates are O(log N) kilobytes; the PQ schemes are 256–516 B. No single 192-byte proof carries every feature.
+- **Separate paths, not one artifact.** The default prove/verify uses `circuit_specific_setup` and the classical core. Universal setup, folding (ProtoStar), aggregation (SnarkPack), and the PQ schemes are distinct paths. The generated Solidity verifier checks the classical core only.
+- **Simulation-extractability, not "forgery resistance".** Plain Groth16 is already knowledge-sound. UniGroth adds non-malleability when an attacker can see other valid proofs.
+- **The PQ module is a commitment-and-binding scaffold.** `pq_inner` binds witness and public inputs with SHA-256 (deterministic, tamper-evident). It does not yet prove in zero knowledge that a witness satisfies a circuit. "Binius"/"Plonky3" name the target FRI/sumcheck designs; they are not implemented as such. Do not rely on it for post-quantum security.
+- **Benchmarks are scoped** to our suite vs `ark-groth16`, classical core, on a CI runner.
 
 ---
 

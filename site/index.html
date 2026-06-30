@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>UniGroth</title>
-<meta name="description" content="UniGroth gives you Groth16 size proofs with universal setup, aggregation, folding and a post quantum path. Prove and verify live in your browser." />
+<meta name="description" content="UniGroth is a research extension of ark-groth16 with a small classical proof plus separate paths for universal setup, aggregation, folding and a post quantum direction." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -177,13 +177,13 @@
 <header class="hero"><div class="wrap">
   <span class="eyebrow">zk SNARK on BN254 . written in Rust . 156 tests pass</span>
   <h1>Everything Groth16 is.<br/><span class="alt">Everything it is not.</span></h1>
-  <p class="lede">A 192 byte proof you can verify in one page, now with universal setup, aggregation, folding and a post quantum path. One system, no tradeoffs.</p>
+  <p class="lede">A small classical proof, about 128 bytes on BN254, with separate paths for universal setup, aggregation, folding and a post quantum direction. Research software built on arkworks, not one artifact that does everything at once.</p>
   <div class="cta">
     <a class="btn fill" href="#prove">Try the prover</a>
     <a class="btn" href="https://github.com/MeridianAlgo/UniGroth">Read the source</a>
   </div>
   <div class="ribbon">
-    <div><b>192</b><span>bytes per proof</span></div>
+    <div><b>128</b><span>core proof bytes, BN254</span></div>
     <div><b>3 to 5</b><span>pairings to verify</span></div>
     <div><b>N to 1</b><span>proof aggregation</span></div>
     <div><b>PQ</b><span>migration path</span></div>
@@ -212,8 +212,8 @@
 <section id="prove"><div class="wrap">
   <div class="head">
     <span class="eyebrow">Live and real</span>
-    <h2>Prove something without revealing it</h2>
-    <p>Enter a secret only you know and a public statement about it. UniGroth seals both into a tiny proof using SHA256. Anyone can check the proof fits the statement, yet no one learns the secret. This runs in your browser, nothing is sent anywhere.</p>
+    <h2>Bind a secret to a statement</h2>
+    <p>Enter a secret and a public statement. UniGroth binds both with SHA256 into a commitment that reveals nothing about the secret and breaks if any byte changes. This is the binding and tamper check the post quantum module performs today. It is not yet a full zero knowledge proof that the secret satisfies a circuit. It runs in your browser and nothing is sent anywhere.</p>
   </div>
   <div class="panel">
     <div class="steps">
@@ -227,7 +227,7 @@
           <input class="inp" id="pub" value="I know the password" />
         </div>
         <div class="field">
-          <div class="lab"><span class="n">03</span><span class="t">Prover</span><span class="h">pick a post quantum scheme</span></div>
+          <div class="lab"><span class="n">03</span><span class="t">Binding scheme</span><span class="h">post quantum target, SHA256 today</span></div>
           <div class="schemes" id="schemes">
             <span class="chip on" data-s="Binius">Binius . 256 B</span>
             <span class="chip" data-s="Plonky3">Plonky3 . 512 B</span>
@@ -245,7 +245,7 @@
         </div>
       </div>
     </div>
-    <p class="note">Change one character above, or press tamper, and the check fails at once. The same secret and statement always seal to the same proof.</p>
+    <p class="note">Change one character above, or press tamper, and the check fails at once. The same secret and statement always bind to the same commitment. This shows binding and tamper detection, not a soundness proof.</p>
   </div>
 </div></section>
 
@@ -253,8 +253,8 @@
 <section id="aggregate"><div class="wrap">
   <div class="head">
     <span class="eyebrow">Many into one</span>
-    <h2>Fold a batch into a single proof</h2>
-    <p>Checking many proofs one by one is slow. UniGroth folds a whole batch into one constant size proof, so the verifier does one check instead of many. Drag to set the batch size.</p>
+    <h2>Aggregate a batch into one check</h2>
+    <p>Checking many proofs one by one is slow. SnarkPack aggregation combines a batch so the verifier does one check instead of many. The aggregate grows like log N, so it is kilobytes, not the tiny core proof. Drag to set the batch size.</p>
   </div>
   <div class="panel agg">
     <div class="control">
@@ -278,10 +278,10 @@
   </div>
   <div class="feat">
     <div class="card"><span class="n">001</span><h3>Universal setup</h3><p>One updatable ceremony covers every circuit of a given size. No setup per circuit.</p></div>
-    <div class="card"><span class="n">002</span><h3>Forgery resistant</h3><p>Every proof is simulation extractable by default, with near zero overhead and no config.</p></div>
+    <div class="card"><span class="n">002</span><h3>Simulation extractable</h3><p>Groth16 is already sound. UniGroth adds non malleability, so a proof cannot be reshaped after an attacker sees other valid ones.</p></div>
     <div class="card"><span class="n">003</span><h3>Aggregation</h3><p>Fold N proofs into one. Verify a batch of 32 for the cost of one, about 32 times cheaper.</p></div>
     <div class="card"><span class="n">004</span><h3>Folding and IVC</h3><p>ProtoStar accumulation with a full relaxed R1CS decision predicate. Fold, then verify once.</p></div>
-    <div class="card"><span class="n">005</span><h3>Post quantum path</h3><p>Binius, Plonky3 and Hybrid inner provers give quantum resistant proofs at classical size.</p></div>
+    <div class="card"><span class="n">005</span><h3>Post quantum direction</h3><p>A research scaffold. Today it binds witnesses with SHA256. FRI and sumcheck designs are the target and are not yet built, so it is not a quantum security guarantee.</p></div>
     <div class="card"><span class="n">006</span><h3>Onchain verifier</h3><p>Generate a Solidity verifier from any key. About 250k gas using the BN254 precompiles.</p></div>
     <div class="card"><span class="n">007</span><h3>Custom gates</h3><p>Plonkish gates like Poseidon and EC add, lookup tables, and a path back to R1CS.</p></div>
     <div class="card"><span class="n">008</span><h3>Key compression</h3><p>Shrink a verifying key from order n to order one. Built for large zkEVM circuits.</p></div>
@@ -304,7 +304,7 @@
       <tr><td>Proof size</td><td>192 B</td><td>1 to 2 KB</td><td>2 to 5 KB</td><td>5 to 15 KB</td><td>50 to 200 KB</td><td class="me">192 to 256 B</td></tr>
       <tr><td>Verify cost</td><td>3 pairings</td><td>10 plus</td><td>15 plus</td><td>varies</td><td>fast hash</td><td class="me">3 to 5 pairings</td></tr>
       <tr><td>Trusted setup</td><td class="x">per circuit</td><td>universal</td><td>universal</td><td>none</td><td>none</td><td class="me">universal</td></tr>
-      <tr><td>Forgery resistant</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td>n a</td><td class="me y">yes</td></tr>
+      <tr><td>Simulation extractable</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td>n a</td><td class="me y">yes</td></tr>
       <tr><td>Folding and IVC</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">varies</td><td class="me y">yes</td></tr>
       <tr><td>Aggregation</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">varies</td><td class="me y">yes</td></tr>
       <tr><td>Post quantum</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="x">no</td><td class="y">yes</td><td class="me y">path</td></tr>
@@ -411,7 +411,7 @@ async function prove(){
     `<span class="k">statement sealed as</span> <span class="v">${cp.slice(0,28)}...</span>`+
     `<span class="big">${wire}</span>`;
   const seal=$('#seal'),s=$('#status'),m=$('#vmsg');
-  if(ok){seal.classList.remove('broke');s.className='status ok';s.textContent='VALID';m.textContent='The proof matches the statement. The secret never appears.';}
+  if(ok){seal.classList.remove('broke');s.className='status ok';s.textContent='VALID';m.textContent='The commitment is consistent and the secret never appears in it.';}
   else{seal.classList.add('broke');s.className='status no';s.textContent='REJECTED';m.textContent='One byte changed, so the seal no longer matches. The verifier says no.';}
 }
 
@@ -422,7 +422,7 @@ async function agg(){
   let acc=await sha256('UNIGROTH-AGG');
   for(let i=0;i<n;i++)acc=await sha256(acc+'|'+i);
   $('#root').innerHTML=`<span style="color:var(--faint)">one root for ${n} proofs</span><br/>0x${acc}`;
-  $('#cost').innerHTML=`One by one costs <b style="color:var(--bad)">${n} pairings</b>. Folded costs <b style="color:var(--good)">1</b>. About ${n} times cheaper, same tiny output.`;
+  $('#cost').innerHTML=`One by one costs <b style="color:var(--bad)">${n} pairings</b>. Aggregated costs <b style="color:var(--good)">1</b> check. The aggregate is about log N in size, so kilobytes, not the tiny core proof.`;
 }
 $('#nproofs').addEventListener('input',agg);
 

@@ -1,6 +1,8 @@
 # Post-Quantum Migration Path
 
-UniGroth provides a concrete, incremental post-quantum migration path for Groth16-class proof systems. This document covers the architecture, available schemes, security properties, API reference, and migration strategy.
+> **Accuracy notice — read first.** The current `pq_inner` implementation is a **SHA-256 commitment-and-binding scaffold**, not a sound post-quantum zero-knowledge argument. It commits to the witness and public inputs, expands a proof body by a hash chain, and on verification re-derives those commitments to check binding and tamper-evidence. It does **not** prove, in zero knowledge, that a witness satisfies a circuit, and it provides **no soundness** guarantee against a prover who fabricates a commitment. The names "Binius", "Plonky3", and "Hybrid" describe the *target* designs (FRI, sumcheck, recursive wrapping) we intend to build toward; the present code does not implement Reed-Solomon, FRI, or sumcheck. The "Hybrid" target wraps a PQ inner proof in a classical Groth16 outer layer, which would reintroduce the discrete-log assumption it is meant to remove — so it is a deployment convenience, not a post-quantum guarantee. **Do not rely on this module for post-quantum security.** The rest of this document describes the intended architecture and roadmap.
+
+This document covers the intended architecture, target schemes, security goals, API surface, and migration strategy.
 
 ---
 
