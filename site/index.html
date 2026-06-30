@@ -236,7 +236,7 @@
         </div>
       </div>
       <div class="seal" id="seal">
-        <div class="cap">Sealed proof</div>
+        <div class="cap">Commitment</div>
         <div class="digest" id="digest"></div>
         <div class="verify">
           <span id="status" class="status ok">VALID</span>
@@ -412,7 +412,7 @@ async function prove(){
     `<span class="big">${wire}</span>`;
   const seal=$('#seal'),s=$('#status'),m=$('#vmsg');
   if(ok){seal.classList.remove('broke');s.className='status ok';s.textContent='VALID';m.textContent='The commitment is consistent and the secret never appears in it.';}
-  else{seal.classList.add('broke');s.className='status no';s.textContent='REJECTED';m.textContent='One byte changed, so the seal no longer matches. The verifier says no.';}
+  else{seal.classList.add('broke');s.className='status no';s.textContent='REJECTED';m.textContent='One byte changed, so the binding no longer matches and the check fails.';}
 }
 
 /* aggregate */
