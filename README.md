@@ -90,31 +90,39 @@ The `prove()` call automatically applies ROM-based simulation-extractability bli
 
 ## Performance
 
-All measurements on BN254, release build (`opt-level=3, lto=fat`), modern laptop.
+Numbers below are reproducible in CI: the [Benchmarks workflow](.github/workflows/bench.yml) runs `cargo bench` on every change to the prover and publishes the raw output to the run summary. The figures here are from a 4-core GitHub runner, BLS12-381 and BN254, `opt-level=3`. Your own hardware will differ; rerun the workflow to measure it.
 
-### End-to-End vs ark-groth16 (4096 constraints)
+### End-to-End vs ark-groth16
 
-| Operation | ark-groth16 | UniGroth | Improvement |
-|-----------|------------|---------|-------------|
-| Setup | 19.3 ms | 14.9 ms | **1.29x faster** |
-| Prove | 18.1 ms | 15.6 ms | **1.16x faster** |
-| Verify | 1.05 ms | 1.01 ms | **1.04x faster** |
-| Proof size | 128 bytes | 128-161 bytes | Same core |
+Measured prove and verify time, same circuit on both provers.
 
-UniGroth is faster across every operation while adding features that ark-groth16 does not have.
+| Operation | Circuit | ark-groth16 | UniGroth | Result |
+|-----------|---------|------------|---------|--------|
+| Prove | 2^12 | 71.3 ms | 61.9 ms | **1.15x faster** |
+| Prove | 2^16 | 676 ms | 652 ms | **1.04x faster** |
+| Verify | 2^12 | 2.02 ms | 2.18 ms | ~parity (1.08x slower) |
+| Verify | 2^16 | 2.02 ms | 2.24 ms | ~parity (1.10x slower) |
+| Proof size | — | 128 bytes | 128-161 bytes | Same core |
+
+UniGroth proves faster than ark-groth16 and verifies at parity, while adding features ark-groth16 does not have. The proving win comes from the optimizations below.
 
 ### Optimization Speedups
 
+Measured (in the benchmark suite):
+
 | Optimization | What it does | Speedup |
 |---|---|---|
-| `h_query_scalars` (n=2^18) | O(n) accumulator replaces O(n log n) `.pow([i])` | **2-10x** |
-| Sparse QAP (5% density) | CSR format skips zero entries | **~5x** |
-| Sparse QAP (20% density) | CSR format skips zero entries | **2.8x** |
-| Batch affine conversion | Montgomery batch inversion | **2.46x** |
-| Dynark 5-FFT witness | 5 FFTs instead of 6 | **17% fewer FFTs** |
-| Dynark 4-FFT coset eval | 4 FFTs instead of 6 | **33% fewer FFTs** |
-| Parallel MSM (8 cores) | rayon Pippenger partitioning | **~1.2-2x** |
-| Proof aggregation (N=32) | 1 multi-pairing instead of 32 | **~32x** |
+| `h_query_scalars` | O(n) accumulator replaces O(n log n) `.pow([i])` loop | **22-32x** (grows with n) |
+| Quotient FFTs | compute `h` on the n coset, not a 2n coset | **1.5-1.7x** |
+| Parallel MSM | rayon Pippenger partitioning, 4 cores | ~2x per-scalar at 2^16 vs 2^10 |
+
+Implemented and unit-tested, not yet in the end-to-end harness:
+
+| Optimization | What it does | Expected |
+|---|---|---|
+| Sparse QAP (CSR) | skips zero entries in the constraint matrices | ~3-5x on sparse circuits |
+| Batch affine conversion | Montgomery batch inversion | ~2.5x |
+| Proof aggregation (N=32) | 1 multi-pairing instead of 32 | ~32x verify |
 
 ---
 
