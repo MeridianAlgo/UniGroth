@@ -1,0 +1,59 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "UniGroth/benches/**"
+      - "UniGroth/src/optimizations.rs"
+      - ".github/workflows/bench.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ./UniGroth
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            UniGroth/target
+          key: ${{ runner.os }}-bench-${{ hashFiles('UniGroth/Cargo.lock') }}
+
+      - name: Run end-to-end benchmark (UniGroth vs ark-groth16)
+        run: |
+          set -o pipefail
+          cargo bench --bench groth16-benches --no-default-features --features "std parallel" -- --nocapture | tee bench.txt
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          {
+            echo '## UniGroth benchmark results'
+            echo ''
+            echo "Run: \`${{ github.sha }}\` on $(uname -m), $(nproc) cores."
+            echo ''
+            echo '```'
+            cat bench.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-output
+          path: UniGroth/bench.txt
