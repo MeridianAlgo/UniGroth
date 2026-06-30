@@ -852,18 +852,18 @@ pub struct ProverProfile {
 }
 
 impl ProverProfile {
-    /// Select the optimal FFT strategy for the given circuit size.
+    /// Select the FFT strategy for the given circuit size.
     ///
-    /// Based on benchmarks (see README §Benchmarks):
-    /// - ≤ 2^14 constraints: 4-FFT coset gives 1.47–1.66× speedup
-    /// - ≤ 2^16 constraints: 4-FFT coset gives ~1.15× speedup
-    /// - > 2^16 constraints: standard 6-FFT wins due to cache effects
-    pub fn select_fft_strategy(num_constraints: usize) -> FftStrategy {
-        match num_constraints {
-            n if n <= 1 << 15 => FftStrategy::Dynark4FftCoset,
-            n if n <= 1 << 16 => FftStrategy::Dynark4FftCoset,
-            _ => FftStrategy::Standard6Fft,
-        }
+    /// Always returns the standard n-coset quotient method. Benchmarks showed the
+    /// Dynark polynomial-multiplication paths run their product FFTs on a 2n coset,
+    /// which costs about 8 n-sized FFTs versus 7 for the standard method, so they
+    /// are a net regression for producing h coefficients despite the lower FFT
+    /// count. The `Dynark*` routines remain available for experiments.
+    //
+    // ponytail: one strategy because the others measured slower; restore the
+    // dispatch here if a 2n-free poly-mul variant ever beats the n-coset path.
+    pub fn select_fft_strategy(_num_constraints: usize) -> FftStrategy {
+        FftStrategy::Standard6Fft
     }
 
     /// Estimate the proving speedup from UniGroth optimizations vs vanilla Groth16.

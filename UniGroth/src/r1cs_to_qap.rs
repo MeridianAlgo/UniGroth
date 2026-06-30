@@ -71,13 +71,15 @@ fn serial_evaluate_constraint<F: PrimeField>(terms: &[(F, usize)], assignment: &
 
 /// Standard 7-FFT h polynomial computation (libsnark-compatible).
 ///
-/// Used for large circuits (> 2^16 constraints) where Dynark's 2n polynomial
-/// expansion causes L2 cache thrashing. Unlike `compute_witness_4fft`, this
-/// path explicitly computes c_evals and divides pointwise by Z_H on the 2n coset.
+/// This is the classic libsnark / arkworks quotient computation, done entirely
+/// on the size-n coset. The quotient `H = (A*B - C) / Z_H` has degree n-2, so n
+/// coset evaluations determine it exactly -- there is no need to expand to a 2n
+/// domain. Evaluating A, B, C pointwise on the coset and dividing avoids forming
+/// the degree-2n product polynomial, so n points never alias.
 ///
-/// **Key identity**: Z_H(g*zeta^i) = g^n*(-1)^i - 1 -- only two distinct values
-/// on the 2n coset (one per parity), so just two field inversions cover all n
-/// divisions. Total: 7 FFTs + 2 field inversions.
+/// **Key identity**: on the coset g*omega^i, `Z_H(x) = x^n - 1 = g^n - 1`, a
+/// single constant, so one field inversion covers all n divisions.
+/// Total: 7 FFTs on the n-domain + 1 field inversion.
 fn witness_h_standard<F: PrimeField, D: EvaluationDomain<F>>(
     domain: &D,
     mut a: Vec<F>,
@@ -85,8 +87,6 @@ fn witness_h_standard<F: PrimeField, D: EvaluationDomain<F>>(
     mut c: Vec<F>,
 ) -> R1CSResult<Vec<F>> {
     let domain_size = domain.size();
-    let double_size = 2 * domain_size;
-    let zero = F::zero();
 
     // 3 iFFTs on n-domain: eval form -> coefficient form
     #[cfg(feature = "parallel")]
@@ -106,55 +106,38 @@ fn witness_h_standard<F: PrimeField, D: EvaluationDomain<F>>(
         domain.ifft_in_place(&mut c);
     }
 
-    let coset_2n = D::new(double_size)
-        .ok_or(SynthesisError::PolynomialDegreeTooLarge)?
+    // Coset of the same n-domain. No 2n expansion: see the doc comment above.
+    let coset = domain
         .get_coset(F::GENERATOR)
         .ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
 
-    a.resize(double_size, zero);
-    b.resize(double_size, zero);
-    c.resize(double_size, zero);
-
-    // 3 coset FFTs on 2n-domain: coefficient form -> coset evals
+    // 3 coset FFTs on n-domain: coefficient form -> coset evals
     #[cfg(feature = "parallel")]
     rayon::join(
-        || {
-            rayon::join(
-                || coset_2n.fft_in_place(&mut a),
-                || coset_2n.fft_in_place(&mut b),
-            )
-        },
-        || coset_2n.fft_in_place(&mut c),
+        || rayon::join(|| coset.fft_in_place(&mut a), || coset.fft_in_place(&mut b)),
+        || coset.fft_in_place(&mut c),
     );
     #[cfg(not(feature = "parallel"))]
     {
-        coset_2n.fft_in_place(&mut a);
-        coset_2n.fft_in_place(&mut b);
-        coset_2n.fft_in_place(&mut c);
+        coset.fft_in_place(&mut a);
+        coset.fft_in_place(&mut b);
+        coset.fft_in_place(&mut c);
     }
 
-    // Z_H(g*zeta^i) = g^n*(-1)^i - 1: constant per parity on 2n-coset.
-    // Two precomputed inverses replace n individual field inversions.
+    // Z_H(g*omega^i) = g^n - 1 on the whole coset: one inversion covers all n.
     let g_n = F::GENERATOR.pow([domain_size as u64]);
-    let z_even_inv = (g_n - F::one())
-        .inverse()
-        .ok_or(SynthesisError::AssignmentMissing)?;
-    let z_odd_inv = (-g_n - F::one())
+    let z_inv = (g_n - F::one())
         .inverse()
         .ok_or(SynthesisError::AssignmentMissing)?;
 
     let mut h: Vec<F> = cfg_iter!(a)
         .zip(cfg_iter!(b))
         .zip(cfg_iter!(c))
-        .enumerate()
-        .map(|(i, ((a_i, b_i), c_i))| {
-            let z_inv = if i % 2 == 0 { z_even_inv } else { z_odd_inv };
-            (*a_i * b_i - c_i) * z_inv
-        })
+        .map(|((a_i, b_i), c_i)| (*a_i * b_i - c_i) * z_inv)
         .collect();
 
-    // 1 icoset FFT: coset evals -> coefficient form
-    coset_2n.ifft_in_place(&mut h);
+    // 1 inverse coset FFT on n-domain: coset evals -> coefficient form
+    coset.ifft_in_place(&mut h);
     h.truncate(domain_size - 1);
     Ok(h)
 }

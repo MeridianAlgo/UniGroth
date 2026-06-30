@@ -27,7 +27,6 @@ use ark_std::{
 use std::hint::black_box;
 
 use unigroth as ug;
-use unigroth::optimizations::{compute_h_coset_evals, compute_witness_4fft};
 
 // ─── Circuits ────────────────────────────────────────────────────────────────
 
@@ -77,12 +76,12 @@ fn speedup_str(baseline_us: f64, optimized_us: f64) -> String {
 // ─── Benchmark 1: 4-FFT vs 6-FFT ────────────────────────────────────────────
 
 fn bench_fft_comparison() {
-    println!("\n  § 1  FFT COMPARISON: UniGroth 5-FFT vs Standard 6-FFT");
+    println!("\n  § 1  QUOTIENT FFTs: 2n coset (old) vs n coset (new)");
     sep();
-    println!("  UniGroth uses polynomial-multiplication approach: 7 FFTs → 5 FFTs.");
-    println!("  Standard Groth16 (libsnark) needs: iFFT(a), iFFT(b), iFFT(c),");
-    println!("    cosetFFT(a), cosetFFT(b), cosetFFT(c) = 6 FFTs + pointwise ops.");
-    println!("  UniGroth: iFFT(a), iFFT(b), cosetFFT2n(a), cosetFFT2n(b), icosetFFT2n = 5 FFTs.");
+    println!("  Both compute the same h(X) coefficients. The quotient has degree");
+    println!("  n-2, so n coset points determine it: the 2n expansion is unneeded.");
+    println!("  Old: 3 iFFT(n) + 3 cosetFFT(2n) + 1 icosetFFT(2n).");
+    println!("  New: 3 iFFT(n) + 3 cosetFFT(n) + 1 icosetFFT(n).");
     println!();
 
     let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
@@ -101,7 +100,48 @@ fn bench_fft_comparison() {
         let b_evals: Vec<BlsFr> = (0..domain_size).map(|_| BlsFr::rand(&mut rng)).collect();
         let c_evals: Vec<BlsFr> = (0..domain_size).map(|_| BlsFr::rand(&mut rng)).collect();
 
-        // Standard 6-FFT path (simulate): iFFT(a) + iFFT(b) + iFFT(c) + cosetFFT(a) + cosetFFT(b) + cosetFFT(c)
+        let zero = BlsFr::from(0u64);
+        let one = BlsFr::from(1u64);
+
+        // Old path: product FFTs on a 2n coset, full h coefficients out.
+        let start = Instant::now();
+        for _ in 0..iters {
+            let mut a = a_evals.clone();
+            let mut b = b_evals.clone();
+            let mut c = c_evals.clone();
+            domain.ifft_in_place(&mut a);
+            domain.ifft_in_place(&mut b);
+            domain.ifft_in_place(&mut c);
+            let double = 2 * domain_size;
+            let coset2n = GeneralEvaluationDomain::<BlsFr>::new(double)
+                .unwrap()
+                .get_coset(BlsFr::GENERATOR)
+                .unwrap();
+            a.resize(double, zero);
+            b.resize(double, zero);
+            c.resize(double, zero);
+            coset2n.fft_in_place(&mut a);
+            coset2n.fft_in_place(&mut b);
+            coset2n.fft_in_place(&mut c);
+            let g_n = BlsFr::GENERATOR.pow([domain_size as u64]);
+            let z_even = (g_n - one).inverse().unwrap();
+            let z_odd = (-g_n - one).inverse().unwrap();
+            let mut h: Vec<BlsFr> = a
+                .iter()
+                .zip(b.iter())
+                .zip(c.iter())
+                .enumerate()
+                .map(|(i, ((ai, bi), ci))| {
+                    (*ai * *bi - *ci) * if i % 2 == 0 { z_even } else { z_odd }
+                })
+                .collect();
+            coset2n.ifft_in_place(&mut h);
+            h.truncate(domain_size - 1);
+            black_box(h);
+        }
+        let old_us = start.elapsed().as_micros() as f64 / iters as f64;
+
+        // New path: product FFTs on the n coset, identical h coefficients out.
         let start = Instant::now();
         for _ in 0..iters {
             let mut a = a_evals.clone();
@@ -114,45 +154,26 @@ fn bench_fft_comparison() {
             coset.fft_in_place(&mut a);
             coset.fft_in_place(&mut b);
             coset.fft_in_place(&mut c);
-            // pointwise: h_coset[i] = (a[i]*b[i] - c[i]) / z[i]
-            let h_coset: Vec<BlsFr> = a
+            let g_n = BlsFr::GENERATOR.pow([domain_size as u64]);
+            let z_inv = (g_n - one).inverse().unwrap();
+            let mut h: Vec<BlsFr> = a
                 .iter()
                 .zip(b.iter())
                 .zip(c.iter())
-                .map(|((ai, bi), ci)| *ai * *bi - *ci)
+                .map(|((ai, bi), ci)| (*ai * *bi - *ci) * z_inv)
                 .collect();
-            black_box(h_coset);
+            coset.ifft_in_place(&mut h);
+            h.truncate(domain_size - 1);
+            black_box(h);
         }
-        let standard_us = start.elapsed().as_micros() as f64 / iters as f64;
-
-        // UniGroth 5-FFT (real implementation)
-        let start = Instant::now();
-        for _ in 0..iters {
-            let result = compute_witness_4fft(&domain, a_evals.clone(), b_evals.clone());
-            black_box(result.h_poly);
-        }
-        let unigroth_5fft_us = start.elapsed().as_micros() as f64 / iters as f64;
-
-        // UniGroth 4-FFT coset-eval form (even faster, no final iFFT)
-        let start = Instant::now();
-        for _ in 0..iters {
-            let (h_coset, _count) =
-                compute_h_coset_evals(&domain, a_evals.clone(), b_evals.clone());
-            black_box(h_coset);
-        }
-        let unigroth_4fft_us = start.elapsed().as_micros() as f64 / iters as f64;
+        let new_us = start.elapsed().as_micros() as f64 / iters as f64;
 
         println!("  n=2^{log_n} ({domain_size} constraints, {iters} iterations):");
-        println!("    Standard 6-FFT          : {:>10.0} µs", standard_us);
+        println!("    2n coset (old) : {:>10.0} µs", old_us);
         println!(
-            "    UniGroth 5-FFT (wired)  : {:>10.0} µs  ← {}",
-            unigroth_5fft_us,
-            speedup_str(standard_us, unigroth_5fft_us)
-        );
-        println!(
-            "    UniGroth 4-FFT (coset)  : {:>10.0} µs  ← {}",
-            unigroth_4fft_us,
-            speedup_str(standard_us, unigroth_4fft_us)
+            "    n coset  (new) : {:>10.0} µs  ← {}",
+            new_us,
+            speedup_str(old_us, new_us)
         );
     }
     println!();
