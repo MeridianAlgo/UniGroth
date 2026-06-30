@@ -50,16 +50,25 @@ impl FftVariant {
         match self {
             Self::Standard => 1.0,
             Self::Dynark4Coset => {
-                if num_constraints <= 1 << 14 { 1.66 }
-                else if num_constraints <= 1 << 15 { 1.47 }
-                else if num_constraints <= 1 << 16 { 1.15 }
-                else { 0.95 } // regression at very large sizes
-            }
+                if num_constraints <= 1 << 14 {
+                    1.66
+                } else if num_constraints <= 1 << 15 {
+                    1.47
+                } else if num_constraints <= 1 << 16 {
+                    1.15
+                } else {
+                    0.95
+                } // regression at very large sizes
+            },
             Self::Dynark5 => {
-                if num_constraints <= 1 << 15 { 1.38 }
-                else if num_constraints <= 1 << 16 { 1.42 }
-                else { 0.98 }
-            }
+                if num_constraints <= 1 << 15 {
+                    1.38
+                } else if num_constraints <= 1 << 16 {
+                    1.42
+                } else {
+                    0.98
+                }
+            },
         }
     }
 }
@@ -82,10 +91,14 @@ impl MsmBackend {
             Self::CpuPippenger => true,
             Self::IcicleGpu => {
                 #[cfg(feature = "gpu")]
-                { true }
+                {
+                    true
+                }
                 #[cfg(not(feature = "gpu"))]
-                { false }
-            }
+                {
+                    false
+                }
+            },
             Self::Distributed { num_workers } => *num_workers > 1,
         }
     }
@@ -95,11 +108,16 @@ impl MsmBackend {
         match self {
             Self::CpuPippenger => 1.0,
             Self::IcicleGpu => {
-                if n >= 1 << 20 { 20.0 }
-                else if n >= 1 << 16 { 10.0 }
-                else if n >= 1 << 12 { 5.0 }
-                else { 1.2 } // overhead dominates for small n
-            }
+                if n >= 1 << 20 {
+                    20.0
+                } else if n >= 1 << 16 {
+                    10.0
+                } else if n >= 1 << 12 {
+                    5.0
+                } else {
+                    1.2
+                } // overhead dominates for small n
+            },
             Self::Distributed { num_workers } => (*num_workers as f64) * 0.85,
         }
     }
@@ -258,17 +276,24 @@ impl AdaptiveDispatcher {
             let f = FftVariant::Dynark4Coset;
             rationale.push(format!(
                 "Dynark-4FFT-Coset selected ({:.2}× speedup at n={})",
-                f.speedup_factor(n), n
+                f.speedup_factor(n),
+                n
             ));
             f
         } else {
-            rationale.push(format!("Standard-6FFT (n={} > 2^16; cache pressure favors standard)", n));
+            rationale.push(format!(
+                "Standard-6FFT (n={} > 2^16; cache pressure favors standard)",
+                n
+            ));
             FftVariant::Standard
         };
 
         // ── MSM backend ──
         let msm = if n >= 1 << 12 && MsmBackend::IcicleGpu.is_available() {
-            rationale.push(format!("GPU MSM via Icicle ({:.1}× speedup)", MsmBackend::IcicleGpu.speedup_factor(n)));
+            rationale.push(format!(
+                "GPU MSM via Icicle ({:.1}× speedup)",
+                MsmBackend::IcicleGpu.speedup_factor(n)
+            ));
             MsmBackend::IcicleGpu
         } else {
             rationale.push(format!("CPU Pippenger MSM (GPU not available or n < 4096)"));
@@ -279,13 +304,22 @@ impl AdaptiveDispatcher {
         let lookup = if profile.num_lookups == 0 {
             LookupBackend::None
         } else if profile.num_tables > 1 {
-            rationale.push(format!("LogUp selected ({} tables, lookup_ratio={:.2})", profile.num_tables, profile.lookup_ratio));
+            rationale.push(format!(
+                "LogUp selected ({} tables, lookup_ratio={:.2})",
+                profile.num_tables, profile.lookup_ratio
+            ));
             LookupBackend::LogUp
         } else if profile.has_custom_gates || profile.lookup_ratio > 0.5 {
-            rationale.push(format!("Lasso selected (custom gates or high lookup density {:.2})", profile.lookup_ratio));
+            rationale.push(format!(
+                "Lasso selected (custom gates or high lookup density {:.2})",
+                profile.lookup_ratio
+            ));
             LookupBackend::Lasso
         } else {
-            rationale.push(format!("Plookup selected (single table, lookup_ratio={:.2})", profile.lookup_ratio));
+            rationale.push(format!(
+                "Plookup selected (single table, lookup_ratio={:.2})",
+                profile.lookup_ratio
+            ));
             LookupBackend::Plookup
         };
 
@@ -295,7 +329,13 @@ impl AdaptiveDispatcher {
         // Combined: FFT is ~40% of prover time, MSM is ~60%
         let estimated_speedup = 0.4 * fft_speedup + 0.6 * msm_speedup;
 
-        ProverStrategy { fft, msm, lookup, estimated_speedup, rationale }
+        ProverStrategy {
+            fft,
+            msm,
+            lookup,
+            estimated_speedup,
+            rationale,
+        }
     }
 
     /// Run a batch of profiles and return the best strategy for each.
@@ -363,22 +403,38 @@ mod tests {
         for n in [1 << 10, 1 << 14, 1 << 18, 1 << 22] {
             let profile = CircuitProfile::new(n, 0, 0, 0.3);
             let strategy = AdaptiveDispatcher::select(&profile);
-            assert!(strategy.estimated_speedup > 0.0, "speedup must be positive for n={}", n);
+            assert!(
+                strategy.estimated_speedup > 0.0,
+                "speedup must be positive for n={}",
+                n
+            );
         }
     }
 
     #[test]
     fn test_fft_speedup_at_small_n() {
         let f = FftVariant::Dynark4Coset;
-        assert!(f.speedup_factor(1 << 14) > 1.0, "Dynark4 must be faster than baseline for small n");
+        assert!(
+            f.speedup_factor(1 << 14) > 1.0,
+            "Dynark4 must be faster than baseline for small n"
+        );
         assert!(FftVariant::Standard.speedup_factor(1 << 20) == 1.0);
     }
 
     #[test]
     fn test_circuit_profile_size_tier() {
-        assert_eq!(CircuitProfile::new(100, 0, 0, 0.0).size_tier(), "tiny (<4K)");
-        assert_eq!(CircuitProfile::new(1 << 14, 0, 0, 0.0).size_tier(), "small (4K–32K)");
-        assert_eq!(CircuitProfile::new(1 << 20, 0, 0, 0.0).size_tier(), "large (256K–4M)");
+        assert_eq!(
+            CircuitProfile::new(100, 0, 0, 0.0).size_tier(),
+            "tiny (<4K)"
+        );
+        assert_eq!(
+            CircuitProfile::new(1 << 14, 0, 0, 0.0).size_tier(),
+            "small (4K–32K)"
+        );
+        assert_eq!(
+            CircuitProfile::new(1 << 20, 0, 0, 0.0).size_tier(),
+            "large (256K–4M)"
+        );
     }
 
     #[test]

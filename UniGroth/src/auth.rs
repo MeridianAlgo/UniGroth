@@ -213,8 +213,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AuthCircuit<F> {
         );
 
         // ── Public inputs ────────────────────────────────────────────────
-        let commitment_var = cs
-            .new_input_variable(|| self.commitment.ok_or(SynthesisError::AssignmentMissing))?;
+        let commitment_var =
+            cs.new_input_variable(|| self.commitment.ok_or(SynthesisError::AssignmentMissing))?;
         let nullifier_var =
             cs.new_input_variable(|| self.nullifier.ok_or(SynthesisError::AssignmentMissing))?;
         let nonce_var =
@@ -227,11 +227,7 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AuthCircuit<F> {
         // ── Branch 1: commitment = MiMC(secret, 0) ──────────────────────
         let zero_var = alloc_zero(&cs)?;
         // enforce zero_var == 0 (zero * 1 = zero is already implied by alloc; we add an explicit binding)
-        cs.enforce_r1cs_constraint(
-            || lc!() + zero_var,
-            || lc!() + Variable::One,
-            || lc!(),
-        )?;
+        cs.enforce_r1cs_constraint(|| lc!() + zero_var, || lc!() + Variable::One, || lc!())?;
 
         let (computed_commitment_var, _computed_commitment_val) = mimc_gadget(
             &cs,

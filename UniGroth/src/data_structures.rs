@@ -12,8 +12,7 @@ macro_rules! serde_via_canonical {
             fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
                 use ::serde::ser::Error as _;
                 let mut b = ark_std::vec::Vec::new();
-                CanonicalSerialize::serialize_compressed(self, &mut b)
-                    .map_err(S::Error::custom)?;
+                CanonicalSerialize::serialize_compressed(self, &mut b).map_err(S::Error::custom)?;
                 ::serde::Serialize::serialize(&b, s)
             }
         }

@@ -64,7 +64,11 @@ impl AdditiveShare {
     /// Create a new `AdditiveShare` with a computed binding tag.
     pub fn new(party_idx: usize, session_id: &[u8; 32], value: Vec<u8>) -> Self {
         let binding_tag = Self::compute_tag(party_idx, session_id, &value);
-        Self { party_idx, value, binding_tag }
+        Self {
+            party_idx,
+            value,
+            binding_tag,
+        }
     }
 
     /// Verify that the binding tag matches the stored value.
@@ -126,19 +130,34 @@ pub enum MpcScheme {
 impl MpcConfig {
     /// Create a 2-of-2 additive sharing config.
     pub fn two_party(session_id: [u8; 32]) -> Self {
-        Self { num_parties: 2, threshold: 2, session_id, scheme: MpcScheme::Additive }
+        Self {
+            num_parties: 2,
+            threshold: 2,
+            session_id,
+            scheme: MpcScheme::Additive,
+        }
     }
 
     /// Create an N-of-N additive sharing config.
     pub fn n_of_n(n: usize, session_id: [u8; 32]) -> Self {
         assert!(n >= 2, "need at least 2 parties");
-        Self { num_parties: n, threshold: n, session_id, scheme: MpcScheme::Additive }
+        Self {
+            num_parties: n,
+            threshold: n,
+            session_id,
+            scheme: MpcScheme::Additive,
+        }
     }
 
     /// Create a t-of-N Shamir config.
     pub fn shamir(n: usize, t: usize, session_id: [u8; 32]) -> Self {
         assert!(t >= 1 && t <= n, "threshold must be in [1, n]");
-        Self { num_parties: n, threshold: t, session_id, scheme: MpcScheme::Shamir { threshold: t } }
+        Self {
+            num_parties: n,
+            threshold: t,
+            session_id,
+            scheme: MpcScheme::Shamir { threshold: t },
+        }
     }
 
     /// Whether the scheme requires all parties.
@@ -172,7 +191,9 @@ impl Zeroize for MpcWitnessShare {
 impl MpcWitnessShare {
     /// Verify all binding tags in this share.
     pub fn verify_all_bindings(&self) -> bool {
-        self.shares.iter().all(|s| s.verify_binding(&self.config.session_id))
+        self.shares
+            .iter()
+            .all(|s| s.verify_binding(&self.config.session_id))
     }
 }
 
@@ -273,7 +294,11 @@ impl PartialProofElement {
         h.update(session_id);
         h.update(&element);
         let binding = h.finalize().into();
-        Self { party_idx, element, binding }
+        Self {
+            party_idx,
+            element,
+            binding,
+        }
     }
 
     /// Verify the binding tag.
@@ -297,7 +322,9 @@ pub fn aggregate_partial_proofs(
     // Verify all bindings
     for elem in elements {
         if !elem.verify(session_id) {
-            return Err(MpcError::InvalidBinding { party_idx: elem.party_idx });
+            return Err(MpcError::InvalidBinding {
+                party_idx: elem.party_idx,
+            });
         }
     }
     // Aggregate (XOR as field-agnostic stand-in for EC point addition)
@@ -330,10 +357,12 @@ impl MpcError {
     /// Human-readable description.
     pub fn describe(&self) -> String {
         match self {
-            Self::InvalidBinding { party_idx } =>
-                format!("invalid binding tag for party {}", party_idx),
-            Self::ThresholdNotMet { have, need } =>
-                format!("threshold not met: have {} shares, need {}", have, need),
+            Self::InvalidBinding { party_idx } => {
+                format!("invalid binding tag for party {}", party_idx)
+            },
+            Self::ThresholdNotMet { have, need } => {
+                format!("threshold not met: have {} shares, need {}", have, need)
+            },
             Self::EmptyPartySet => format!("empty party set"),
             Self::WitnessLengthMismatch => format!("witness length mismatch across parties"),
         }
@@ -354,13 +383,18 @@ pub struct MpcSession {
 impl MpcSession {
     /// Start a new MPC session.
     pub fn new(config: MpcConfig) -> Self {
-        Self { config, partial_proofs: Vec::new() }
+        Self {
+            config,
+            partial_proofs: Vec::new(),
+        }
     }
 
     /// Register a partial proof from one party.
     pub fn add_partial(&mut self, elem: PartialProofElement) -> Result<(), MpcError> {
         if !elem.verify(&self.config.session_id) {
-            return Err(MpcError::InvalidBinding { party_idx: elem.party_idx });
+            return Err(MpcError::InvalidBinding {
+                party_idx: elem.party_idx,
+            });
         }
         self.partial_proofs.push(elem);
         Ok(())
@@ -448,7 +482,11 @@ mod tests {
         let mut rng = rng();
         let shares = split_witness(&witness, &cfg, &mut rng);
         for s in &shares {
-            assert!(s.verify_all_bindings(), "party {} bindings invalid", s.party_idx);
+            assert!(
+                s.verify_all_bindings(),
+                "party {} bindings invalid",
+                s.party_idx
+            );
         }
     }
 
@@ -478,7 +516,10 @@ mod tests {
         let mut e1 = PartialProofElement::new(0, &sess, vec![0x10]);
         e1.binding = [0u8; 32]; // corrupt
         let result = aggregate_partial_proofs(&[e1], &sess);
-        assert!(matches!(result, Err(MpcError::InvalidBinding { party_idx: 0 })));
+        assert!(matches!(
+            result,
+            Err(MpcError::InvalidBinding { party_idx: 0 })
+        ));
     }
 
     // ── MPC Session ──────────────────────────────────────────────────────────
@@ -512,7 +553,10 @@ mod tests {
         session.add_partial(e1).unwrap();
 
         let result = session.finalize();
-        assert!(matches!(result, Err(MpcError::ThresholdNotMet { have: 1, need: 2 })));
+        assert!(matches!(
+            result,
+            Err(MpcError::ThresholdNotMet { have: 1, need: 2 })
+        ));
     }
 
     #[test]
@@ -528,7 +572,11 @@ mod tests {
     #[test]
     fn test_mpc_error_describe() {
         assert!(!MpcError::EmptyPartySet.describe().is_empty());
-        assert!(!MpcError::InvalidBinding { party_idx: 2 }.describe().is_empty());
-        assert!(!MpcError::ThresholdNotMet { have: 1, need: 3 }.describe().is_empty());
+        assert!(!MpcError::InvalidBinding { party_idx: 2 }
+            .describe()
+            .is_empty());
+        assert!(!MpcError::ThresholdNotMet { have: 1, need: 3 }
+            .describe()
+            .is_empty());
     }
 }

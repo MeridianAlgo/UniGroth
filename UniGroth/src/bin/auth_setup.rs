@@ -31,7 +31,7 @@ use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 
-use unigroth::{auth::AuthCircuit, auth::mimc_round_constants, Groth16};
+use unigroth::{auth::mimc_round_constants, auth::AuthCircuit, Groth16};
 
 fn parse_args() -> (PathBuf, bool) {
     let mut out_dir = PathBuf::from("keys");
@@ -40,20 +40,17 @@ fn parse_args() -> (PathBuf, bool) {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" => {
-                out_dir = PathBuf::from(
-                    args.next()
-                        .expect("--out requires a directory argument"),
-                );
-            }
+                out_dir = PathBuf::from(args.next().expect("--out requires a directory argument"));
+            },
             "--rand" => use_os_rng = true,
             "-h" | "--help" => {
                 eprintln!("auth_setup --out <dir> [--rand]");
                 std::process::exit(0);
-            }
+            },
             other => {
                 eprintln!("unknown arg: {other}");
                 std::process::exit(2);
-            }
+            },
         }
     }
     (out_dir, use_os_rng)
@@ -61,9 +58,7 @@ fn parse_args() -> (PathBuf, bool) {
 
 fn write_file<T: CanonicalSerialize>(path: &Path, value: &T) -> std::io::Result<usize> {
     let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .expect("ark serialize");
+    value.serialize_compressed(&mut buf).expect("ark serialize");
     fs::write(path, &buf)?;
     Ok(buf.len())
 }

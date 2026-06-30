@@ -79,12 +79,18 @@ impl TransparentConfig {
 
     /// Ligero configuration.
     pub fn ligero(security_bits: usize) -> Self {
-        Self { security_bits, scheme: TransparentScheme::Ligero }
+        Self {
+            security_bits,
+            scheme: TransparentScheme::Ligero,
+        }
     }
 
     /// Brakedown configuration.
     pub fn brakedown(security_bits: usize) -> Self {
-        Self { security_bits, scheme: TransparentScheme::Brakedown }
+        Self {
+            security_bits,
+            scheme: TransparentScheme::Brakedown,
+        }
     }
 
     /// Human-readable scheme name.
@@ -130,7 +136,7 @@ impl SetupMode {
             SetupMode::Kzg => format!("KZG (trusted setup)"),
             SetupMode::Transparent(cfg) => {
                 format!("Transparent/{} ({}b)", cfg.scheme_name(), cfg.security_bits)
-            }
+            },
         }
     }
 
@@ -173,18 +179,18 @@ impl TransparentProofSize {
                 let num_queries = (self.config.security_bits + log2_blowup - 1) / log2_blowup;
                 let levels = (domain_size.next_power_of_two()).trailing_zeros() as usize;
                 num_queries * levels * 32
-            }
+            },
             TransparentScheme::Ligero => {
                 // Ligero: O(sqrt(n)) field elements
                 let sqrt_n = (self.degree as f64).sqrt().ceil() as usize;
                 // Each field element is 32 bytes; proof contains ~3 × sqrt_n elements
                 3 * sqrt_n * 32
-            }
+            },
             TransparentScheme::Brakedown => {
                 // Brakedown: O(n^{2/3}) field elements
                 let n_23 = (self.degree as f64).powf(2.0 / 3.0).ceil() as usize;
                 2 * n_23 * 32
-            }
+            },
         }
     }
 

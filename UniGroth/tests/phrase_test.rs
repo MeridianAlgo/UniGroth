@@ -13,8 +13,8 @@ use ark_std::rand::{RngCore, SeedableRng};
 use ark_std::test_rng;
 use std::time::Instant;
 use unigroth::{
-    prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction, Groth16, SAPStats,
-    SEConfig, SecurityWrapper,
+    prepare_verifying_key_with_delta, r1cs_to_qap::LibsnarkReduction, Groth16, SAPStats, SEConfig,
+    SecurityWrapper,
 };
 
 /// SecretPhrase circuit: proves knowledge of `secret` such that Poseidon(secret) == `expected_hash`

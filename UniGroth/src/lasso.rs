@@ -70,7 +70,10 @@ impl<F: PrimeField> MultilinearPoly<F> {
     pub fn new(evals: Vec<F>) -> Self {
         let len = evals.len();
         assert!(len.is_power_of_two(), "evals length must be power of 2");
-        Self { evals, num_vars: len.trailing_zeros() as usize }
+        Self {
+            evals,
+            num_vars: len.trailing_zeros() as usize,
+        }
     }
 
     /// Evaluate the MLE at a point `r ∈ F^n` using successive folding.
@@ -105,7 +108,10 @@ impl<F: PrimeField> MultilinearPoly<F> {
         let new_evals: Vec<F> = (0..half)
             .map(|i| self.evals[2 * i] + r * (self.evals[2 * i + 1] - self.evals[2 * i]))
             .collect();
-        Self { evals: new_evals, num_vars: self.num_vars - 1 }
+        Self {
+            evals: new_evals,
+            num_vars: self.num_vars - 1,
+        }
     }
 }
 
@@ -158,7 +164,10 @@ pub fn sumcheck_prove<F: PrimeField>(
         let s0: F = (0..half).map(|i| current.evals[2 * i]).sum();
         let s1: F = (0..half).map(|i| current.evals[2 * i + 1]).sum();
 
-        let msg = SumcheckRound { eval_at_0: s0, eval_at_1: s1 };
+        let msg = SumcheckRound {
+            eval_at_0: s0,
+            eval_at_1: s1,
+        };
 
         // Fiat-Shamir: hash round index + s(0) + s(1)
         transcript.extend_from_slice(&(round as u64).to_le_bytes());
@@ -233,7 +242,10 @@ impl<F: PrimeField> LassoTable<F> {
     pub fn new(entries: Vec<F>) -> Self {
         assert!(entries.len().is_power_of_two());
         let num_addr_bits = entries.len().trailing_zeros() as usize;
-        Self { entries, num_addr_bits }
+        Self {
+            entries,
+            num_addr_bits,
+        }
     }
 
     /// Range-check table: T[i] = i for i in 0..2^t.
@@ -286,7 +298,11 @@ pub enum LassoError {
     /// Index out of table bounds.
     IndexOutOfRange { idx: usize, table_size: usize },
     /// Table value mismatch (prover cheated).
-    ValueMismatch { idx: usize, claimed: String, actual: String },
+    ValueMismatch {
+        idx: usize,
+        claimed: String,
+        actual: String,
+    },
     /// Sumcheck verification failed.
     SumcheckFailed,
     /// MLE evaluation does not match sumcheck output.
@@ -326,19 +342,27 @@ pub fn prove_lasso<F: PrimeField>(
     }
 
     // Build the product polynomial f(b) = T[b] * indicator[b]
-    let product_evals: Vec<F> = table.entries.iter().zip(indicator.iter())
+    let product_evals: Vec<F> = table
+        .entries
+        .iter()
+        .zip(indicator.iter())
         .map(|(t, w)| *t * w)
         .collect();
     let product_poly = MultilinearPoly::new(product_evals);
 
     // claimed_sum = Σ_j v_j * w_j
-    let claimed_sum: F = claimed_values.iter().zip(query_weights.iter())
+    let claimed_sum: F = claimed_values
+        .iter()
+        .zip(query_weights.iter())
         .map(|(v, w)| *v * w)
         .sum();
 
     // Verify locally (honest prover)
     let actual_sum = product_poly.sum();
-    debug_assert_eq!(claimed_sum, actual_sum, "prover sum mismatch — bug in prove_lasso");
+    debug_assert_eq!(
+        claimed_sum, actual_sum,
+        "prover sum mismatch — bug in prove_lasso"
+    );
 
     // Run sumcheck on the product polynomial
     let mut transcript = b"lasso-sumcheck".to_vec();
@@ -374,7 +398,10 @@ pub fn verify_lasso<F: PrimeField>(
     }
 
     // Recompute claimed_sum = Σ_j v_j * w_j
-    let claimed_sum: F = proof.claimed_values.iter().zip(proof.query_weights.iter())
+    let claimed_sum: F = proof
+        .claimed_values
+        .iter()
+        .zip(proof.query_weights.iter())
         .map(|(v, w)| *v * w)
         .sum();
 
@@ -399,7 +426,10 @@ pub fn verify_lasso<F: PrimeField>(
     // Evaluate the product polynomial f(b) = T[b] * indicator[b] at the challenge point.
     // The sumcheck final_eval equals the MLE of f evaluated at the challenges.
     // Evaluating the MLE of f at r requires folding the Boolean evaluations.
-    let product_evals: Vec<F> = table.entries.iter().zip(indicator.iter())
+    let product_evals: Vec<F> = table
+        .entries
+        .iter()
+        .zip(indicator.iter())
         .map(|(t, w)| *t * w)
         .collect();
     let expected_final = MultilinearPoly::new(product_evals).evaluate(&challenges);
@@ -419,11 +449,7 @@ fn eq_poly_eval<F: PrimeField>(r: &[F], b: usize, num_bits: usize) -> F {
     let mut result = F::one();
     for k in 0..num_bits {
         let b_k = (b >> k) & 1;
-        let factor = if b_k == 1 {
-            r[k]
-        } else {
-            F::one() - r[k]
-        };
+        let factor = if b_k == 1 { r[k] } else { F::one() - r[k] };
         result *= factor;
     }
     result
@@ -553,7 +579,7 @@ mod tests {
     #[test]
     fn test_xor_table_lookup() {
         let t: LassoTable<Fr> = LassoTable::xor_table(2); // 4x4 XOR table
-        // Index (a, b) = a * 4 + b; T[idx] = a XOR b
+                                                          // Index (a, b) = a * 4 + b; T[idx] = a XOR b
         for a in 0..4usize {
             for b in 0..4usize {
                 let idx = a * 4 + b;
@@ -591,7 +617,10 @@ mod tests {
         let mut rng = rng();
         let table: LassoTable<Fr> = LassoTable::range_table(3); // size 8
         let result = prove_lasso(&table, &[0, 5, 100], &mut rng);
-        assert!(matches!(result, Err(LassoError::IndexOutOfRange { idx: 100, .. })));
+        assert!(matches!(
+            result,
+            Err(LassoError::IndexOutOfRange { idx: 100, .. })
+        ));
     }
 
     #[test]

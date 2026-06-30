@@ -56,7 +56,8 @@ use sha2::{Digest, Sha256};
 /// Serialize a field element to a fixed-length byte vector (compressed).
 fn field_to_bytes<F: PrimeField>(f: &F) -> Vec<u8> {
     let mut buf = Vec::new();
-    f.serialize_compressed(&mut buf).expect("serialize field elem");
+    f.serialize_compressed(&mut buf)
+        .expect("serialize field elem");
     buf
 }
 
@@ -64,7 +65,8 @@ fn field_to_bytes<F: PrimeField>(f: &F) -> Vec<u8> {
 fn group_to_bytes<G: CurveGroup>(g: &G) -> Vec<u8> {
     let aff = g.into_affine();
     let mut buf = Vec::new();
-    aff.serialize_compressed(&mut buf).expect("serialize group elem");
+    aff.serialize_compressed(&mut buf)
+        .expect("serialize group elem");
     buf
 }
 
@@ -105,7 +107,10 @@ impl FriConfig {
     /// gives the standard FRI soundness bound.
     pub fn new(security_bits: usize, blowup_factor: usize) -> Self {
         assert!(blowup_factor >= 2, "blowup_factor must be at least 2");
-        assert!(blowup_factor.is_power_of_two(), "blowup_factor must be a power of two");
+        assert!(
+            blowup_factor.is_power_of_two(),
+            "blowup_factor must be a power of two"
+        );
         let log2_blowup = blowup_factor.trailing_zeros() as usize;
         let num_queries = (security_bits + log2_blowup - 1) / log2_blowup; // ceil division
         Self {
@@ -234,10 +239,7 @@ fn verify_merkle_path(
 /// Each leaf is `SHA-256(serialize_compressed(eval))`.
 /// Internal nodes are `SHA-256(left_child || right_child)`.
 pub fn merkle_root_of<F: PrimeField>(evals: &[F]) -> [u8; 32] {
-    let leaves: Vec<[u8; 32]> = evals
-        .iter()
-        .map(|e| sha256(&field_to_bytes(e)))
-        .collect();
+    let leaves: Vec<[u8; 32]> = evals.iter().map(|e| sha256(&field_to_bytes(e))).collect();
     let (tree, _) = build_merkle_tree(leaves);
     tree[1] // root is at index 1
 }
@@ -268,7 +270,10 @@ pub fn fri_commit<F: PrimeField>(poly_evals: &[F], _config: &FriConfig) -> FriCo
 /// where `even[i] = evals[2*i]` and `odd[i] = evals[2*i + 1]`.
 fn fri_fold<F: PrimeField>(evals: &[F], challenge: F) -> Vec<F> {
     let n = evals.len();
-    assert!(n >= 2 && n % 2 == 0, "evaluation length must be even and >= 2");
+    assert!(
+        n >= 2 && n % 2 == 0,
+        "evaluation length must be even and >= 2"
+    );
     (0..n / 2)
         .map(|i| evals[2 * i] + challenge * evals[2 * i + 1])
         .collect()
@@ -534,9 +539,7 @@ where
     ///
     /// The first `n` generators become `generators`; the last becomes `h`.
     pub fn setup(n: usize, rng: &mut impl RngCore) -> Self {
-        let all: Vec<G::Affine> = (0..=n)
-            .map(|_| G::rand(rng).into_affine())
-            .collect();
+        let all: Vec<G::Affine> = (0..=n).map(|_| G::rand(rng).into_affine()).collect();
         let h = all[n];
         let generators = all[..n].to_vec();
         Self {
@@ -597,11 +600,7 @@ fn msm<G: CurveGroup>(points: &[G::Affine], scalars: &[G::ScalarField]) -> G {
 }
 
 /// Derive a Fiat-Shamir challenge for IPA from a transcript hash.
-fn ipa_challenge<G: CurveGroup>(
-    transcript: &mut Vec<u8>,
-    l: &G,
-    r: &G,
-) -> G::ScalarField {
+fn ipa_challenge<G: CurveGroup>(transcript: &mut Vec<u8>, l: &G, r: &G) -> G::ScalarField {
     let mut data = transcript.clone();
     data.extend_from_slice(&group_to_bytes(l));
     data.extend_from_slice(&group_to_bytes(r));
@@ -810,7 +809,9 @@ pub fn ipa_verify<G: CurveGroup>(
     // Reconstruct the folded generator G_final
     let mut generators: Vec<G::Affine> = config.generators.clone();
     for (k, _) in challenges.iter().enumerate() {
-        let u_inv = challenges[k].inverse().unwrap_or(G::ScalarField::from(1u64));
+        let u_inv = challenges[k]
+            .inverse()
+            .unwrap_or(G::ScalarField::from(1u64));
         let half = generators.len() / 2;
         let (g_lo, g_hi) = generators.split_at(half);
         let new_g: Vec<G::Affine> = g_lo
@@ -827,8 +828,8 @@ pub fn ipa_verify<G: CurveGroup>(
     let g_final = generators[0];
 
     // Check: C_folded == a_final * G_final + blinding_final * H
-    let expected_c = g_final.into_group() * proof.a_final
-        + config.h.into_group() * proof.blinding_final;
+    let expected_c =
+        g_final.into_group() * proof.a_final + config.h.into_group() * proof.blinding_final;
 
     if c_folded != expected_c {
         return false;
@@ -850,7 +851,9 @@ pub fn ipa_verify<G: CurveGroup>(
     // Re-derive b_final from challenges and eval_point
     let mut b_vals = powers_of_z(eval_point, n);
     for k in 0..num_rounds {
-        let u_inv = challenges[k].inverse().unwrap_or(G::ScalarField::from(1u64));
+        let u_inv = challenges[k]
+            .inverse()
+            .unwrap_or(G::ScalarField::from(1u64));
         let half = b_vals.len() / 2;
         let (b_lo, b_hi) = b_vals.split_at(half);
         let new_b: Vec<G::ScalarField> = b_lo
@@ -914,13 +917,13 @@ impl CommitmentScheme {
             CommitmentScheme::Kzg => {
                 // KZG proof is a single G1 point (48 bytes BLS12-381, 32 bytes BN254)
                 48
-            }
+            },
             CommitmentScheme::Fri(cfg) => cfg.proof_size_estimate(degree),
             CommitmentScheme::Ipa => {
                 // 2 * log2(n) group elements + 3 scalars
                 let log2_n = (degree.next_power_of_two()).trailing_zeros() as usize;
                 2 * log2_n * 32 + 3 * 32
-            }
+            },
         }
     }
 

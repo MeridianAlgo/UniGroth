@@ -220,7 +220,7 @@ pub use self::recursion::{
 pub mod gadgets;
 pub use self::gadgets::{
     EcdsaVerifyGadget, EddsaVerifyGadget, GadgetInfo, GadgetLibrary as ZkGadgetLibrary,
-    MerkleProofGadget, MemoryAccessGadget, PoseidonHashGadget, RangeCheckGadget,
+    MemoryAccessGadget, MerkleProofGadget, PoseidonHashGadget, RangeCheckGadget,
     RecursiveVerifierGadget,
 };
 
@@ -234,8 +234,8 @@ pub use self::transparent::{SetupMode, TransparentConfig, TransparentProofSize};
 /// O(n log n) prover, O(log n) verifier — strictly superior to Plookup for arbitrary tables.
 pub mod lasso;
 pub use self::lasso::{
-    prove_lasso, sumcheck_prove, sumcheck_verify, verify_lasso, LassoError, LassoProof,
-    LassoTable, MultilinearPoly, SumcheckProof, SumcheckRound,
+    prove_lasso, sumcheck_prove, sumcheck_verify, verify_lasso, LassoError, LassoProof, LassoTable,
+    MultilinearPoly, SumcheckProof, SumcheckRound,
 };
 
 /// Adaptive proving strategy — runtime circuit analyzer and dispatcher.

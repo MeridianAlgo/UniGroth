@@ -24,10 +24,10 @@
 
 use ark_std::{format, string::String, vec::Vec};
 
-#[cfg(feature = "std")]
-use std::collections::BTreeMap;
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap;
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
 
 // ─── RISC-V Opcodes ───────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ impl RiscVOpcode {
             Self::And | Self::Or | Self::Xor | Self::Andi | Self::Ori | Self::Xori => {
                 // Bitwise: 32 range checks + 32 XOR/AND constraints
                 3 * 33 + 32
-            }
+            },
             Self::Sll | Self::Srl | Self::Sra => 3 * 33 + 32 + 5, // + shift amount check
             Self::Slt => 33 * 2 + 3,
 
@@ -145,16 +145,29 @@ impl RiscVOpcode {
 
     /// Whether this opcode is a branch.
     pub fn is_branch(&self) -> bool {
-        matches!(self, Self::Beq | Self::Bne | Self::Blt | Self::Bge | Self::Jal | Self::Jalr)
+        matches!(
+            self,
+            Self::Beq | Self::Bne | Self::Blt | Self::Bge | Self::Jal | Self::Jalr
+        )
     }
 
     /// Whether this is an ALU operation.
     pub fn is_alu(&self) -> bool {
         matches!(
             self,
-            Self::Add | Self::Sub | Self::And | Self::Or | Self::Xor |
-            Self::Addi | Self::Andi | Self::Ori | Self::Xori |
-            Self::Sll | Self::Srl | Self::Sra | Self::Slt
+            Self::Add
+                | Self::Sub
+                | Self::And
+                | Self::Or
+                | Self::Xor
+                | Self::Addi
+                | Self::Andi
+                | Self::Ori
+                | Self::Xori
+                | Self::Sll
+                | Self::Srl
+                | Self::Sra
+                | Self::Slt
         )
     }
 }
@@ -173,7 +186,11 @@ pub struct RegisterFile {
 impl RegisterFile {
     /// Read register `r` (x0 always returns 0).
     pub fn read(&self, r: usize) -> u32 {
-        if r == 0 { 0 } else { self.regs[r] }
+        if r == 0 {
+            0
+        } else {
+            self.regs[r]
+        }
     }
 
     /// Write register `r` (writes to x0 are silently dropped).
@@ -229,7 +246,11 @@ pub struct ProgramTrace {
 impl ProgramTrace {
     /// Create an empty trace.
     pub fn new() -> Self {
-        Self { steps: Vec::new(), initial_memory: Vec::new(), final_memory: Vec::new() }
+        Self {
+            steps: Vec::new(),
+            initial_memory: Vec::new(),
+            final_memory: Vec::new(),
+        }
     }
 
     /// Total constraint count across all steps.
@@ -254,7 +275,9 @@ impl ProgramTrace {
 }
 
 impl Default for ProgramTrace {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Constraint Builder ───────────────────────────────────────────────────────
@@ -342,7 +365,11 @@ impl ZkvmConstraintBuilder {
 
             // ── Register range checks ──
             // rs1 and rs2 values must be 32-bit
-            let rs1_val = RegisterFile { regs: step.regs_before, pc: step.pc }.read(step.rs1);
+            let rs1_val = RegisterFile {
+                regs: step.regs_before,
+                pc: step.pc,
+            }
+            .read(step.rs1);
             let _ = rs1_val; // value available for witness; we just count constraints
             constraints.push(ZkvmConstraint {
                 kind: ZkvmConstraintKind::RangeCheck { bits: 32 },
@@ -352,7 +379,8 @@ impl ZkvmConstraintBuilder {
             stats.range_checks += 1;
             stats.total_constraints += 1;
 
-            if step.opcode.is_alu() || step.opcode.is_memory_read() || step.opcode.is_memory_write() {
+            if step.opcode.is_alu() || step.opcode.is_memory_read() || step.opcode.is_memory_write()
+            {
                 constraints.push(ZkvmConstraint {
                     kind: ZkvmConstraintKind::RangeCheck { bits: 32 },
                     step_idx,
@@ -367,7 +395,10 @@ impl ZkvmConstraintBuilder {
                 constraints.push(ZkvmConstraint {
                     kind: ZkvmConstraintKind::OpcodeGate(format!("{:?}", step.opcode)),
                     step_idx,
-                    description: format!("{:?} x{}, x{}, x{}", step.opcode, step.rd, step.rs1, step.rs2),
+                    description: format!(
+                        "{:?} x{}, x{}, x{}",
+                        step.opcode, step.rd, step.rs1, step.rs2
+                    ),
                 });
                 constraints.push(ZkvmConstraint {
                     kind: ZkvmConstraintKind::RangeCheck { bits: 32 },
@@ -443,7 +474,7 @@ impl TraceBuilder {
             RiscVOpcode::Add => a.wrapping_add(b),
             RiscVOpcode::Sub => a.wrapping_sub(b),
             RiscVOpcode::And => a & b,
-            RiscVOpcode::Or  => a | b,
+            RiscVOpcode::Or => a | b,
             RiscVOpcode::Xor => a ^ b,
             _ => a.wrapping_add(b),
         };
@@ -472,7 +503,7 @@ impl TraceBuilder {
         let result = match opcode {
             RiscVOpcode::Addi => (a as i32).wrapping_add(imm) as u32,
             RiscVOpcode::Andi => a & (imm as u32),
-            RiscVOpcode::Ori  => a | (imm as u32),
+            RiscVOpcode::Ori => a | (imm as u32),
             RiscVOpcode::Xori => a ^ (imm as u32),
             _ => (a as i32).wrapping_add(imm) as u32,
         };
@@ -482,7 +513,15 @@ impl TraceBuilder {
         let pc = self.regs.pc;
         self.regs.pc = pc.wrapping_add(4);
         self.trace.steps.push(TraceStep {
-            pc, opcode, rs1, rs2: 0, rd, imm, regs_before, regs_after, mem_access: None,
+            pc,
+            opcode,
+            rs1,
+            rs2: 0,
+            rd,
+            imm,
+            regs_before,
+            regs_after,
+            mem_access: None,
         });
         self
     }
@@ -497,8 +536,15 @@ impl TraceBuilder {
         let pc = self.regs.pc;
         self.regs.pc = pc.wrapping_add(4);
         self.trace.steps.push(TraceStep {
-            pc, opcode: RiscVOpcode::Lw, rs1, rs2: 0, rd, imm: offset,
-            regs_before, regs_after, mem_access: Some((addr, val, false)),
+            pc,
+            opcode: RiscVOpcode::Lw,
+            rs1,
+            rs2: 0,
+            rd,
+            imm: offset,
+            regs_before,
+            regs_after,
+            mem_access: Some((addr, val, false)),
         });
         self
     }
@@ -513,8 +559,15 @@ impl TraceBuilder {
         let pc = self.regs.pc;
         self.regs.pc = pc.wrapping_add(4);
         self.trace.steps.push(TraceStep {
-            pc, opcode: RiscVOpcode::Sw, rs1, rs2, rd: 0, imm: offset,
-            regs_before, regs_after, mem_access: Some((addr, val, true)),
+            pc,
+            opcode: RiscVOpcode::Sw,
+            rs1,
+            rs2,
+            rd: 0,
+            imm: offset,
+            regs_before,
+            regs_after,
+            mem_access: Some((addr, val, true)),
         });
         self
     }
@@ -574,7 +627,10 @@ mod tests {
 
         assert!(!constraints.is_empty(), "must generate constraints");
         assert!(stats.total_constraints > 0);
-        assert!(stats.alu_constraints > 0, "ALU ops must generate ALU constraints");
+        assert!(
+            stats.alu_constraints > 0,
+            "ALU ops must generate ALU constraints"
+        );
         assert_eq!(stats.total_constraints, constraints.len());
     }
 
@@ -586,18 +642,30 @@ mod tests {
             .lw(1, 5, 0)
             .build();
         let (_, stats) = ZkvmConstraintBuilder::build(&trace);
-        assert!(stats.memory_constraints > 0, "memory ops must generate consistency constraints");
+        assert!(
+            stats.memory_constraints > 0,
+            "memory ops must generate consistency constraints"
+        );
     }
 
     #[test]
     fn test_opcode_constraint_counts_positive() {
         let opcodes = [
-            RiscVOpcode::Add, RiscVOpcode::Sub, RiscVOpcode::Xor,
-            RiscVOpcode::Lw, RiscVOpcode::Sw, RiscVOpcode::Beq, RiscVOpcode::Jal,
+            RiscVOpcode::Add,
+            RiscVOpcode::Sub,
+            RiscVOpcode::Xor,
+            RiscVOpcode::Lw,
+            RiscVOpcode::Sw,
+            RiscVOpcode::Beq,
+            RiscVOpcode::Jal,
             RiscVOpcode::Nop,
         ];
         for op in &opcodes {
-            assert!(op.constraint_count() > 0, "{:?} must have positive constraint count", op);
+            assert!(
+                op.constraint_count() > 0,
+                "{:?} must have positive constraint count",
+                op
+            );
         }
     }
 

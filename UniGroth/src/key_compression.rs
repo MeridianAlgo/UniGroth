@@ -68,7 +68,8 @@ impl<E: Pairing> ::serde::Serialize for CompressedVerifyingKey<E> {
     fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use ::serde::ser::Error as _;
         let mut b = ark_std::vec::Vec::new();
-        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        self.serialize_compressed(&mut b)
+            .map_err(S::Error::custom)?;
         ::serde::Serialize::serialize(&b, s)
     }
 }
@@ -86,7 +87,8 @@ impl<E: Pairing> ::serde::Serialize for VKOpeningProof<E> {
     fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use ::serde::ser::Error as _;
         let mut b = ark_std::vec::Vec::new();
-        self.serialize_compressed(&mut b).map_err(S::Error::custom)?;
+        self.serialize_compressed(&mut b)
+            .map_err(S::Error::custom)?;
         ::serde::Serialize::serialize(&b, s)
     }
 }

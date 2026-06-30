@@ -12,7 +12,8 @@ pub fn serialize<T: ark_serialize::CanonicalSerialize, S: ::serde::Serializer>(
 ) -> Result<S::Ok, S::Error> {
     use ::serde::ser::Error as _;
     let mut bytes = ark_std::vec::Vec::new();
-    val.serialize_compressed(&mut bytes).map_err(S::Error::custom)?;
+    val.serialize_compressed(&mut bytes)
+        .map_err(S::Error::custom)?;
     ::serde::Serialize::serialize(&bytes, s)
 }
 

@@ -136,7 +136,8 @@ impl Sha256SigmaGate {
 
     /// Constraint savings versus a naive R1CS encoding.
     pub fn savings(&self) -> usize {
-        self.naive_constraint_count().saturating_sub(self.constraint_count())
+        self.naive_constraint_count()
+            .saturating_sub(self.constraint_count())
     }
 
     /// Human-readable description of the gate and its reduction ratio.
@@ -213,7 +214,8 @@ impl EcAddGate {
 
     /// Constraint savings versus a naive R1CS encoding.
     pub fn savings(&self) -> usize {
-        self.naive_constraint_count().saturating_sub(self.constraint_count())
+        self.naive_constraint_count()
+            .saturating_sub(self.constraint_count())
     }
 
     /// Print a symbolic representation of the constraint system to a `String`.
@@ -309,7 +311,8 @@ impl MontgomeryMulGate {
 
     /// Constraint savings versus a naive R1CS encoding.
     pub fn savings(&self) -> usize {
-        self.naive_constraint_count().saturating_sub(self.constraint_count())
+        self.naive_constraint_count()
+            .saturating_sub(self.constraint_count())
     }
 
     /// Human-readable description of the gate and its reduction ratio.
@@ -398,13 +401,13 @@ impl PoseidonRoundGate {
                 // MDS matrix: state_width² linear combinations implemented as constraints.
                 let mds_constraints = self.state_width * self.state_width;
                 sbox_constraints + mds_constraints
-            }
+            },
             PoseidonRoundType::PartialRound => {
                 // S-box applied only to the first element.
                 let sbox_constraints = 3;
                 let mds_constraints = self.state_width * self.state_width;
                 sbox_constraints + mds_constraints
-            }
+            },
         }
     }
 
@@ -419,14 +422,17 @@ impl PoseidonRoundGate {
     pub fn naive_constraint_count(&self) -> usize {
         match self.round_type {
             // Naive: each x^5 via full binary powering = 6 muls; MDS via repeated add = 2*state_width^2
-            PoseidonRoundType::FullRound => self.state_width * 6 + self.state_width * self.state_width * 2,
+            PoseidonRoundType::FullRound => {
+                self.state_width * 6 + self.state_width * self.state_width * 2
+            },
             PoseidonRoundType::PartialRound => 6 + self.state_width * self.state_width * 2,
         }
     }
 
     /// Constraint savings versus a naive R1CS encoding.
     pub fn savings(&self) -> usize {
-        self.naive_constraint_count().saturating_sub(self.constraint_count())
+        self.naive_constraint_count()
+            .saturating_sub(self.constraint_count())
     }
 
     /// Human-readable description of the gate and its reduction ratio.
@@ -494,7 +500,8 @@ impl KeccakXorGate {
 
     /// Constraint savings versus a naive R1CS encoding.
     pub fn savings(&self) -> usize {
-        self.naive_constraint_count().saturating_sub(self.constraint_count())
+        self.naive_constraint_count()
+            .saturating_sub(self.constraint_count())
     }
 
     /// Human-readable description of the gate and its reduction ratio.
@@ -617,24 +624,24 @@ impl GateLibrary {
         match gate {
             GateType::Sha256Sigma(Sha256GateType::UpperSigma0) => {
                 self.sha256_sigma0.constraint_count()
-            }
+            },
             GateType::Sha256Sigma(Sha256GateType::UpperSigma1) => {
                 self.sha256_sigma1.constraint_count()
-            }
+            },
             GateType::Sha256Sigma(Sha256GateType::LowerSigma0) => {
                 self.sha256_lower_sigma0.constraint_count()
-            }
+            },
             GateType::Sha256Sigma(Sha256GateType::LowerSigma1) => {
                 self.sha256_lower_sigma1.constraint_count()
-            }
+            },
             GateType::EcAdd => self.ec_add.constraint_count(),
             GateType::MontgomeryMul { .. } => self.montgomery_mul.constraint_count(),
             GateType::PoseidonRound(PoseidonRoundType::FullRound) => {
                 self.poseidon_full.constraint_count()
-            }
+            },
             GateType::PoseidonRound(PoseidonRoundType::PartialRound) => {
                 self.poseidon_partial.constraint_count()
-            }
+            },
             GateType::KeccakXor => self.keccak_xor.constraint_count(),
         }
     }
@@ -726,7 +733,10 @@ impl GateLibrary {
         }
 
         out.push_str("============================================================\n");
-        out.push_str(&format!("Total savings: {} constraints\n", self.total_savings()));
+        out.push_str(&format!(
+            "Total savings: {} constraints\n",
+            self.total_savings()
+        ));
         out
     }
 }
@@ -874,7 +884,10 @@ mod tests {
     fn test_gate_library_describe() {
         let lib = GateLibrary::new();
         let desc = lib.describe();
-        assert!(!desc.is_empty(), "describe() must return a non-empty String");
+        assert!(
+            !desc.is_empty(),
+            "describe() must return a non-empty String"
+        );
         assert!(desc.contains("UniGroth Custom Gate Library"));
         assert!(desc.contains("Sha256Sigma"));
         assert!(desc.contains("EcAdd"));

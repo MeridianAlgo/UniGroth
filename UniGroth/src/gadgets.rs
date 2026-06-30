@@ -54,15 +54,25 @@ impl RangeCheckGadget {
 
     /// Construct for common Rust integer widths.
     /// Unsigned 8-bit range check (values 0–255).
-    pub fn u8() -> Self { Self::new(8) }
+    pub fn u8() -> Self {
+        Self::new(8)
+    }
     /// Unsigned 16-bit range check.
-    pub fn u16() -> Self { Self::new(16) }
+    pub fn u16() -> Self {
+        Self::new(16)
+    }
     /// Unsigned 32-bit range check.
-    pub fn u32() -> Self { Self::new(32) }
+    pub fn u32() -> Self {
+        Self::new(32)
+    }
     /// Unsigned 64-bit range check.
-    pub fn u64() -> Self { Self::new(64) }
+    pub fn u64() -> Self {
+        Self::new(64)
+    }
     /// Unsigned 128-bit range check.
-    pub fn u128() -> Self { Self::new(128) }
+    pub fn u128() -> Self {
+        Self::new(128)
+    }
 }
 
 impl GadgetInfo for RangeCheckGadget {
@@ -118,12 +128,18 @@ impl PoseidonHashGadget {
 
     /// Custom parameters.
     pub fn with_params(state_width: usize, full_rounds: usize, partial_rounds: usize) -> Self {
-        Self { state_width, full_rounds, partial_rounds }
+        Self {
+            state_width,
+            full_rounds,
+            partial_rounds,
+        }
     }
 }
 
 impl Default for PoseidonHashGadget {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GadgetInfo for PoseidonHashGadget {
@@ -179,7 +195,10 @@ impl MerkleProofGadget {
 
     /// Construct with a custom hash constraint cost.
     pub fn with_hash_cost(depth: usize, hash_constraints: usize) -> Self {
-        Self { depth, hash_constraints }
+        Self {
+            depth,
+            hash_constraints,
+        }
     }
 }
 
@@ -235,7 +254,9 @@ impl EcdsaVerifyGadget {
 }
 
 impl Default for EcdsaVerifyGadget {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GadgetInfo for EcdsaVerifyGadget {
@@ -288,7 +309,9 @@ impl EddsaVerifyGadget {
 }
 
 impl Default for EddsaVerifyGadget {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GadgetInfo for EddsaVerifyGadget {
@@ -333,7 +356,10 @@ pub struct MemoryAccessGadget {
 impl MemoryAccessGadget {
     /// Construct for given memory capacity and access count.
     pub fn new(capacity: usize, num_accesses: usize) -> Self {
-        Self { capacity, num_accesses }
+        Self {
+            capacity,
+            num_accesses,
+        }
     }
 }
 
@@ -467,11 +493,17 @@ impl GadgetLibrary {
         let gadgets: Vec<(&str, usize)> = vec![
             ("RangeCheck(u64)", self.range_u64.constraint_count()),
             ("PoseidonHash", self.poseidon.constraint_count()),
-            ("MerkleProof(depth=32)", self.merkle_depth32.constraint_count()),
+            (
+                "MerkleProof(depth=32)",
+                self.merkle_depth32.constraint_count(),
+            ),
             ("EcdsaVerify(secp256k1)", self.ecdsa.constraint_count()),
             ("EddsaVerify(Ed25519)", self.eddsa.constraint_count()),
             ("MemoryAccess(256c,64a)", self.memory.constraint_count()),
-            ("RecursiveVerifier(4in)", self.recursive_verifier.constraint_count()),
+            (
+                "RecursiveVerifier(4in)",
+                self.recursive_verifier.constraint_count(),
+            ),
         ];
         let mut out = String::from("UniGroth ZK Gadget Library\n");
         out.push_str("============================================================\n");
@@ -486,7 +518,9 @@ impl GadgetLibrary {
 }
 
 impl Default for GadgetLibrary {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -541,7 +575,10 @@ mod tests {
     fn test_ecdsa_beats_naive_scalar_mul() {
         let g = EcdsaVerifyGadget::new();
         assert!(g.constraint_count() > 2_000, "ECDSA needs many constraints");
-        assert!(g.constraint_count() < 10_000, "ECDSA should not be unreasonably large");
+        assert!(
+            g.constraint_count() < 10_000,
+            "ECDSA should not be unreasonably large"
+        );
     }
 
     #[test]
