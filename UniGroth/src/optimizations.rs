@@ -774,10 +774,13 @@ impl<F: PrimeField> CsrMatrix<F> {
 
 // ─── GPU MSM Dispatcher ───────────────────────────────────────────────────────
 
-/// Routes MSM calls to GPU (icicle) or CPU (Pippenger) based on size.
+/// MSM dispatcher. **CPU-only today** — parallel Pippenger via [`parallel_msm`].
 ///
-/// When gpu feature is enabled and n > 2^12, attempts icicle backend.
-/// Falls back to CPU Pippenger for smaller instances or if gpu unavailable.
+/// The `gpu` feature is a build-time *extension point only*: no GPU backend is linked,
+/// so enabling it does NOT accelerate anything. It runs the identical CPU path and logs
+/// a warning. Do not present this as GPU acceleration anywhere (README, benchmarks, docs).
+/// To make it real: link an icicle backend at the marked site in [`Self::dispatch`], then
+/// benchmark before claiming any speedup. The name is retained only to mark that seam.
 pub struct GpuMsmDispatcher;
 
 impl GpuMsmDispatcher {

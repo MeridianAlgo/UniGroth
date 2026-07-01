@@ -750,6 +750,23 @@ mod tests {
     }
 
     #[test]
+    fn test_plonkish_rejects_violated_mul_gate() {
+        // is_satisfied() must return false when a gate's output is wrong — otherwise
+        // the constraint system enforces nothing. (Acceptance is covered by
+        // test_plonkish_system_basic; this is the missing rejection case.)
+        let mut cs: PlonkishConstraintSystem<Fr> = PlonkishConstraintSystem::new();
+
+        let ab = cs.add_add_gate(Fr::from(3u64), Fr::from(4u64)); // 7
+        // Claim 7 * 5 = 36 (correct product is 35): a violated multiplication gate.
+        cs.add_mul_gate(ab, Fr::from(5u64), Fr::from(36u64));
+
+        assert!(
+            !cs.is_satisfied(),
+            "a constraint system with a violated mul gate must not be satisfied"
+        );
+    }
+
+    #[test]
     fn test_range_check_gate() {
         let mut cs: PlonkishConstraintSystem<Fr> = PlonkishConstraintSystem::new();
 

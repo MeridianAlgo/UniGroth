@@ -241,8 +241,11 @@ pub fn make_sim_extractable<E: Pairing, R: RngCore>(
             c: proof.c,
         };
 
-        // D = ρ · δG₂ (for verification adjustment)
-        let d = (pk.vk.delta_g2.into_group() * rho).into_affine();
+        // D = ρ · B, chosen so the verifier's e(δ_g1, -D) term exactly cancels the
+        // e(δ_g1, B)^ρ that A' = A + ρ·δ_g1 introduces into e(A', B). The previous
+        // value ρ·δG₂ only balanced when B = δG₂, so genuine BG18 proofs were rejected
+        // by their own verifier (caught by test_bg18_full_se_verifies_...).
+        let d = (proof.b.into_group() * rho).into_affine();
 
         (blinded, Some(d))
     } else {
@@ -812,6 +815,64 @@ mod tests {
         assert!(
             !verify_sim_extractable(&pvk, &public_inputs, &tampered),
             "ROM SE proof with tampered A must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_bg18_full_se_verifies_and_rejects_tampered_element() {
+        // The BG18 explicit path (se_element = Some(D)) was previously only checked for
+        // "D is present" (test_bg18_blinding) — a genuine BG18 proof was never actually
+        // run through the 4-pairing verifier. This exercises acceptance of a real BG18
+        // proof and rejection when either D or the blinded A' is tampered.
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
+            TestCircuit { x: None },
+            &mut rng,
+        )
+        .unwrap();
+
+        let x = Fr::from(21u64);
+        let raw_proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
+            &pk,
+            TestCircuit { x: Some(x) },
+            &mut rng,
+        )
+        .unwrap();
+
+        // Full BG18 blinding → se_element = Some(D), with A' = A + ρ·δ_g1 and D = ρ·δG₂.
+        let se_config = SEConfig::full_se();
+        let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
+        assert!(se_proof.se_element.is_some(), "BG18 proof must carry D");
+
+        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let public_inputs = vec![x * x];
+
+        // Genuine BG18 proof must verify under the 4-pairing check.
+        assert!(
+            verify_sim_extractable(&pvk, &public_inputs, &se_proof),
+            "genuine BG18 SE proof must verify"
+        );
+
+        use ark_ec::PrimeGroup;
+
+        // Tampering D (keeping the blinded A') breaks the e(δ_g1, -D) correction → reject.
+        let mut wrong_d = se_proof.clone();
+        wrong_d.se_element =
+            Some((ark_bn254::G2Projective::generator() * Fr::from(4242u64)).into_affine());
+        assert!(
+            !verify_sim_extractable(&pvk, &public_inputs, &wrong_d),
+            "BG18 proof with tampered D must be rejected"
+        );
+
+        // Replacing the blinded A' with an unrelated point while keeping the matching D
+        // breaks the A'↔D binding → reject.
+        let mut wrong_a = se_proof.clone();
+        wrong_a.groth16_proof.a =
+            (ark_bn254::G1Projective::generator() * Fr::from(7u64)).into_affine();
+        assert!(
+            !verify_sim_extractable(&pvk, &public_inputs, &wrong_a),
+            "BG18 proof with tampered A' must be rejected"
         );
     }
 

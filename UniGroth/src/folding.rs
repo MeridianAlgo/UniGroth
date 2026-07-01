@@ -143,15 +143,52 @@ pub struct FoldingEngine<E: Pairing> {
     pub srs: UniversalSRS<E>,
     /// Current accumulator state
     pub accumulator: Option<FoldingAccumulator<E>>,
+    /// Constraint system. When present, the engine folds the *real* per-constraint
+    /// relaxed-R1CS error vector and commits it into `acc_e` (the sound path bound by
+    /// `verify_decision_predicate`). When `None`, `acc_e` is the legacy scalar-heuristic
+    /// placeholder and is not soundly bound — see the folding audit note in ROADMAP.md.
+    matrices: Option<R1CSMatrices<E::ScalarField>>,
+    /// Prover-side folded state (witness + error vector), maintained in lockstep with
+    /// the accumulator whenever `matrices` is set.
+    prover_state: Option<ProverState<E::ScalarField>>,
 }
 
 impl<E: Pairing> FoldingEngine<E> {
-    /// Create a new folding engine with the given SRS.
+    /// Create a folding engine without a constraint system.
+    ///
+    /// `acc_e` is the legacy heuristic and is NOT bound by the decision predicate.
+    /// Prefer [`new_with_constraints`](Self::new_with_constraints) for the sound
+    /// relaxed-R1CS path.
     pub fn new(srs: UniversalSRS<E>) -> Self {
         Self {
             srs,
             accumulator: None,
+            matrices: None,
+            prover_state: None,
         }
+    }
+
+    /// Create a constraint-aware folding engine.
+    ///
+    /// The engine folds the true per-constraint error vector and commits it into
+    /// `acc_e`, which [`verify_decision_predicate`] then binds. Retrieve the folded
+    /// prover state via [`prover_state`](Self::prover_state) to pass to the verifier.
+    pub fn new_with_constraints(
+        srs: UniversalSRS<E>,
+        matrices: R1CSMatrices<E::ScalarField>,
+    ) -> Self {
+        Self {
+            srs,
+            accumulator: None,
+            matrices: Some(matrices),
+            prover_state: None,
+        }
+    }
+
+    /// The folded prover state (witness + error vector), available once the engine is
+    /// constraint-aware and at least one instance has been folded.
+    pub fn prover_state(&self) -> Option<&ProverState<E::ScalarField>> {
+        self.prover_state.as_ref()
     }
 
     /// Fold a new instance into the accumulator.
@@ -167,24 +204,52 @@ impl<E: Pairing> FoldingEngine<E> {
     ) -> Result<CrossTerms<E>, FoldingError> {
         let fold_time = start_timer!(|| "ProtoStar fold step");
 
-        match &self.accumulator {
-            None => {
-                // First instance: initialize accumulator
-                let acc = FoldingAccumulator::init(&self.srs, &instance);
-                self.accumulator = Some(acc);
-                end_timer!(fold_time);
-                Ok(CrossTerms {
-                    t1: E::G1Affine::zero(),
-                    higher_order: vec![],
-                })
-            },
-            Some(acc) => {
-                // Subsequent instances: fold into existing accumulator
-                let (new_acc, cross_terms) = self.fold_step(acc.clone(), &instance, rng)?;
-                self.accumulator = Some(new_acc);
-                end_timer!(fold_time);
-                Ok(cross_terms)
-            },
+        if self.accumulator.is_none() {
+            // First instance: initialize accumulator (acc_e starts at identity).
+            let acc = FoldingAccumulator::init(&self.srs, &instance);
+            // Constraint-aware path: seed the prover state with a zero error vector.
+            if let Some(nc) = self.matrices.as_ref().map(|m| m.num_constraints) {
+                self.prover_state = Some(ProverState::init(instance.witness.clone(), nc));
+            }
+            self.accumulator = Some(acc);
+            end_timer!(fold_time);
+            Ok(CrossTerms {
+                t1: E::G1Affine::zero(),
+                higher_order: vec![],
+            })
+        } else {
+            // Subsequent instances: fold into existing accumulator.
+            let acc_before = self.accumulator.as_ref().unwrap().clone();
+            let (mut new_acc, cross_terms) = self.fold_step(acc_before.clone(), &instance, rng)?;
+
+            // Constraint-aware path: fold the *real* per-constraint error vector and
+            // overwrite the heuristic acc_e with a commitment the verifier can rebuild.
+            // ponytail: clones the (sparse, tiny) matrices per fold; correctness over
+            //           a micro-opt that would tangle field borrows.
+            if let Some(matrices) = self.matrices.clone() {
+                let r = *new_acc
+                    .randomness_transcript
+                    .last()
+                    .expect("fold_step always pushes a Fiat-Shamir challenge");
+                let state = self
+                    .prover_state
+                    .take()
+                    .unwrap_or_else(|| ProverState::init(Vec::new(), matrices.num_constraints));
+                let cross_vec = compute_cross_term_vector(
+                    &matrices,
+                    &acc_before.acc_x,
+                    &state.folded_witness,
+                    acc_before.acc_mu,
+                    &instance,
+                );
+                let new_state = fold_prover_state(&state, &instance, &cross_vec, &r);
+                new_acc.acc_e = commit_error_vector(&self.srs, &new_state.error_vector);
+                self.prover_state = Some(new_state);
+            }
+
+            self.accumulator = Some(new_acc);
+            end_timer!(fold_time);
+            Ok(cross_terms)
         }
     }
 
@@ -680,6 +745,27 @@ pub fn fold_prover_state<F: PrimeField>(
     }
 }
 
+/// Commit to the per-constraint error vector as Σᵢ (SRS powerᵢ)·eᵢ — a KZG-style
+/// coefficient commitment binding the whole vector, not just its sum.
+///
+/// An all-zero error vector commits to the identity, matching a fresh accumulator's
+/// `acc_e`. This is what lets [`verify_decision_predicate`] bind the prover's supplied
+/// error term to the accumulator (closing the folding audit gap in ROADMAP.md).
+fn commit_error_vector<E: Pairing>(
+    srs: &UniversalSRS<E>,
+    error: &[E::ScalarField],
+) -> E::G1Affine {
+    let mut acc = E::G1::zero();
+    for (i, e) in error.iter().enumerate() {
+        // Guard against an error vector longer than the SRS; such an instance is
+        // out of range for this SRS and will fail the decision predicate elsewhere.
+        if i < srs.powers_of_g.len() {
+            acc += srs.powers_of_g[i].into_group() * *e;
+        }
+    }
+    acc.into_affine()
+}
+
 /// Verify the full ProtoStar decision predicate (relaxed R1CS).
 ///
 /// Performs both structural checks and the complete algebraic verification:
@@ -739,6 +825,15 @@ pub fn verify_decision_predicate<E: Pairing>(
                 return Ok(false);
             }
         }
+    }
+
+    // Step 5: Bind the error vector to the accumulator's error commitment `acc_e`.
+    // Without this, a prover could supply an error term inconsistent with what was
+    // actually folded (the acc_e field was previously never checked here). For a fresh,
+    // single-instance accumulator both sides are the identity, so this is a no-op there.
+    let expected_e = commit_error_vector::<E>(srs, &prover_state.error_vector);
+    if expected_e != acc.acc_e {
+        return Ok(false);
     }
 
     Ok(true)
@@ -970,28 +1065,13 @@ mod tests {
         let inst1 = FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]);
         let inst2 = FoldingInstance::new(vec![Fr::from(25u64)], vec![Fr::from(5u64)]);
 
-        let mut engine = FoldingEngine::new(srs.clone());
+        // Constraint-aware engine folds the real error vector and commits it into acc_e.
+        let mut engine = FoldingEngine::new_with_constraints(srs.clone(), matrices.clone());
         engine.fold(inst1.clone(), &mut rng).unwrap();
-
-        let acc1 = engine.accumulator.as_ref().unwrap().clone();
-        let mut prover_state = ProverState::init(inst1.witness.clone(), matrices.num_constraints);
-
-        // Fold second instance
         engine.fold(inst2.clone(), &mut rng).unwrap();
+
         let acc2 = engine.accumulator.as_ref().unwrap().clone();
-
-        // Extract challenge r from transcript (same r the engine used)
-        let r = acc2.randomness_transcript[0];
-
-        // Compute per-constraint cross-terms and fold prover state
-        let cross_terms = compute_cross_term_vector(
-            &matrices,
-            &acc1.acc_x,
-            &prover_state.folded_witness,
-            acc1.acc_mu,
-            &inst2,
-        );
-        prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
+        let prover_state = engine.prover_state().unwrap().clone();
 
         let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
         assert!(
@@ -1019,31 +1099,13 @@ mod tests {
             FoldingInstance::new(vec![Fr::from(49u64)], vec![Fr::from(7u64)]), // 7*7=49
         ];
 
-        let mut engine = FoldingEngine::new(srs.clone());
-
-        // Fold first instance
-        engine.fold(instances[0].clone(), &mut rng).unwrap();
-        let mut prover_state =
-            ProverState::init(instances[0].witness.clone(), matrices.num_constraints);
-
-        // Fold remaining instances, tracking prover state in lockstep
-        for k in 1..instances.len() {
-            let acc_before = engine.accumulator.as_ref().unwrap().clone();
-            engine.fold(instances[k].clone(), &mut rng).unwrap();
-            let acc_after = engine.accumulator.as_ref().unwrap().clone();
-
-            let r = acc_after.randomness_transcript[k - 1];
-            let cross_terms = compute_cross_term_vector(
-                &matrices,
-                &acc_before.acc_x,
-                &prover_state.folded_witness,
-                acc_before.acc_mu,
-                &instances[k],
-            );
-            prover_state = fold_prover_state(&prover_state, &instances[k], &cross_terms, &r);
+        let mut engine = FoldingEngine::new_with_constraints(srs.clone(), matrices.clone());
+        for inst in &instances {
+            engine.fold(inst.clone(), &mut rng).unwrap();
         }
 
         let acc = engine.accumulator.as_ref().unwrap().clone();
+        let prover_state = engine.prover_state().unwrap().clone();
         let result = verify_decision_predicate::<Bn254>(&srs, &acc, &prover_state, &matrices);
         assert!(
             result.unwrap(),
@@ -1080,6 +1142,47 @@ mod tests {
     }
 
     #[test]
+    fn test_decision_predicate_rejects_tampered_error() {
+        // An honest, satisfied instance has error e = 0. If a prover inflates the error
+        // vector to absorb a discrepancy, the relaxed-R1CS check A(z)·B(z) == μ·C(z) + e
+        // (Step 3) must fail.
+        //
+        // NOTE: this catches the tamper via the *algebraic* check only. The error
+        // commitment `acc_e` is NOT re-verified against the supplied error vector for
+        // fold_count > 1 — see the folding audit note in ROADMAP.md. This test pins the
+        // current, algebraic-only behavior; it does not assert the scheme is complete.
+        let matrices = R1CSMatrices {
+            a: vec![vec![(Fr::one(), 2)]],
+            b: vec![vec![(Fr::one(), 2)]],
+            c: vec![vec![(Fr::one(), 1)]],
+            num_constraints: 1,
+            num_variables: 3,
+        };
+
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
+        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
+
+        let inst = FoldingInstance::new(vec![Fr::from(9u64)], vec![Fr::from(3u64)]);
+        let mut engine = FoldingEngine::new(srs.clone());
+        engine.fold(inst.clone(), &mut rng).unwrap();
+        let acc = engine.accumulator.as_ref().unwrap().clone();
+
+        // Honest witness passes the KZG commitment check; start from the honest state.
+        let mut state = ProverState::init(inst.witness.clone(), matrices.num_constraints);
+        assert!(
+            verify_decision_predicate::<Bn254>(&srs, &acc, &state, &matrices).unwrap(),
+            "honest state must verify"
+        );
+
+        // Inflate the error term: now A(z)·B(z) = 9 but μ·C(z) + e = 9 + 1 = 10.
+        state.error_vector[0] += Fr::from(1u64);
+        assert!(
+            !verify_decision_predicate::<Bn254>(&srs, &acc, &state, &matrices).unwrap(),
+            "decision predicate must reject an inflated error term"
+        );
+    }
+
+    #[test]
     fn test_decision_predicate_multi_constraint() {
         // Circuit: x*x = y  AND  x*y = z
         // Variables: [0: const 1, 1: y (public), 2: z (public), 3: x (witness)]
@@ -1110,23 +1213,12 @@ mod tests {
         let inst2 =
             FoldingInstance::new(vec![Fr::from(4u64), Fr::from(8u64)], vec![Fr::from(2u64)]);
 
-        let mut engine = FoldingEngine::new(srs.clone());
+        let mut engine = FoldingEngine::new_with_constraints(srs.clone(), matrices.clone());
         engine.fold(inst1.clone(), &mut rng).unwrap();
-        let acc1 = engine.accumulator.as_ref().unwrap().clone();
-        let mut prover_state = ProverState::init(inst1.witness.clone(), matrices.num_constraints);
-
         engine.fold(inst2.clone(), &mut rng).unwrap();
-        let acc2 = engine.accumulator.as_ref().unwrap().clone();
-        let r = acc2.randomness_transcript[0];
 
-        let cross_terms = compute_cross_term_vector(
-            &matrices,
-            &acc1.acc_x,
-            &prover_state.folded_witness,
-            acc1.acc_mu,
-            &inst2,
-        );
-        prover_state = fold_prover_state(&prover_state, &inst2, &cross_terms, &r);
+        let acc2 = engine.accumulator.as_ref().unwrap().clone();
+        let prover_state = engine.prover_state().unwrap().clone();
 
         let result = verify_decision_predicate::<Bn254>(&srs, &acc2, &prover_state, &matrices);
         assert!(

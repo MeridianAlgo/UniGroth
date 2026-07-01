@@ -307,4 +307,86 @@ mod tests {
             "PreparedVerifyingKey must embed the original VerifyingKey unchanged"
         );
     }
+
+    /// Build a tampered SimExtractableProof from raw (A, B, C), with a
+    /// consistently-recomputed proof_hash so the test isolates the pairing/point
+    /// checks rather than tripping an unrelated hash guard.
+    fn tamper(
+        a: G1Affine,
+        b: <Bn254 as Pairing>::G2Affine,
+        c: G1Affine,
+    ) -> crate::SimExtractableProof<Bn254> {
+        let raw = crate::Proof::<Bn254> { a, b, c };
+        crate::SimExtractableProof::<Bn254> {
+            proof_hash: crate::security::compute_proof_hash::<Bn254>(&raw),
+            groth16_proof: raw,
+            se_element: None,
+        }
+    }
+
+    #[test]
+    fn test_verify_identity_a_rejected() {
+        // A = 0 makes e(A, B) = 1 in GT, trivially satisfying the pairing check.
+        // validate_proof_points must reject it. (Guards the documented identity attack.)
+        let (pvk, valid, inputs) = setup_and_prove(Fr::from(3u64), Fr::from(7u64), 21u64);
+        let bad = tamper(G1Affine::zero(), valid.groth16_proof.b, valid.groth16_proof.c);
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &bad);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "identity A must be rejected: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_identity_c_rejected() {
+        let (pvk, valid, inputs) = setup_and_prove(Fr::from(3u64), Fr::from(7u64), 22u64);
+        let bad = tamper(valid.groth16_proof.a, valid.groth16_proof.b, G1Affine::zero());
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &bad);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "identity C must be rejected: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_flipped_c_rejected() {
+        // Existing coverage flips A; this flips C to exercise the third pairing term.
+        let (pvk, valid, inputs) = setup_and_prove(Fr::from(2u64), Fr::from(8u64), 23u64);
+        let bad = tamper(
+            valid.groth16_proof.a,
+            valid.groth16_proof.b,
+            G1Affine::generator(),
+        );
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &bad);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "flipped C must not verify: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_verify_wrong_arity_inputs_rejected() {
+        // A proof for a 1-input statement must not verify against 2 inputs. This
+        // hits the prepare_inputs length guard (which also prevents an OOB panic).
+        let (pvk, proof, inputs) = setup_and_prove(Fr::from(4u64), Fr::from(9u64), 24u64);
+        let mut too_many = inputs.clone();
+        too_many.push(Fr::from(123u64));
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &too_many, &proof);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "wrong input arity must be rejected, not panic: {:?}",
+            result
+        );
+
+        // ...and zero inputs for a 1-input statement.
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &[], &proof);
+        assert!(
+            matches!(result, Ok(false) | Err(_)),
+            "empty inputs for 1-input statement must be rejected: {:?}",
+            result
+        );
+    }
 }

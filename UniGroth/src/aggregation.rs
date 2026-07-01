@@ -366,4 +366,65 @@ mod tests {
         assert!(!agg.challenge.is_zero());
         assert_eq!(agg.inputs_agg.len(), 1);
     }
+
+    #[test]
+    fn test_aggregate_rejects_tampering() {
+        // Acceptance is covered above; a verifier must also REJECT tampering and
+        // false statements, or aggregation is worthless.
+        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0xA9917E57u64);
+
+        let pairs = [
+            (Fr::from(3u64), Fr::from(9u64)),
+            (Fr::from(4u64), Fr::from(16u64)),
+        ];
+        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
+            SquareCircuit {
+                x: pairs[0].0,
+                y: pairs[0].1,
+            },
+            &mut rng,
+        )
+        .unwrap();
+
+        let mut proofs = Vec::new();
+        let mut inputs = Vec::new();
+        for (x, y) in &pairs {
+            let se =
+                Groth16::<Bn254>::prove(&pk, SquareCircuit { x: *x, y: *y }, &mut rng).unwrap();
+            proofs.push(se.groth16_proof);
+            inputs.push(vec![*y]);
+        }
+
+        let agg = aggregate_proofs::<Bn254, _>(&proofs, &inputs, &mut rng);
+        assert!(verify_aggregated(&vk, &agg), "honest aggregate must verify");
+
+        use ark_ec::AffineRepr;
+        let g1 = ark_bn254::G1Affine::generator();
+
+        // Tamper the aggregated C term → RHS δ-pairing breaks.
+        let mut bad = agg.clone();
+        bad.c_agg = g1;
+        assert!(!verify_aggregated(&vk, &bad), "tampered C_agg must be rejected");
+
+        // Tamper an aggregated public input → PI_agg/γ pairing breaks.
+        let mut bad = agg.clone();
+        bad.inputs_agg[0] += Fr::from(1u64);
+        assert!(
+            !verify_aggregated(&vk, &bad),
+            "tampered public input must be rejected"
+        );
+
+        // Tamper a scaled A element → LHS multi-pairing breaks.
+        let mut bad = agg.clone();
+        bad.scaled_a_vec[0] = g1;
+        assert!(!verify_aggregated(&vk, &bad), "tampered A must be rejected");
+
+        // Aggregating honest proofs against a FALSE public input (999 ≠ 4²) must not verify.
+        let false_inputs = vec![vec![pairs[0].1], vec![Fr::from(999u64)]];
+        let bad_agg = aggregate_proofs::<Bn254, _>(&proofs, &false_inputs, &mut rng);
+        assert!(
+            !verify_aggregated(&vk, &bad_agg),
+            "aggregate with a wrong public input must be rejected"
+        );
+    }
 }

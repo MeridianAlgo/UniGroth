@@ -35,6 +35,15 @@
 //! - **Hybrid** – Wraps a Plonky3 inner proof with a header for Groth16
 //!   outer compression, achieving classical succinctness with PQ inner security.
 //!
+//! ## Honest scope — READ THIS
+//!
+//! These are **commitment-and-binding scaffolds, not sound zero-knowledge arguments.**
+//! Each scheme deterministically commits to the witness and public inputs with SHA-256
+//! and is tamper-evident, but it does **not** prove, in zero knowledge, that a witness
+//! satisfies a circuit. "Binius" and "Plonky3" name the *target* FRI/sumcheck designs;
+//! they are not implemented as such here. Do not rely on this module for post-quantum
+//! soundness or zero-knowledge. See the README's "Status and honest scope".
+//!
 //! ## References
 //!
 //! - Binius: <https://eprint.iacr.org/2023/1784>

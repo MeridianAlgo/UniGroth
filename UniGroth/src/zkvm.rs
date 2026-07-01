@@ -1,13 +1,20 @@
-//! # RISC-V zkVM Constraint System
+//! # RISC-V zkVM Constraint *Estimator* (scaffold)
 //!
-//! Builds R1CS constraints from a RISC-V execution trace. Combines the
-//! gadget library (range checks, memory, Poseidon) with opcode-level
-//! constraint generation to prove correct program execution in zero knowledge.
+//! **Honest scope:** this module *enumerates and counts* the constraints a RISC-V
+//! execution trace would require — it does NOT materialise an R1CS, assign a witness,
+//! check satisfaction, or prove/verify anything. `ZkvmConstraint` is a symbolic
+//! `{ kind, step_idx, description }` descriptor with no field values. Use it for circuit
+//! *sizing* and integration tests only. It is not a zkVM prover; do not claim it proves
+//! program execution in zero knowledge.
 //!
-//! ## Architecture
+//! Turning this into a real zkVM means wiring the (real) gadgets in `gadgets.rs` into a
+//! concrete field-typed constraint system with witness assignment and a
+//! prove/verify path — a large, separate build.
+//!
+//! ## Architecture (of the estimator)
 //!
 //! ```text
-//! RISC-V Program → Executor → ProgramTrace → ZkvmConstraintBuilder → R1CS
+//! RISC-V Program → Executor → ProgramTrace → ZkvmConstraintBuilder → (symbolic list + counts)
 //! ```
 //!
 //! The [`ZkvmConstraintBuilder`] generates constraint batches for each step:
@@ -342,7 +349,9 @@ impl ZkvmStats {
     }
 }
 
-/// Builds R1CS constraints from a [`ProgramTrace`].
+/// Enumerates the *symbolic* constraints a [`ProgramTrace`] would require, for sizing.
+///
+/// Does NOT build an R1CS or check satisfaction — see the module-level honest scope.
 pub struct ZkvmConstraintBuilder;
 
 impl ZkvmConstraintBuilder {
