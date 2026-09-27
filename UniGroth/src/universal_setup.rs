@@ -1,14 +1,16 @@
 //! # Universal Setup for UniGroth
 //!
-//! This module implements the universal trusted setup that allows one-time
-//! ceremony to work for any circuit up to a maximum size.
+//! Derives circuit-specific Groth16 keys from one set of parameters.
 //!
-//! ## Key Features
+//! ## Security
 //!
-//! - One-time Powers-of-Tau ceremony
-//! - Reusable for any circuit up to max degree
-//! - Updatable for enhanced security
-//! - Compatible with existing PoT transcripts
+//! `UniversalParams` holds the Groth16 trapdoors α, β, γ **in the clear**, and
+//! `derive_keys` samples δ and the evaluation point itself. Whoever holds a
+//! `UniversalParams` value can therefore forge proofs for every circuit whose
+//! keys were derived from it. Treat it exactly like toxic waste from a
+//! circuit-specific ceremony: keep it inside the one trusted process that runs
+//! `derive_keys`, never serialize, log or share it, and drop it afterwards
+//! (it is zeroized on drop). This is not a transparent or ceremony-free setup.
 //!
 //! ## Usage
 //!
@@ -33,19 +35,20 @@ use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, Result as R1CSResult,
     SynthesisError, SynthesisMode,
 };
-use ark_serialize::*;
 use ark_std::{
     cfg_into_iter, cfg_iter,
     rand::{CryptoRng, RngCore},
 };
+use zeroize::Zeroize;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 /// Universal parameters for UniGroth.
 ///
-/// Generated once and reused for all circuits up to `max_degree`.
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+/// Contains secret trapdoors; see the module docs. It deliberately implements
+/// neither `Debug` nor serialization so the secrets cannot leak by accident.
+#[derive(Clone)]
 pub struct UniversalParams<E: Pairing> {
     /// The universal SRS for KZG commitments
     pub srs: UniversalSRS<E>,
@@ -59,6 +62,14 @@ pub struct UniversalParams<E: Pairing> {
     pub g1_generator: E::G1Affine,
     /// G2 generator
     pub g2_generator: E::G2Affine,
+}
+
+impl<E: Pairing> Drop for UniversalParams<E> {
+    fn drop(&mut self) {
+        self.alpha.zeroize();
+        self.beta.zeroize();
+        self.gamma.zeroize();
+    }
 }
 
 impl<E: Pairing> UniversalParams<E> {
@@ -134,13 +145,17 @@ impl<E: Pairing> UniversalParams<E> {
         self.srs.update(rng);
 
         // Update Groth16 parameters
-        let delta_alpha = E::ScalarField::rand(rng);
-        let delta_beta = E::ScalarField::rand(rng);
-        let delta_gamma = E::ScalarField::rand(rng);
+        let mut delta_alpha = E::ScalarField::rand(rng);
+        let mut delta_beta = E::ScalarField::rand(rng);
+        let mut delta_gamma = E::ScalarField::rand(rng);
 
         self.alpha *= delta_alpha;
         self.beta *= delta_beta;
         self.gamma *= delta_gamma;
+
+        delta_alpha.zeroize();
+        delta_beta.zeroize();
+        delta_gamma.zeroize();
 
         end_timer!(update_time);
     }
@@ -180,12 +195,12 @@ impl<E: Pairing> UniversalParams<E> {
         }
 
         // Generate delta (circuit-specific randomness)
-        let delta = E::ScalarField::rand(rng);
+        let mut delta = E::ScalarField::rand(rng);
 
         // Construct evaluation domain
         let domain_time = start_timer!(|| "Constructing evaluation domain");
         let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let t = domain.sample_element_outside_domain(rng);
+        let mut t = domain.sample_element_outside_domain(rng);
         end_timer!(domain_time);
 
         // R1CS to QAP/SAP reduction
@@ -196,8 +211,8 @@ impl<E: Pairing> UniversalParams<E> {
         end_timer!(reduction_time);
 
         // Compute inverses
-        let gamma_inverse = self.gamma.inverse().unwrap();
-        let delta_inverse = delta.inverse().unwrap();
+        let mut gamma_inverse = self.gamma.inverse().ok_or(SynthesisError::DivisionByZero)?;
+        let mut delta_inverse = delta.inverse().ok_or(SynthesisError::DivisionByZero)?;
 
         // Compute gamma_abc
         let gamma_abc = cfg_iter!(a[..num_instance_variables])
@@ -253,9 +268,10 @@ impl<E: Pairing> UniversalParams<E> {
         drop(b);
 
         // Compute H-query
-        let h_scalars =
+        let mut h_scalars =
             QAP::h_query_scalars::<_, D<E::ScalarField>>(m_raw - 1, t, zt, delta_inverse)?;
         let h_query = g1_table.batch_mul(&h_scalars);
+        h_scalars.iter_mut().for_each(Zeroize::zeroize);
 
         // Compute L-query
         let l_query = g1_table.batch_mul(&l);
@@ -267,6 +283,12 @@ impl<E: Pairing> UniversalParams<E> {
 
         end_timer!(g1_time);
         end_timer!(key_gen_time);
+
+        // Destroy the circuit-specific trapdoors.
+        delta.zeroize();
+        t.zeroize();
+        gamma_inverse.zeroize();
+        delta_inverse.zeroize();
 
         // Construct keys
         let vk = VerifyingKey::<E> {

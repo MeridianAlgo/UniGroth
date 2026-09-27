@@ -16,8 +16,9 @@
 //!
 //! ## Current Status
 //!
-//! **Production-Ready** — All modules implemented, tested, and connected.
-//! 200+ tests pass across unit and integration suites.
+//! **Research software.** The classical Groth16 core (setup, prove, verify)
+//! is the main path; several extension modules are scaffolds with
+//! documented limitations (see each module's docs). Audit before production use.
 //!
 //! ## Example Usage
 //!
@@ -85,6 +86,9 @@
 
 #[macro_use]
 extern crate ark_std;
+
+/// Library-wide constants: security level, Poseidon parameters, domain tags.
+pub mod config;
 
 /// Reduce an R1CS instance to a *Quadratic Arithmetic Program* instance.
 pub mod r1cs_to_qap;

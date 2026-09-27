@@ -187,8 +187,10 @@ impl<F: PrimeField> CircuitBuilder<F> {
         self.ops.push(Op::AssertBool { a: a.index });
     }
 
-    /// Conditional select: out = cond ? a : b (cond must be boolean).
+    /// Conditional select: out = cond ? a : b. `cond` is constrained to be boolean;
+    /// otherwise `out = b + cond·(a − b)` could be made any value.
     pub fn conditional_select(&mut self, cond: Wire, a: Wire, b: Wire) -> Wire {
+        self.assert_bool(cond);
         let out_val = match (
             self.wire_values[cond.index],
             self.wire_values[a.index],

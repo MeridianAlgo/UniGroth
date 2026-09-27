@@ -53,97 +53,49 @@ pub struct BatchResult<E: Pairing> {
     pub failures: usize,
 }
 
-/// Prove multiple circuits in parallel using the same proving key.
-#[cfg(feature = "parallel")]
-pub fn batch_prove<E, QAP, C>(
+/// Prove multiple circuits with the same proving key (in parallel with the
+/// `parallel` feature).
+///
+/// Each proof gets its own 32-byte seed drawn from `rng` up front, so `rng`
+/// must be a cryptographically secure generator (e.g. `OsRng` or a seeded
+/// `ChaCha20Rng`). Proof randomness `r, s` that an attacker can predict breaks
+/// zero-knowledge.
+pub fn batch_prove<E, QAP, C, R>(
     pk: &ProvingKey<E>,
     circuits: Vec<C>,
     _config: &BatchConfig,
+    rng: &mut R,
 ) -> BatchResult<E>
 where
     E: Pairing,
     QAP: R1CSToQAP,
     C: ConstraintSynthesizer<E::ScalarField> + Send,
+    R: Rng,
 {
     let se_config = SEConfig::default();
-    let results: Vec<BatchProofResult<E>> = circuits
-        .into_par_iter()
-        .map(|circuit| {
-            // Derive a unique seed per parallel worker: mix nanosecond timestamp
-            // with rayon thread index. Vastly better than a fixed seed; ensures
-            // ZK across proofs in the same batch.
-            let nanos = {
-                #[cfg(feature = "std")]
-                {
-                    use std::time::SystemTime;
-                    SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.subsec_nanos() as u64)
-                        .unwrap_or(0xDEAD_BEEF)
-                }
-                #[cfg(not(feature = "std"))]
-                0xDEAD_BEEF_u64
-            };
-            let thread_id = rayon::current_thread_index().unwrap_or(0) as u64;
-            let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(
-                nanos
-                    .wrapping_mul(6_364_136_223_846_793_005)
-                    .wrapping_add(thread_id),
-            );
-            match Groth16::<E, QAP>::create_random_proof_with_reduction(circuit, pk, &mut rng) {
-                Ok(proof) => {
-                    let se_proof = make_sim_extractable(proof, pk, &se_config, &mut rng);
-                    BatchProofResult::Success(se_proof)
-                },
-                Err(e) => BatchProofResult::Failed(format!("{}", e)),
-            }
+    let jobs: Vec<(C, [u8; 32])> = circuits
+        .into_iter()
+        .map(|c| {
+            let mut seed = [0u8; 32];
+            rng.fill_bytes(&mut seed);
+            (c, seed)
         })
         .collect();
 
-    let successes = results
-        .iter()
-        .filter(|r| matches!(r, BatchProofResult::Success(_)))
-        .count();
-    let failures = results.len() - successes;
+    let prove_one = |(circuit, seed): (C, [u8; 32])| {
+        let mut rng = ark_std::rand::rngs::StdRng::from_seed(seed);
+        match Groth16::<E, QAP>::create_random_proof_with_reduction(circuit, pk, &mut rng) {
+            Ok(proof) => {
+                BatchProofResult::Success(make_sim_extractable(proof, pk, &se_config, &mut rng))
+            },
+            Err(e) => BatchProofResult::Failed(format!("{}", e)),
+        }
+    };
 
-    BatchResult {
-        results,
-        successes,
-        failures,
-    }
-}
-
-/// Sequential batch prove (no parallel feature).
-#[cfg(not(feature = "parallel"))]
-pub fn batch_prove<E, QAP, C>(
-    pk: &ProvingKey<E>,
-    circuits: Vec<C>,
-    _config: &BatchConfig,
-) -> BatchResult<E>
-where
-    E: Pairing,
-    QAP: R1CSToQAP,
-    C: ConstraintSynthesizer<E::ScalarField>,
-{
-    let se_config = SEConfig::default();
-    let mut results = Vec::with_capacity(circuits.len());
-    let mut proof_counter = 0u64;
-
-    for circuit in circuits {
-        // Distinct seed per proof prevents correlated randomness across the batch.
-        let mut rng =
-            ark_std::rand::rngs::StdRng::seed_from_u64(0xDEAD_BEEF_u64.wrapping_add(proof_counter));
-        proof_counter += 1;
-        let result =
-            match Groth16::<E, QAP>::create_random_proof_with_reduction(circuit, pk, &mut rng) {
-                Ok(proof) => {
-                    let se_proof = make_sim_extractable(proof, pk, &se_config, &mut rng);
-                    BatchProofResult::Success(se_proof)
-                },
-                Err(e) => BatchProofResult::Failed(format!("{}", e)),
-            };
-        results.push(result);
-    }
+    #[cfg(feature = "parallel")]
+    let results: Vec<BatchProofResult<E>> = jobs.into_par_iter().map(prove_one).collect();
+    #[cfg(not(feature = "parallel"))]
+    let results: Vec<BatchProofResult<E>> = jobs.into_iter().map(prove_one).collect();
 
     let successes = results
         .iter()
@@ -419,8 +371,9 @@ mod tests {
             .collect();
 
         let config = BatchConfig::default();
-        let batch_result =
-            batch_prove::<Bn254, crate::r1cs_to_qap::LibsnarkReduction, _>(&pk, circuits, &config);
+        let batch_result = batch_prove::<Bn254, crate::r1cs_to_qap::LibsnarkReduction, _, _>(
+            &pk, circuits, &config, &mut rng,
+        );
 
         assert_eq!(batch_result.successes, 4);
         assert_eq!(batch_result.failures, 0);

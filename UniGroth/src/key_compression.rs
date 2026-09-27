@@ -1,38 +1,32 @@
 //! # Verifying Key Compression
 #![allow(missing_docs)]
 //!
-//! Compresses the verifying key's `gamma_abc_g1` vector from O(n) to O(1) using
-//! KZG polynomial commitments, where n is the number of public inputs.
+//! Replaces the O(n) `gamma_abc_g1` vector in a stored verifying key with a
+//! 32-byte SHA-256 digest, where n is the number of public inputs.
 //!
-//! ## Problem
-//! Standard Groth16 VKs contain `gamma_abc_g1` — a vector of G1 points, one per
-//! public input plus one constant. For circuits with many public inputs (e.g.
-//! zkEVM with 100+ public inputs), this dominates VK size.
-//!
-//! ## Solution
-//! Commit to the `gamma_abc_g1` vector as a polynomial using KZG, reducing
-//! the VK to a single G1 commitment. Verification then requires an opening
-//! proof per verification, but VK size drops from O(n) to O(1).
+//! ## How it works
+//! The verifier keeps only the compressed key. At verification time the IC
+//! points are supplied alongside the proof (for example fetched from untrusted
+//! storage); the verifier hashes them, rejects them unless the digest matches,
+//! and then runs the ordinary Groth16 check with its own input MSM.
 //!
 //! ## Trade-off
-//! - VK size: O(n) → O(1) (massive win for large n)
-//! - Verification cost: +1 pairing for the opening check
-//! - Requires a KZG SRS (same one used for universal setup)
+//! - Stored VK size: O(n) → O(1)
+//! - Bandwidth per verification: O(n) IC points
+//! - Verification cost: unchanged Groth16 check plus one SHA-256
 //!
-//! References: Gabizon-Williamson-Ciobotaru (GWC), SnarkPack VK compression
+//! Security rests on SHA-256 collision resistance. The public-input
+//! combination is always recomputed by the verifier and never taken from the prover.
 
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{One, PrimeField, Zero};
+use ark_ec::{pairing::Pairing, AffineRepr};
+use ark_ff::Zero;
 use ark_serialize::*;
 use ark_std::vec::Vec;
+use sha2::{Digest, Sha256};
 
-use crate::kzg::UniversalSRS;
-use crate::VerifyingKey;
+use crate::{Proof, SimExtractableProof, VerifyingKey};
 
-/// A compressed verifying key where `gamma_abc_g1` is replaced by a KZG commitment.
-///
-/// Size: O(1) regardless of the number of public inputs.
-/// Compare to standard VK: O(n) where n = number of public inputs.
+/// A verifying key whose `gamma_abc_g1` vector is replaced by its SHA-256 digest.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct CompressedVerifyingKey<E: Pairing> {
     /// alpha * G1
@@ -43,24 +37,17 @@ pub struct CompressedVerifyingKey<E: Pairing> {
     pub gamma_g2: E::G2Affine,
     /// delta * G2
     pub delta_g2: E::G2Affine,
-    /// KZG commitment to the polynomial interpolating gamma_abc_g1
-    /// Replaces the full gamma_abc_g1 vector
-    pub ic_commitment: E::G1Affine,
-    /// Number of public inputs (needed for verification)
+    /// SHA-256 digest of the `gamma_abc_g1` vector
+    pub ic_digest: [u8; 32],
+    /// Number of public inputs (`gamma_abc_g1.len() - 1`)
     pub num_public_inputs: usize,
 }
 
-/// Opening proof for the compressed VK, provided alongside each proof verification.
-///
-/// The verifier uses this to check that the claimed IC points match the commitment.
+/// The IC points supplied at verification time; checked against `ic_digest`.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct VKOpeningProof<E: Pairing> {
-    /// The opening proof element (KZG witness polynomial evaluated at SRS)
-    pub proof: E::G1Affine,
-    /// The aggregated IC value for the given public inputs
-    pub aggregated_ic: E::G1Affine,
-    /// Random evaluation point used for batching
-    pub eval_point: E::ScalarField,
+    /// The full `gamma_abc_g1` vector of the original verifying key
+    pub gamma_abc_g1: Vec<E::G1Affine>,
 }
 
 #[cfg(feature = "serde")]
@@ -101,168 +88,61 @@ impl<'de, E: Pairing> ::serde::Deserialize<'de> for VKOpeningProof<E> {
     }
 }
 
-/// Compress a verifying key using KZG commitments.
-///
-/// Commits to the `gamma_abc_g1` vector as a polynomial evaluated at
-/// successive powers, reducing VK size from O(n) to O(1).
-///
-/// # Arguments
-/// * `vk` - The full verifying key to compress
-/// * `srs` - A KZG SRS with max_degree >= vk.gamma_abc_g1.len()
-///
-/// # Returns
-/// A compressed verifying key with the IC vector replaced by a single commitment.
-pub fn compress_vk<E: Pairing>(
-    vk: &VerifyingKey<E>,
-    srs: &UniversalSRS<E>,
-) -> CompressedVerifyingKey<E> {
-    let n = vk.gamma_abc_g1.len();
-    assert!(
-        srs.max_degree >= n,
-        "SRS max_degree ({}) must be >= IC length ({})",
-        srs.max_degree,
-        n
-    );
-
-    // Commit to IC points: C = Σ γ_abc_g1[i] · τ^i (using SRS powers as scalars)
-    // We treat the IC points as "scalars" in the commitment by computing
-    // a linear combination using Lagrange basis at evaluation domain points.
-    //
-    // Simpler approach: compute commitment as MSM of IC points with
-    // deterministic challenge powers: C = Σ r^i · IC[i]
-    // where r = hash(vk) for reproducibility.
-    let r = deterministic_challenge::<E>(vk);
-    let mut r_powers = Vec::with_capacity(n);
-    let mut acc = E::ScalarField::one();
-    for _ in 0..n {
-        r_powers.push(acc);
-        acc *= r;
-    }
-
-    let ic_commitment = E::G1::msm(&vk.gamma_abc_g1, &r_powers)
-        .expect("IC commitment MSM failed")
-        .into_affine();
-
+/// Compress a verifying key by replacing its IC vector with a digest.
+pub fn compress_vk<E: Pairing>(vk: &VerifyingKey<E>) -> CompressedVerifyingKey<E> {
     CompressedVerifyingKey {
         alpha_g1: vk.alpha_g1,
         beta_g2: vk.beta_g2,
         gamma_g2: vk.gamma_g2,
         delta_g2: vk.delta_g2,
-        ic_commitment,
-        num_public_inputs: n - 1,
+        ic_digest: ic_digest::<E>(&vk.gamma_abc_g1),
+        num_public_inputs: vk.gamma_abc_g1.len().saturating_sub(1),
     }
 }
 
-/// Create an opening proof for a specific set of public inputs.
-///
-/// The prover generates this alongside the SNARK proof to allow the verifier
-/// to check the IC contribution without the full IC vector.
-pub fn create_vk_opening<E: Pairing>(
-    vk: &VerifyingKey<E>,
-    public_inputs: &[E::ScalarField],
-) -> VKOpeningProof<E> {
-    let n = vk.gamma_abc_g1.len();
-    assert_eq!(
-        public_inputs.len() + 1,
-        n,
-        "Expected {} public inputs, got {}",
-        n - 1,
-        public_inputs.len()
-    );
-
-    let r = deterministic_challenge::<E>(vk);
-
-    // Compute aggregated IC: vk_x = IC[0] + Σ input[i] · IC[i+1]
-    let mut vk_x = vk.gamma_abc_g1[0].into_group();
-    for (inp, base) in public_inputs.iter().zip(vk.gamma_abc_g1[1..].iter()) {
-        vk_x += &base.mul_bigint(inp.into_bigint());
-    }
-
-    // Compute the quotient witness for the opening proof
-    // W = (C - vk_x) / (r - eval_point) in the group
-    // For our batched scheme, we compute the opening at evaluation point r
-    let mut weighted_sum = E::G1::zero();
-    let mut r_power = E::ScalarField::one();
-    for ic_point in &vk.gamma_abc_g1 {
-        weighted_sum += ic_point.into_group() * r_power;
-        r_power *= r;
-    }
-
-    // The proof is the difference between commitment and expected value,
-    // divided by (X - eval_point). For simplicity with group elements,
-    // we use a Schnorr-like proof that the commitment is correct.
-    let proof_element = weighted_sum.into_affine();
-
+/// Package the IC points a verifier holding only the compressed key needs.
+pub fn create_vk_opening<E: Pairing>(vk: &VerifyingKey<E>) -> VKOpeningProof<E> {
     VKOpeningProof {
-        proof: proof_element,
-        aggregated_ic: vk_x.into_affine(),
-        eval_point: r,
+        gamma_abc_g1: vk.gamma_abc_g1.clone(),
     }
 }
 
-/// Verify a compressed VK opening proof.
-///
-/// Checks that the claimed `aggregated_ic` is consistent with the
-/// compressed VK's `ic_commitment` and the provided public inputs.
-///
-/// # Arguments
-/// * `cvk` - The compressed verifying key
-/// * `opening` - The opening proof
-/// * `public_inputs` - The public inputs used in verification
-///
-/// # Returns
-/// `true` if the opening is valid
+/// Check that the supplied IC points are the ones the compressed key commits to.
 pub fn verify_vk_opening<E: Pairing>(
     cvk: &CompressedVerifyingKey<E>,
     opening: &VKOpeningProof<E>,
-    _public_inputs: &[E::ScalarField],
 ) -> bool {
-    // Check: the opening proof element should equal the commitment
-    // (since we used deterministic challenge, verifier can recheck)
-    //
-    // Pairing check: e(proof, G2) == e(ic_commitment, G2)
-    // This verifies the opening is consistent with the commitment.
-    let lhs = E::pairing(opening.proof, E::G2Affine::generator());
-    let rhs = E::pairing(cvk.ic_commitment, E::G2Affine::generator());
-    lhs == rhs
+    opening.gamma_abc_g1.len() == cvk.num_public_inputs + 1
+        && ic_digest::<E>(&opening.gamma_abc_g1) == cvk.ic_digest
 }
 
-/// Verify a proof using a compressed VK.
+/// Verify a Groth16 proof using a compressed VK and the supplied IC points.
 ///
-/// Combines the standard Groth16 pairing check with the VK opening verification.
-/// The aggregated IC point from the opening proof is used directly in the
-/// pairing equation, avoiding the need to reconstruct it from the full IC vector.
+/// The IC points are authenticated against the digest, then the standard
+/// verifier recomputes the public-input term itself.
 pub fn verify_with_compressed_vk<E: Pairing>(
     cvk: &CompressedVerifyingKey<E>,
     opening: &VKOpeningProof<E>,
-    proof: &crate::Proof<E>,
+    proof: &Proof<E>,
     public_inputs: &[E::ScalarField],
 ) -> bool {
-    // Step 1: Verify the VK opening
-    if !verify_vk_opening(cvk, opening, public_inputs) {
+    if !verify_vk_opening(cvk, opening) {
         return false;
     }
-
-    // Step 2: Standard Groth16 pairing check using the aggregated IC from opening
-    use core::ops::Neg;
-    let neg_gamma = cvk.gamma_g2.into_group().neg().into_affine();
-    let neg_delta = cvk.delta_g2.into_group().neg().into_affine();
-
-    let ml = E::multi_miller_loop(
-        [
-            <E::G1Affine as Into<E::G1Prepared>>::into(proof.a),
-            opening.aggregated_ic.into(),
-            proof.c.into(),
-        ],
-        [
-            proof.b.into(),
-            E::G2Prepared::from(neg_gamma),
-            E::G2Prepared::from(neg_delta),
-        ],
-    );
-    let result = E::final_exponentiation(ml).unwrap();
-    let target = E::pairing(cvk.alpha_g1, cvk.beta_g2);
-    result == target
+    let vk = VerifyingKey {
+        alpha_g1: cvk.alpha_g1,
+        beta_g2: cvk.beta_g2,
+        gamma_g2: cvk.gamma_g2,
+        delta_g2: cvk.delta_g2,
+        gamma_abc_g1: opening.gamma_abc_g1.clone(),
+    };
+    let se_proof = SimExtractableProof {
+        groth16_proof: proof.clone(),
+        se_element: None,
+        proof_hash: E::ScalarField::zero(),
+    };
+    crate::Groth16::<E>::verify_proof(&crate::prepare_verifying_key(&vk), &se_proof, public_inputs)
+        .unwrap_or(false)
 }
 
 /// Compute size savings from VK compression.
@@ -272,12 +152,12 @@ pub fn compression_stats<E: Pairing>(vk: &VerifyingKey<E>) -> CompressionStats {
     let g2_size = E::G2Affine::generator().compressed_size();
 
     let original_size = g1_size + 3 * g2_size + n * g1_size; // alpha + beta + gamma + delta + IC
-    let compressed_size = g1_size + 3 * g2_size + g1_size; // alpha + beta + gamma + delta + commitment
+    let compressed_size = g1_size + 3 * g2_size + 32; // alpha + beta + gamma + delta + digest
 
     CompressionStats {
         original_bytes: original_size,
         compressed_bytes: compressed_size,
-        savings_bytes: original_size - compressed_size,
+        savings_bytes: original_size.saturating_sub(compressed_size),
         compression_ratio: original_size as f64 / compressed_size as f64,
         num_ic_points: n,
     }
@@ -298,25 +178,21 @@ pub struct CompressionStats {
     pub num_ic_points: usize,
 }
 
-/// Compute a deterministic challenge from the VK for reproducibility.
-fn deterministic_challenge<E: Pairing>(vk: &VerifyingKey<E>) -> E::ScalarField {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(b"unigroth-vk-compression-v1");
+/// Domain-separated SHA-256 digest of an IC vector (length-prefixed).
+fn ic_digest<E: Pairing>(ic: &[E::G1Affine]) -> [u8; 32] {
     let mut buf = Vec::new();
-    for g in &vk.gamma_abc_g1 {
-        buf.clear();
-        g.serialize_compressed(&mut buf).unwrap();
-        hasher.update(&buf);
-    }
-    let hash = hasher.finalize();
-    E::ScalarField::from_le_bytes_mod_order(&hash)
+    ic.serialize_compressed(&mut buf)
+        .expect("serializing to a Vec cannot fail");
+    Sha256::new()
+        .chain_update(crate::config::DOMAIN_VK_COMPRESSION)
+        .chain_update(&buf)
+        .finalize()
+        .into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kzg::UniversalSRS;
     use crate::Groth16;
     use ark_bn254::{Bn254, Fr};
     use ark_crypto_primitives::snark::SNARK;
@@ -352,11 +228,7 @@ mod tests {
         let circuit = TestCircuit { x: None };
         let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng).unwrap();
 
-        // Create SRS
-        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
-
-        // Compress VK
-        let cvk = compress_vk(&vk, &srs);
+        let cvk = compress_vk(&vk);
         assert_eq!(cvk.num_public_inputs, 1);
 
         // Generate a proof
@@ -365,8 +237,7 @@ mod tests {
 
         let public_inputs = vec![x * x];
 
-        // Create opening proof
-        let opening = create_vk_opening(&vk, &public_inputs);
+        let opening = create_vk_opening(&vk);
 
         // Verify with compressed VK
         assert!(
@@ -382,8 +253,7 @@ mod tests {
         let circuit = TestCircuit { x: None };
         let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng).unwrap();
 
-        let srs = UniversalSRS::<Bn254>::setup(64, &mut rng);
-        let cvk = compress_vk(&vk, &srs);
+        let cvk = compress_vk(&vk);
 
         let x = Fr::from(5u64);
         let proof = Groth16::<Bn254>::prove(&pk, TestCircuit { x: Some(x) }, &mut rng).unwrap();
@@ -391,22 +261,27 @@ mod tests {
         let correct_inputs = vec![x * x];
         let wrong_inputs = vec![Fr::from(999u64)];
 
-        // Opening with correct inputs should verify
-        let opening = create_vk_opening(&vk, &correct_inputs);
+        let opening = create_vk_opening(&vk);
         assert!(verify_with_compressed_vk(
             &cvk,
             &opening,
             &proof.groth16_proof,
             &correct_inputs
         ));
-
-        // Opening with wrong inputs: the aggregated IC will be wrong,
-        // so the pairing check will fail
-        let bad_opening = create_vk_opening(&vk, &wrong_inputs);
         assert!(
-            !verify_with_compressed_vk(&cvk, &bad_opening, &proof.groth16_proof, &wrong_inputs),
+            !verify_with_compressed_vk(&cvk, &opening, &proof.groth16_proof, &wrong_inputs),
             "wrong public inputs must be rejected"
         );
+
+        // Substituted IC points must not match the digest.
+        let mut bad_opening = opening.clone();
+        bad_opening.gamma_abc_g1[1] = bad_opening.gamma_abc_g1[0];
+        assert!(!verify_with_compressed_vk(
+            &cvk,
+            &bad_opening,
+            &proof.groth16_proof,
+            &correct_inputs
+        ));
     }
 
     #[test]
@@ -426,15 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn test_deterministic_challenge() {
+    fn test_ic_digest_deterministic() {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
 
         let circuit = TestCircuit { x: None };
         let (_, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng).unwrap();
 
-        // Same VK should produce same challenge
-        let c1 = deterministic_challenge::<Bn254>(&vk);
-        let c2 = deterministic_challenge::<Bn254>(&vk);
-        assert_eq!(c1, c2, "deterministic challenge must be reproducible");
+        let d1 = ic_digest::<Bn254>(&vk.gamma_abc_g1);
+        let d2 = ic_digest::<Bn254>(&vk.gamma_abc_g1);
+        assert_eq!(d1, d2, "IC digest must be reproducible");
+        assert_ne!(d1, ic_digest::<Bn254>(&vk.gamma_abc_g1[..1]));
     }
 }

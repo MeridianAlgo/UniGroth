@@ -25,6 +25,17 @@
 //! `[commitment, nullifier, nonce]`
 //!
 //! The verifier MUST pass them in that exact order.
+//!
+//! ## Deployment notes
+//!
+//! * The server must issue a fresh, unpredictable nonce per login and must
+//!   never issue nonce 0, since `H(s, 0)` is the commitment itself.
+//! * Store and deduplicate nullifiers as canonical field elements (or their
+//!   canonical 32-byte encoding); Groth16 proofs are rerandomizable, so never
+//!   deduplicate on proof bytes.
+//! * `commitment` and `nullifier` are deterministic in `s`: a low-entropy
+//!   secret (e.g. a password) can be brute-forced offline from the public
+//!   commitment. Derive `s` from a high-entropy key.
 
 #![allow(missing_docs)]
 
@@ -52,6 +63,9 @@ pub fn mimc_round_constants<F: PrimeField>() -> Vec<F> {
 ///
 /// Identical evaluation to the in-circuit constraints below — use this in
 /// the browser/host to compute commitments / nullifiers off-circuit.
+///
+/// # Panics
+/// Panics if `constants.len() != MIMC_ROUNDS`; use [`mimc_round_constants`].
 pub fn mimc_hash<F: PrimeField>(mut xl: F, mut xr: F, constants: &[F]) -> F {
     assert_eq!(constants.len(), MIMC_ROUNDS);
     for c in constants.iter().take(MIMC_ROUNDS) {
@@ -206,11 +220,9 @@ impl<F: PrimeField> AuthCircuit<F> {
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for AuthCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        assert_eq!(
-            self.constants.len(),
-            MIMC_ROUNDS,
-            "auth circuit requires exactly MIMC_ROUNDS constants"
-        );
+        if self.constants.len() != MIMC_ROUNDS {
+            return Err(SynthesisError::Unsatisfiable);
+        }
 
         // ── Public inputs ────────────────────────────────────────────────
         let commitment_var =

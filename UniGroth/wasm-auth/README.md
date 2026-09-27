@@ -24,8 +24,8 @@ cargo run --release --features auth-bin --bin auth_setup -- --out keys/
 #   keys/vk.bin  (≈ 360 B)   — verifying key, ship to the server
 ```
 
-For production, replace the deterministic seed with a multi-party
-ceremony (or pass `--rand`).
+Setup randomness comes from the OS CSPRNG and is never written to disk.
+For production, prefer a multi-party ceremony over a single machine.
 
 ## 2 — Build the WASM bundle
 
@@ -53,8 +53,10 @@ await init();
 const secret = new TextEncoder().encode("hunter2");
 const commit = commitment(secret);             // Uint8Array(32)
 
-// Upload: server issues a fresh 32-byte nonce
+// Upload: server issues a fresh 32-byte nonce. It must be a canonical,
+// non-zero field element; clearing the top 3 bits keeps it below the modulus.
 const nonce  = crypto.getRandomValues(new Uint8Array(32));
+nonce[0] &= 0x1f;
 const nf     = nullifier(secret, nonce);
 
 // Generate the proof
@@ -91,7 +93,10 @@ let ok = verify(&vk_bytes, &proof, &commitment, &nullifier, &nonce)?;
 ```
 
 Server-side anti-replay: persist `(commitment, nullifier)` pairs; reject any
-repeat nullifier for a given commitment.
+repeat nullifier for a given commitment. `verify` rejects non-canonical and
+wrong-length encodings, so each nullifier has exactly one byte form. Never
+deduplicate on proof bytes: Groth16 proofs can be rerandomized. Use a
+high-entropy secret; the public commitment allows offline guessing of weak ones.
 
 ## Wire format
 
@@ -100,9 +105,9 @@ repeat nullifier for a given commitment.
 | `pk.bin`     | ~376 KB    | `ark-serialize` compressed `ProvingKey`   |
 | `vk.bin`     | ~360 B     | `ark-serialize` compressed `VerifyingKey` |
 | `proof`      | ~192 B     | `ark-serialize` compressed Groth16 proof  |
-| field elem   | 32 B       | big-endian BN254 scalar                   |
+| field elem   | 32 B       | canonical big-endian BN254 scalar (< r)   |
 | `secret`     | arbitrary  | hashed to BN254 via SHA-256 (in-crate)    |
-| `nonce`      | 32 B       | big-endian BN254 scalar                   |
+| `nonce`      | 32 B       | canonical, non-zero BN254 scalar          |
 
 ## Soundness
 

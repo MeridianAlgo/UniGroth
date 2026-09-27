@@ -80,8 +80,26 @@ fn format_g2(p: &G2Affine) -> ((String, String), (String, String)) {
     ((x_c1, x_c0), (y_c1, y_c0))
 }
 
+/// Panic unless `name` is a plain identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+///
+/// Names are spliced into generated source code; anything else could inject
+/// arbitrary code into the generated verifier.
+pub(crate) fn assert_identifier(name: &str) {
+    let mut chars = name.chars();
+    let ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    assert!(
+        ok,
+        "invalid identifier {name:?}: use [A-Za-z_][A-Za-z0-9_]*"
+    );
+}
+
 /// Generate a Solidity verifier contract for the given verifying key.
+///
+/// # Panics
+/// Panics if `contract_name` is not a plain identifier or the key has no IC points.
 pub fn generate_solidity_verifier(vk: &VerifyingKey<Bn254>, contract_name: &str) -> String {
+    assert_identifier(contract_name);
     let num_inputs = vk.gamma_abc_g1.len() - 1;
 
     let (alpha_x, alpha_y) = format_g1(&vk.alpha_g1);
@@ -124,7 +142,7 @@ library Pairing {{
         input[0] = p1.X; input[1] = p1.Y;
         input[2] = p2.X; input[3] = p2.Y;
         bool success;
-        assembly {{ success := staticcall(sub(gas(), 2000), 6, input, 0xc0, r, 0x60) }}
+        assembly {{ success := staticcall(sub(gas(), 2000), 6, input, 0x80, r, 0x40) }}
         require(success, "ec-add-failed");
     }}
 
@@ -313,6 +331,19 @@ mod tests {
         assert!(sol.contains("function verifyProof("));
         assert!(sol.contains("pairingProd4"));
         assert!(sol.contains("SPDX-License-Identifier"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid identifier")]
+    fn test_solidity_rejects_injected_name() {
+        let mut rng = make_rng();
+        let (_, vk) =
+            Groth16::<Bn254>::circuit_specific_setup(MulCircuit { a: None, b: None }, &mut rng)
+                .unwrap();
+        generate_solidity_verifier(
+            &vk,
+            "X { function kill() public { selfdestruct(payable(msg.sender)); } } contract Y",
+        );
     }
 
     #[test]

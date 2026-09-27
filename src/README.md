@@ -1,37 +1,36 @@
-# UniGroth — JavaScript / Circom Reference Implementation
+# UniGroth — JavaScript Reference Implementation
 
-This directory contains a JavaScript reference implementation and Circom circuit definition for the phrase-knowledge proof used in early UniGroth prototyping.
+A small R1CS toolkit in plain JavaScript: build circuits (including a 91-round MiMC hash), compute witnesses, and check them.
 
-> **Note:** The production implementation is the Rust library in `../UniGroth/`. This JS layer is a reference/tooling aid.
+> **Not zero-knowledge.** A proof from `prover.js` carries the full witness, including private inputs, and `verifier.js` re-checks every constraint. It shows a computation was done correctly; it does not hide anything. For private proofs, use the Rust library in `../UniGroth/`, or `../phrase.circom` with snarkjs.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `index.js` | Entry point — orchestrates circuit compilation, proof generation, and verification |
-| `circuit.js` | Circom circuit wrapper — compiles `phrase.circom` and generates witness |
-| `field.js` | BN254 field arithmetic helpers (addition, multiplication, modular inverse) |
-| `commitment.js` | SHA-256 commitment scheme for the phrase preimage |
-| `prover.js` | snarkjs-based Groth16 prover wrapper |
-| `verifier.js` | snarkjs-based Groth16 verifier wrapper |
+| `index.js` | `UniGroth` API: `newCircuit`, `compile`, `prove`, `verify`, `mimcHash` |
+| `circuit.js` | Circuit builder, witness computation, MiMC gadget |
+| `field.js` | BN254 scalar-field arithmetic |
+| `prover.js` | Checks the witness and packages it as a proof |
+| `verifier.js` | Canonical-encoding checks, public-input binding, full constraint check |
+| `commitment.js` | SHA-256 Merkle tree and Fiat-Shamir transcript utilities |
 
 ## Usage
 
-```bash
-# Install dependencies
-npm install
+```js
+const { UniGroth } = require('./src');
 
-# Run the full pipeline
-node src/index.js
+const c = UniGroth.newCircuit('preimage');
+const expected = c.publicInput('expectedHash');
+const secret = c.privateInput('secret');
+c.assertEqual(c.hash(secret), expected);
+const compiled = UniGroth.compile(c);
 
-# Compute the phrase hash (for generating test inputs)
-node compute_hash.js
+const proof = UniGroth.prove(compiled, { secret: 5n, expectedHash: UniGroth.mimcHash(5n) });
+console.log(UniGroth.verify(compiled, proof).passed); // true
 ```
 
-## Circuit
-
-`phrase.circom` defines a circuit that proves knowledge of a phrase whose SHA-256 hash matches a public commitment — without revealing the phrase. Used for demonstration purposes.
-
-## Relation to Rust Implementation
-
-The Rust library (`../UniGroth/`) provides all production features: universal setup, simulation-extractability, folding, aggregation, and Solidity verifier generation. This JS layer uses standard snarkjs/Groth16 and is kept for tooling compatibility.
+```bash
+npm test               # verifier tests, including forgery attempts
+node compute_hash.js   # Poseidon hash input for phrase.circom (needs npm install)
+```

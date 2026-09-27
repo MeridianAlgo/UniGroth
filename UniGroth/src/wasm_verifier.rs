@@ -75,7 +75,11 @@ pub struct WasmSizeEstimate {
 ///
 /// The output is a complete `lib.rs` that can be compiled with `wasm-pack`.
 /// It embeds the verifying key and exposes `verify_proof()` via wasm-bindgen.
+///
+/// # Panics
+/// Panics if `circuit_name` is not a plain identifier or the key has no IC points.
 pub fn generate_wasm_verifier(vk: &VerifyingKey<Bn254>, circuit_name: &str) -> String {
+    crate::solidity::assert_identifier(circuit_name);
     let num_inputs = vk.gamma_abc_g1.len() - 1;
 
     let alpha_g1_bytes = g1_compressed_hex(&vk.alpha_g1);
@@ -127,7 +131,7 @@ fn load_vk() -> (G1Affine, G2Affine, G2Affine, G2Affine, Vec<G1Affine>) {{
 /// * `proof_a` - Compressed G1 point (A element)
 /// * `proof_b` - Compressed G2 point (B element)
 /// * `proof_c` - Compressed G1 point (C element)
-/// * `public_inputs` - Serialized field elements (32 bytes each, little-endian)
+/// * `public_inputs` - Canonical field elements (32 bytes each, little-endian, < r)
 ///
 /// # Returns
 /// `true` if the proof is valid, `false` otherwise.
@@ -150,14 +154,23 @@ pub fn verify_proof(
         Ok(p) => p,
         Err(_) => return false,
     }};
+    // Identity points would drop the prover's term from the pairing equation.
+    if a.is_zero() || b.is_zero() || c.is_zero() {{
+        return false;
+    }}
 
-    // Parse public inputs (32 bytes each, little-endian)
+    // Parse public inputs: 32 bytes each, little-endian, canonical (< r) so
+    // that each input has exactly one accepted encoding.
     if public_inputs.len() != NUM_PUBLIC_INPUTS * 32 {{
         return false;
     }}
-    let inputs: Vec<Fr> = (0..NUM_PUBLIC_INPUTS)
-        .map(|i| Fr::from_le_bytes_mod_order(&public_inputs[i*32..(i+1)*32]))
-        .collect();
+    let mut inputs: Vec<Fr> = Vec::with_capacity(NUM_PUBLIC_INPUTS);
+    for chunk in public_inputs.chunks_exact(32) {{
+        match Fr::deserialize_compressed(chunk) {{
+            Ok(x) => inputs.push(x),
+            Err(_) => return false,
+        }}
+    }}
 
     let (alpha_g1, beta_g2, gamma_g2, delta_g2, ic) = load_vk();
 
@@ -177,7 +190,10 @@ pub fn verify_proof(
         [a.into(), vk_x.into(), c.into()],
         [b.into(), neg_gamma.into(), neg_delta.into()],
     );
-    let result = Bn254::final_exponentiation(ml).unwrap();
+    let result = match Bn254::final_exponentiation(ml) {{
+        Some(r) => r,
+        None => return false,
+    }};
 
     let target = Bn254::pairing(alpha_g1, beta_g2);
     result == target
@@ -206,7 +222,11 @@ pub fn circuit_name() -> String {{
 }
 
 /// Generate a Cargo.toml for the WASM verifier project.
+///
+/// # Panics
+/// Panics if `circuit_name` is not a plain identifier.
 pub fn generate_wasm_cargo_toml(circuit_name: &str) -> String {
+    crate::solidity::assert_identifier(circuit_name);
     format!(
         r#"[package]
 name = "{circuit_name}-verifier"
@@ -278,6 +298,16 @@ mod tests {
         assert!(src.contains("NUM_PUBLIC_INPUTS: usize = 1"));
         assert!(src.contains("deserialize_compressed"));
         assert!(src.contains("multi_miller_loop"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid identifier")]
+    fn test_wasm_rejects_injected_name() {
+        generate_wasm_cargo_toml(
+            "x\"
+[build]
+rustc = \"evil",
+        );
     }
 
     #[test]

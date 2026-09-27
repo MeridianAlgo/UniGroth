@@ -88,7 +88,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         let domain_size = cs.num_constraints() + cs.num_instance_variables();
         let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let t = domain.sample_element_outside_domain(rng);
+        // `t` is the secret evaluation point (toxic waste); zeroized after use.
+        let mut t = domain.sample_element_outside_domain(rng);
 
         end_timer!(domain_time);
         ///////////////////////////////////////////////////////////////////////////
@@ -108,8 +109,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             .map(|i| usize::from(!b[i].is_zero()))
             .sum();
 
-        let mut gamma_inverse = gamma.inverse().unwrap();
-        let mut delta_inverse = delta.inverse().unwrap();
+        let mut gamma_inverse = gamma.inverse().ok_or(SynthesisError::DivisionByZero)?;
+        let mut delta_inverse = delta.inverse().ok_or(SynthesisError::DivisionByZero)?;
 
         let gamma_abc = cfg_iter!(a[..num_instance_variables])
             .zip(&b[..num_instance_variables])
@@ -175,12 +176,14 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         // Compute the H-query
         let h_time = start_timer!(|| "Calculate H");
-        let h_scalars =
+        let mut h_scalars =
             QAP::h_query_scalars::<_, D<E::ScalarField>>(m_raw - 1, t, zt, delta_inverse)?;
         let h_query = g1_table.batch_mul(&h_scalars);
         end_timer!(h_time);
 
-        // delta_inverse last used above; zero it now.
+        // t, delta_inverse and the powers of t are last used above; zero them now.
+        h_scalars.iter_mut().for_each(Zeroize::zeroize);
+        t.zeroize();
         delta_inverse.zeroize();
 
         // Compute the L-query

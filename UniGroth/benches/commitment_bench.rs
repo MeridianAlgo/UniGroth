@@ -7,7 +7,7 @@
 //   cargo bench --no-default-features --features "std parallel" --bench commitment-benches
 
 use ark_bn254::{Fr, G1Projective as G};
-use ark_ff::UniformRand;
+use ark_ff::{Field, UniformRand};
 use ark_std::{rand::SeedableRng, time::Instant};
 use std::hint::black_box;
 
@@ -44,7 +44,7 @@ fn bench_fri() {
 
         // Verify
         let t_verify = Instant::now();
-        let ok = black_box(fri_verify(&comm, &proof, &cfg));
+        let ok = black_box(fri_verify::<Fr>(&comm, &proof, &cfg));
         let verify_us = t_verify.elapsed().as_micros();
 
         let est_bytes = cfg.proof_size_estimate(n);

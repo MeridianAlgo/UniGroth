@@ -1,4 +1,5 @@
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ff::PrimeField;
 
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16};
 
@@ -34,28 +35,22 @@ pub fn prepare_verifying_key_with_delta<E: Pairing>(
 }
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
-    /// Validate that all proof elements are non-identity curve points.
+    /// Validate that all proof elements are non-identity curve points and that
+    /// no BG18 element is attached.
     ///
-    /// Guards against identity-element attacks: A=0 makes e(0, B) = 1 in GT,
-    /// which trivially satisfies the pairing equation for any B, C, and inputs.
+    /// A=0 or B=0 makes e(A, B) = 1 in GT, which removes the prover's only
+    /// degree of freedom from the equation. A BG18 element `D` is rejected
+    /// because the extra `e(δ_g1, -D)` term lets anyone shift value between
+    /// `C` and `D` (the proof is malleable), and honest BG18 proofs from
+    /// `make_sim_extractable` never satisfied that equation anyway.
     ///
-    /// Subgroup membership (against small-subgroup attacks) is guaranteed by
-    /// arkworks' `CanonicalDeserialize` for standard curves (BN254, BLS12-381)
-    /// — both enforce on-curve + subgroup checks during deserialization. For
-    /// programmatically-constructed proofs on curves with cofactor h>1, callers
-    /// should apply cofactor clearing before calling verify.
+    /// Subgroup membership is enforced by arkworks' `CanonicalDeserialize`
+    /// with validation. Proofs built in memory on curves with cofactor h>1
+    /// must be subgroup-checked by the caller.
     #[inline]
     fn validate_proof_points(proof: &crate::SimExtractableProof<E>) -> bool {
         let p = &proof.groth16_proof;
-        if p.a.is_zero() || p.c.is_zero() {
-            return false;
-        }
-        if let Some(d) = proof.se_element {
-            if d.is_zero() {
-                return false;
-            }
-        }
-        true
+        proof.se_element.is_none() && !p.a.is_zero() && !p.b.is_zero() && !p.c.is_zero()
     }
 
     /// Prepare proof inputs for use with [`verify_proof_with_prepared_inputs`],
@@ -74,17 +69,17 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             return Err(SynthesisError::Unsatisfiable);
         }
 
-        let g_ic = if public_inputs.is_empty() {
-            pvk.vk.gamma_abc_g1[0].into_group()
+        let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
+        if public_inputs.len() < crate::config::VERIFIER_MSM_THRESHOLD {
+            // For a handful of inputs, direct scalar multiplication beats
+            // Pippenger's bucket setup and thread dispatch.
+            for (x, base) in public_inputs.iter().zip(&pvk.vk.gamma_abc_g1[1..]) {
+                g_ic += base.mul_bigint(x.into_bigint());
+            }
         } else {
-            // Batch MSM replaces n individual mul_bigint calls.
-            // Pippenger's algorithm: ~O(n / log n) group ops vs O(n * log p) naive.
-            let ic_acc = E::G1::msm(&pvk.vk.gamma_abc_g1[1..], public_inputs).map_err(|e| {
-                let _ = e;
-                SynthesisError::Unsatisfiable
-            })?;
-            pvk.vk.gamma_abc_g1[0].into_group() + ic_acc
-        };
+            g_ic += E::G1::msm(&pvk.vk.gamma_abc_g1[1..], public_inputs)
+                .map_err(|_| SynthesisError::Unsatisfiable)?;
+        }
 
         Ok(g_ic)
     }
@@ -97,57 +92,27 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         proof: &crate::SimExtractableProof<E>,
         prepared_inputs: &E::G1,
     ) -> R1CSResult<bool> {
-        // Subgroup membership check: prevents small-subgroup / rogue-key attacks
-        // where a malicious prover submits proof elements in a small-order subgroup.
         if !Self::validate_proof_points(proof) {
             return Ok(false);
         }
 
+        // e(A, B) · e(inputs, -γ) · e(C, -δ) = e(α, β)
         let p = &proof.groth16_proof;
-
-        if let Some(d) = proof.se_element {
-            // BG18 SE verification: 4-pairing check
-            // e(A, B) · e(inputs, -γ) · e(C, -δ) · e(δ_g1, -D) = e(α, β)
-            let qap = E::multi_miller_loop(
-                [
-                    <E::G1Affine as Into<E::G1Prepared>>::into(p.a),
-                    prepared_inputs.into_affine().into(),
-                    p.c.into(),
-                    pvk.delta_g1_prepared.clone(),
-                ],
-                [
-                    p.b.into(),
-                    pvk.gamma_g2_neg_pc.clone(),
-                    pvk.delta_g2_neg_pc.clone(),
-                    E::G2Prepared::from(d.into_group().neg().into_affine()),
-                ],
-            );
-            // final_exponentiation returns None only if the Miller loop output is
-            // identity (degenerate pairing). Treat as invalid proof, not a panic.
-            let test = match E::final_exponentiation(qap) {
-                Some(t) => t,
-                None => return Ok(false),
-            };
-            Ok(test.0 == pvk.alpha_g1_beta_g2)
-        } else {
-            // Standard 3-pairing Groth16 verification (ROM SE or no SE)
-            let qap = E::multi_miller_loop(
-                [
-                    <E::G1Affine as Into<E::G1Prepared>>::into(p.a),
-                    prepared_inputs.into_affine().into(),
-                    p.c.into(),
-                ],
-                [
-                    p.b.into(),
-                    pvk.gamma_g2_neg_pc.clone(),
-                    pvk.delta_g2_neg_pc.clone(),
-                ],
-            );
-            let test = match E::final_exponentiation(qap) {
-                Some(t) => t,
-                None => return Ok(false),
-            };
-            Ok(test.0 == pvk.alpha_g1_beta_g2)
+        let qap = E::multi_miller_loop(
+            [
+                <E::G1Affine as Into<E::G1Prepared>>::into(p.a),
+                prepared_inputs.into_affine().into(),
+                p.c.into(),
+            ],
+            [
+                p.b.into(),
+                pvk.gamma_g2_neg_pc.clone(),
+                pvk.delta_g2_neg_pc.clone(),
+            ],
+        );
+        match E::final_exponentiation(qap) {
+            Some(test) => Ok(test.0 == pvk.alpha_g1_beta_g2),
+            None => Ok(false),
         }
     }
 

@@ -1,547 +1,205 @@
 <h1 align="center">UniGroth</h1>
 
 <p align="center">
-  <strong>Everything Groth16 is. Everything it isn't. In one system.</strong>
+  <strong>A faster, hardened Groth16 in Rust, with batch verification and a lab of research extensions.</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-156%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-288%20Rust%20%2B%204%20JS-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen" alt="Clippy">
   <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue" alt="License">
-  <img src="https://img.shields.io/badge/proof%20size-192--256%20bytes-blue" alt="Proof Size">
+  <img src="https://img.shields.io/badge/proof-128%20B%20(BN254)-blue" alt="Proof Size">
 </p>
 
 ---
 
-## The Problem
+## What it is
 
-Groth16 is the gold standard: 192-byte proofs, 3-pairing verification, battle-tested at scale. But it has hard limits -- a per-circuit trusted setup, no recursion, no aggregation, no post-quantum path, and no simulation-extractability.
+UniGroth is an extension of [`ark-groth16`](https://github.com/arkworks-rs/groth16). The core is standard Groth16 (3-pairing verification, 2 G1 + 1 G2 proofs: 128 bytes on BN254, 192 bytes on BLS12-381) with a faster prover, stricter verifier checks, and Fiat-Shamir batch verification. Around the core sit research modules (lookups, folding, polynomial commitments, a post-quantum scaffold), each documented with its current limits.
 
-Every alternative gives up what makes Groth16 great. PLONK and Marlin trade proof size for universality. STARKs trade proof size for transparency. Halo2 trades simplicity for recursion.
+**Research software. Audit before production or mainnet use.**
 
-**UniGroth is a research extension of `ark-groth16` that adds each of these capabilities as its own path** — universal setup, simulation-extractability, folding, aggregation, and a post-quantum direction — while keeping a small classical core. They are separate proof objects with separate sizes, not a single artifact that has everything at once. Read the [scope notes](#status-and-honest-scope) before quoting any headline.
+## Why use it over plain Groth16
 
----
+| | ark-groth16 | **UniGroth** |
+|---|---|---|
+| Prove, 2^12 constraints (BLS12-381) | 20.6 ms | **14.0 ms (1.47× faster)** |
+| Prove, 2^16 constraints | 160 ms | **134 ms (1.19× faster)** |
+| Verify | 1.36–1.39 ms | 1.35–1.36 ms (parity) |
+| Batch-verify 32 proofs | 24.9 ms (one by one) | **7.6 ms (3.3× faster)** |
+| Rejects identity points and BG18-tagged proofs | ✗ | ✓ |
+| Toxic waste zeroized after setup | ✗ | ✓ |
+| Solidity / WASM verifier generation | ✗ | ✓ |
+| Circuit library (Poseidon, Merkle, range, MiMC auth) | ✗ | ✓ |
 
-## Head-to-Head Comparison
+Measured on a 12-thread ARM64 Windows machine with `cargo bench --bench groth16-benches` and `cargo run --release --features compare --bin compare`. Prover speedups vary run to run (an earlier run on the same machine gave 1.33× and 1.08×). Rerun on your hardware; the [Benchmarks workflow](.github/workflows/bench.yml) does the same in CI.
 
-| | Groth16 | PLONK | Marlin | Halo2 | STARKs | **UniGroth** |
-|---|---|---|---|---|---|---|
-| **Proof size** | 192 B | 1-2 KB | 2-5 KB | 5-15 KB | 50-200 KB | **192-256 B** |
-| **Verification** | 3 pairings | 10+ | 15+ | Variable | Fast (hash) | **3-5 pairings** |
-| **Trusted setup** | Per-circuit | Universal | Universal | Transparent | None | **Universal** |
-| **Simulation-extractable** | No | No | No | No | N/A | **Yes** |
-| **Folding / IVC** | No | No | No | No | Varies | **Yes** |
-| **Proof aggregation** | No | No | No | No | Varies | **Yes** |
-| **Post-quantum path** | No | No | No | No | Yes | **Yes** |
-| **Public input PoK** | No | No | No | No | No | **Yes** |
-| **VK compression** | No | No | No | No | N/A | **Yes** |
-| **Custom gates** | No | Yes | No | Yes | Yes | **Yes** |
-| **On-chain verifier gen** | Manual | Manual | No | No | No | **Auto** |
+Where the speed comes from:
 
-Each cell above is a capability the library implements somewhere. They do not all apply to one proof at the same time — see the scope notes directly below.
+| Optimization | Effect (measured) |
+|---|---|
+| Quotient polynomial on an n-point coset instead of 2n | 1.41–1.73× faster quotient FFTs |
+| `h_query` scalars by running product instead of `pow` | 13–22× faster |
+| Batch affine normalization, parallel MSMs | fewer inversions, multicore |
+| Small-input verifier uses direct scalar multiplication | removes Pippenger overhead for < 16 inputs |
 
----
-
-## Status and honest scope
-
-UniGroth is **research software**, built on [arkworks](https://github.com/arkworks-rs) as an extension of `ark-groth16`. Audit before any production or mainnet use. A few clarifications so the claims are read correctly:
-
-- **Proof size is curve and feature dependent.** The classical Groth16 core is 2 G1 + 1 G2: ~128 bytes on BN254, ~192 bytes on BLS12-381. The simulation-extractable, aggregated, and post-quantum paths are larger (up to ~256 B for SE; SnarkPack aggregates are O(log N), i.e. kilobytes; the PQ schemes are 256–516 B). There is no single 192-byte object that carries every feature at once.
-- **The features are separate paths, not one artifact.** Universal setup, folding (ProtoStar), aggregation (SnarkPack), and the PQ schemes are distinct code paths with distinct proof objects. The default prove/verify path uses `circuit_specific_setup` and the classical core. The auto-generated Solidity verifier checks that classical core only — it does not verify the universal, SE, aggregated, or PQ variants.
-- **Simulation-extractability, not "forgery resistance".** Plain Groth16 is already knowledge-sound: you cannot forge a proof of a false statement. The property UniGroth adds is simulation-extractability — non-malleability when an attacker can see other valid proofs.
-- **The post-quantum module is a commitment-and-binding scaffold, not yet a sound PQ argument.** `pq_inner` binds the witness and public inputs with SHA-256 and is deterministic and tamper-evident. It does **not** yet prove, in zero knowledge, that a witness satisfies a circuit. "Binius" and "Plonky3" name the target FRI / sumcheck designs; they are not implemented as such. Do not rely on this module for post-quantum security.
-- **Benchmarks are scoped.** The speed figures are from our suite against `ark-groth16`, classical core only, on a CI runner. They do not describe the universal, aggregated, or PQ paths. Rerun the [Benchmarks workflow](.github/workflows/bench.yml) to measure your own hardware.
-
----
-
-## Quick Start
-
-**Requirements:** Rust stable 1.70+ ([install](https://rustup.rs))
+## Quick start
 
 ```bash
 git clone https://github.com/MeridianAlgo/UniGroth.git
 cd UniGroth/UniGroth
-cargo build --release
-cargo test
+cargo test --workspace
 ```
-
-All 156 tests pass. Zero warnings.
-
-### Add to your project
 
 ```toml
 [dependencies]
 unigroth = { git = "https://github.com/MeridianAlgo/UniGroth.git" }
 ```
 
----
-
-## Prove in 10 Lines
-
 ```rust
 use unigroth::Groth16;
 use ark_bn254::Bn254;
 use ark_snark::SNARK;
+use ark_std::rand::rngs::OsRng;
 
-// Setup -- one ceremony, reusable for any circuit of this shape
-let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(my_circuit, &mut rng)?;
-
-// Prove -- simulation-extractable by default, near-zero overhead
-let proof = Groth16::<Bn254>::prove(&pk, my_circuit, &mut rng)?;
-
-// Verify -- same 3-pairing check as vanilla Groth16
+let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut OsRng)?;
+let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut OsRng)?;
 let ok = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)?;
-assert!(ok);
 ```
 
-The `prove()` call automatically applies ROM-based simulation-extractability blinding. Zero configuration.
+Always pass a cryptographically secure RNG (e.g. `OsRng`): predictable proving randomness breaks zero-knowledge, and predictable setup randomness lets anyone forge proofs.
 
----
+## Configuration
 
-## Performance
+Library-wide constants live in one module, `unigroth::config`:
 
-Numbers below are reproducible in CI: the [Benchmarks workflow](.github/workflows/bench.yml) runs `cargo bench` on every change to the prover and publishes the raw output to the run summary. The figures here are from a 4-core GitHub runner, BLS12-381 and BN254, `opt-level=3`. Your own hardware will differ; rerun the workflow to measure it.
-
-### End-to-End vs ark-groth16
-
-Measured prove and verify time, same circuit on both provers.
-
-| Operation | Circuit | ark-groth16 | UniGroth | Result |
-|-----------|---------|------------|---------|--------|
-| Prove | 2^12 | 71.3 ms | 61.9 ms | **1.15x faster** |
-| Prove | 2^16 | 676 ms | 652 ms | **1.04x faster** |
-| Verify | 2^12 | 2.02 ms | 2.18 ms | ~parity (1.08x slower) |
-| Verify | 2^16 | 2.02 ms | 2.24 ms | ~parity (1.10x slower) |
-| Proof size | — | 128 bytes | 128-161 bytes | Same core |
-
-UniGroth proves faster than ark-groth16 and verifies at parity, while adding features ark-groth16 does not have. The proving win comes from the optimizations below.
-
-### Optimization Speedups
-
-Measured (in the benchmark suite):
-
-| Optimization | What it does | Speedup |
+| Constant | Value | Meaning |
 |---|---|---|
-| `h_query_scalars` | O(n) accumulator replaces O(n log n) `.pow([i])` loop | **22-32x** (grows with n) |
-| Quotient FFTs | compute `h` on the n coset, not a 2n coset | **1.5-1.7x** |
-| Parallel MSM | rayon Pippenger partitioning, 4 cores | ~2x per-scalar at 2^16 vs 2^10 |
-
-Implemented and unit-tested, not yet in the end-to-end harness:
-
-| Optimization | What it does | Expected |
-|---|---|---|
-| Sparse QAP (CSR) | skips zero entries in the constraint matrices | ~3-5x on sparse circuits |
-| Batch affine conversion | Montgomery batch inversion | ~2.5x |
-| Proof aggregation (N=32) | 1 multi-pairing instead of 32 | ~32x verify |
-
----
+| `VERSION` | crate version | tag stored proofs and keys |
+| `SECURITY_BITS` | 128 | target security level |
+| `POSEIDON_WIDTH` / `POSEIDON_FULL_ROUNDS` / `POSEIDON_PARTIAL_ROUNDS` | 3 / 8 / 57 | Poseidon 2-to-1 parameters |
+| `VERIFIER_MSM_THRESHOLD` | 16 | inputs at which the verifier switches to MSM |
+| `DOMAIN_*` | byte strings | Fiat-Shamir / digest domain tags (part of the wire format) |
 
 ## Features
 
-### Universal Setup
+### Batch verification
 
-One KZG ceremony covers all circuits of a given size. No per-circuit ceremony.
-
-```rust
-use unigroth::{KZG, UniversalParams, UniversalSRS};
-
-// One ceremony per deployment -- anyone can update (updatable CRS)
-let srs: UniversalSRS<Bn254> = KZG::<Bn254>::setup(max_degree, &mut rng)?;
-let srs = KZG::<Bn254>::update_srs(&srs, &mut rng);
-
-// Each circuit derives its keys from the shared SRS
-let params = UniversalParams::from_srs(&srs, circuit_size);
-```
-
-### Simulation-Extractability
-
-Every proof is simulation-extractable by default. An adversary who sees simulated proofs cannot forge new ones.
-
-Two modes:
-- **ROM blinding** (default) -- near-zero overhead, SHA-256 hash mixed into randomness
-- **BG18 explicit blinding** -- +96 bytes, full algebraic security proof
-
-```rust
-use unigroth::security::{SEConfig, SEMode};
-
-let config = SEConfig { mode: SEMode::ROM }; // or SEMode::BG18
-let proof = unigroth::security::make_sim_extractable(raw_proof, &pk, &config, &mut rng);
-```
-
-### Proof Aggregation (N to 1)
-
-Compress N independent proofs into one constant-size aggregate. Verification cost drops from N pairings to one.
+Verify many proofs for one verifying key with a single multi-pairing. The batching challenge is derived by Fiat-Shamir over the key, every statement and every proof, so a bad proof cannot hide in the batch.
 
 ```rust
 use unigroth::{aggregate_proofs, verify_aggregated};
 
-let agg = aggregate_proofs(&proofs, &vks, &mut rng)?;
-let ok = verify_aggregated(&agg, &all_public_inputs)?;
+let agg = aggregate_proofs(&proofs);
+let ok = verify_aggregated(&vk, &public_inputs_per_proof, &agg);
 ```
 
-### Folding / IVC
+The bundle is O(N): it stores all N proofs. It saves verifier time, not proof size.
 
-ProtoStar-style accumulation with full relaxed R1CS decision predicate. Fold multiple instances into one, verify only the final accumulator.
+`batch_verify_optimized(&pvk, &proofs_and_inputs, &mut rng)` does the same with verifier-chosen randomness.
+
+### Batch proving
 
 ```rust
-use unigroth::{FoldingEngine, IVC};
+use unigroth::{batch_prove, BatchConfig};
 
-let mut ivc = IVC::new(circuit_params);
-for step_input in inputs {
-    ivc.step(step_input, &mut rng)?;
-}
-let final_proof = ivc.finalize(&mut rng)?;
+let result = batch_prove::<Bn254, LibsnarkReduction, _, _>(&pk, circuits, &BatchConfig::default(), &mut OsRng);
 ```
 
-### Solidity Verifier Generation
+Each proof gets its own seed drawn from your RNG.
 
-Auto-generate a gas-efficient Solidity verifier from any verifying key. Uses EIP-196/197 BN254 precompiles -- ~250k gas to verify on-chain.
+### Verifying-key compression
+
+Store a 32-byte SHA-256 digest instead of the O(n) input-commitment vector. The vector is supplied at verification time and checked against the digest; the verifier always recomputes the public-input term itself.
 
 ```rust
-use unigroth::solidity::generate_solidity_verifier;
+use unigroth::{compress_vk, create_vk_opening, verify_with_compressed_vk};
 
-let contract = generate_solidity_verifier(&vk)?;
-std::fs::write("Verifier.sol", contract)?;
-// Deploy and call verifyProof(a, b, c, inputs)
+let cvk = compress_vk(&vk);            // store this
+let opening = create_vk_opening(&vk);  // ship alongside proofs
+let ok = verify_with_compressed_vk(&cvk, &opening, &proof, &public_inputs);
 ```
 
-### Post-Quantum Migration Path
+### Circuit library
 
-UniGroth is the only Groth16-class system with a concrete post-quantum migration path. Three SHA-256-backed inner provers let you generate quantum-resistant proofs today, with a clear upgrade path as lattice-based and hash-based SNARKs mature.
+- `PoseidonHashCircuit`, `MerkleProofCircuit`: Poseidon with every S-box constrained, Grain-LFSR round constants and MDS matrix.
+- `RangeCheckCircuit`: bit decomposition, limited below the field size so it cannot wrap.
+- `AuthCircuit`: MiMC commitment + nullifier for login / anti-replay (see [`wasm-auth`](UniGroth/wasm-auth/README.md) for browser proving).
+- `CircuitBuilder`: add / mul / assert / boolean / conditional select without writing raw R1CS.
 
-#### Why It Matters
+### On-chain and browser verifiers
 
-Groth16, PLONK, Marlin, and Halo2 all rely on the hardness of the discrete logarithm problem over elliptic curves. A sufficiently powerful quantum computer running Shor's algorithm breaks all of them. STARKs are post-quantum but produce 50-200 KB proofs. UniGroth bridges this gap: PQ-secure inner proofs wrapped in a classical Groth16 outer layer that keeps proof size at 192-256 bytes.
+`generate_solidity_verifier(&vk, "MyVerifier")` emits a BN254 contract using the EIP-196/197 precompiles; `generate_wasm_verifier(&vk, "my_circuit")` emits a wasm-bindgen crate. Names must be plain identifiers, and generated verifiers reject non-canonical inputs and identity points. Both check the classical Groth16 proof only.
 
-#### Architecture
+### Public-input proof of knowledge
 
-```
-┌─────────────────────────────────────────────┐
-│          Classical Groth16 Outer Layer      │
-│        (192-256 byte succinct proof)        │
-│           3-pairing verification            │
-├─────────────────────────────────────────────┤
-│       Post-Quantum Inner Prover Layer       │
-│  ┌───────────┬───────────┬────────────────┐ │
-│  │  Binius   │  Plonky3  │    Hybrid      │ │
-│  │ Binary-   │ FRI-based │ Plonky3 inner  │ │
-│  │ tower     │ Merkle    │ + Groth16      │ │
-│  │ SHA-256   │ SHA-256   │ outer wrap     │ │
-│  └───────────┴───────────┴────────────────┘ │
-├─────────────────────────────────────────────┤
-│         SHA-256 Commitment Layer            │
-│  Witness binding · Public input binding     │
-│  Deterministic · Tamper-evident             │
-└─────────────────────────────────────────────┘
-```
+`prove_public_input_pok` / `verify_public_input_pok`: a Schnorr proof bound by Fiat-Shamir to one specific Groth16 proof.
 
-#### Three PQ Schemes
+### KZG and IPA polynomial commitments
 
-| Scheme | Basis | Proof Size (128-bit) | Best For |
-|--------|-------|---------------------|----------|
-| **Binius** | Binary-tower field + SHA-256 hash chains | 256 bytes | Smallest PQ proofs, latency-sensitive |
-| **Plonky3** | FRI + SHA-256 Merkle commitments | 512 bytes | Strongest security margin, FRI maturity |
-| **Hybrid** | Plonky3 inner + Groth16 outer compression | 516 bytes | On-chain deployment with PQ inner security |
+`KZG` supports commit, open, verify and Fiat-Shamir batch verify. The IPA (`ipa_commit` / `ipa_prove` / `ipa_verify`) is Bulletproofs-style, with the inner product bound through a dedicated generator.
 
-All three schemes support 128, 192, and 256-bit security levels.
+## Research modules and their limits
 
-#### Usage
+These compile, are tested, and are useful for experiments. **Do not rely on them for security** until the listed gaps are closed.
 
-```rust
-use unigroth::{prove_pq, verify_pq, PqConfig, PqScheme};
+| Module | Status |
+|---|---|
+| `universal_setup` | Holds the α, β, γ trapdoors in memory; whoever holds `UniversalParams` can forge proofs for every derived circuit. This is a convenience wrapper, not a transparent setup. Not serializable, zeroized on drop. |
+| `security` (SE) | `proof_hash` is a fingerprint that nothing verifies. Groth16 proofs stay rerandomizable, so simulation-extractability is not claimed. BG18-mode proofs are rejected by the verifier. |
+| `folding` | The decision predicate trusts a prover-supplied error vector. |
+| `commitment` FRI | Does not check folding consistency, so it is not a low-degree test. |
+| `pq_inner` | SHA-256 binding scaffold. Anyone can build an accepted "proof" for any statement. Not post-quantum secure. |
+| `recursion` | Hash-linked audit chain; does not verify inner proofs. |
+| `mpc` | Share tags are unkeyed checksums, not authentication. |
+| `sap` | Delegates to the standard QAP reduction (the earlier SAP map dropped constraints). |
+| `lookup`, `lasso` | Lookup arguments; challenges must come from Fiat-Shamir or the verifier. |
 
-// Choose your scheme: Binius (fastest), Plonky3 (FRI-based), or Hybrid
-let config = PqConfig::new(PqScheme::Binius); // 128-bit security by default
+See [docs/post-quantum.md](docs/post-quantum.md) for the post-quantum roadmap.
 
-// Prove — deterministic, bound to both witness and public inputs
-let proof = prove_pq(&config, &witness, &public_inputs);
+## Security
 
-// Verify — recomputes commitments and checks binding
-assert!(verify_pq(&config, &proof, &public_inputs));
-```
+v0.8.0 is a security release. It fixes forgeable verifiers (aggregation, VK compression, the Poseidon and Merkle circuits, the SAP reduction, KZG batching, IPA, Lasso), a hardcoded setup seed in `auth_setup`, clock-seeded batch proving, and replay via non-canonical nullifier encodings in `wasm-auth`. Full list: [CHANGELOG](UniGroth/CHANGELOG.md).
 
-#### PQ Proof Aggregation
+Guarantees the core relies on:
 
-Aggregate multiple PQ proofs into a single Merkle-chained digest for batch verification:
+- Knowledge soundness and zero-knowledge of Groth16 (AGM), given a trusted setup and a CSPRNG.
+- Deserialization with validation enforces on-curve and subgroup checks.
+- The verifier rejects wrong input counts, identity points and BG18 elements.
+- Setup trapdoors are zeroized on a best-effort basis; Rust does not guarantee that no copies remain.
 
-```rust
-use unigroth::{aggregate_pq_proofs, prove_pq, PqConfig, PqScheme};
+Report vulnerabilities privately through a GitHub security advisory on this repository.
 
-let config = PqConfig::new(PqScheme::Binius);
-let proofs: Vec<_> = witnesses.iter()
-    .map(|w| prove_pq(&config, w, &public_inputs))
-    .collect();
+## JavaScript reference implementation
 
-let aggregated = aggregate_pq_proofs(&proofs, &config);
-// aggregated = header || Merkle root || per-proof SHA-256 digests
-```
+`src/` contains a small JavaScript R1CS toolkit (MiMC circuit builder, prover, verifier). **It is not zero-knowledge:** proofs carry the full witness, and the verifier re-checks every constraint. Use it to learn or debug circuits; use the Rust library, or `phrase.circom` with snarkjs, for private proofs. Run `npm test`.
 
-#### Security Properties
+## Supported curves
 
-Every PQ proof is cryptographically bound via SHA-256:
+BN254 (Ethereum precompiles), BLS12-381, BLS12-377 and BW6-761 (recursion pair), MNT4-298.
 
-- **Witness binding** — proof commits to the full witness; changing any byte invalidates it
-- **Public input binding** — proof is tied to specific public inputs; verification rejects mismatches
-- **Determinism** — same (witness, public_inputs) always produces the same proof
-- **Tamper detection** — any modification to proof bytes causes verification failure
-- **Domain separation** — each scheme uses distinct tags to prevent cross-scheme attacks
-
-#### Migration Strategy
-
-| Phase | What Changes | What Stays |
-|-------|-------------|------------|
-| **Today** | Deploy with classical Groth16 (192 bytes) | — |
-| **Phase 1** | Switch inner prover to Binius/Plonky3 | Outer Groth16 layer, on-chain verifier |
-| **Phase 2** | Replace outer layer with hash-based SNARK | PQ inner proofs, proof aggregation |
-| **Phase 3** | Full lattice-based designated-verifier | Complete PQ stack |
-
-See [docs/post-quantum.md](docs/post-quantum.md) for the full post-quantum documentation.
-
-### Circuit Builder SDK
-
-Build circuits without writing raw R1CS:
-
-```rust
-use unigroth::CircuitBuilder;
-use ark_bn254::Fr;
-
-let mut builder = CircuitBuilder::<Fr>::new();
-let x = builder.witness(Some(Fr::from(3u64)));
-let y = builder.witness(Some(Fr::from(4u64)));
-let xy = builder.mul(x, y);
-builder.public_output(xy);
-
-let circuit = builder.build();
-```
-
-### VK Compression
-
-Compress a verifying key from O(n) to O(1) group elements using KZG commitments. Critical for zkEVM deployments with thousands of public inputs.
-
-```rust
-use unigroth::{compress_vk, verify_with_compressed_vk, create_vk_opening};
-
-let cvk = compress_vk(&vk)?;
-let opening = create_vk_opening(&vk, &cvk, &public_inputs)?;
-let ok = verify_with_compressed_vk(&cvk, &proof, &public_inputs, &opening)?;
-```
-
-### Streaming Prover
-
-For circuits too large to fit in memory -- process MSMs in chunks with bounded peak memory:
-
-```rust
-use unigroth::{StreamingConfig, create_streaming_proof};
-
-let config = StreamingConfig::from_memory_budget(4 * 1024 * 1024 * 1024); // 4 GB
-let proof = create_streaming_proof(&pk, circuit, &config, &mut rng)?;
-```
-
-### Plonkish Arithmetization
-
-Custom gates (Poseidon, EC add, boolean, bit decomposition), lookup tables, and Plonkish-to-R1CS conversion:
-
-```rust
-use unigroth::{PlonkishConstraintSystem, CustomGateRegistry, LookupTable};
-
-let mut cs = PlonkishConstraintSystem::new();
-cs.register_gate(CustomGateRegistry::poseidon());
-cs.add_lookup_table(LookupTable::range(16)); // 16-bit range check
-let r1cs = plonkish_to_r1cs_constraints(&cs);
-```
-
-### Recursive Composition
-
-Multi-curve recursion with SHA-256 chain integrity:
-
-```rust
-use unigroth::{create_recursive_proof, verify_recursive_chain, RecursionConfig, CurvePair};
-
-let config = RecursionConfig { curve_pair: CurvePair::BLS12_377_BW6_761, depth: 4 };
-let recursive_proof = create_recursive_proof(&inner_proofs, &config)?;
-assert!(verify_recursive_chain(&recursive_proof, &config)?);
-```
-
-### Batch Proving
-
-Parallel multi-circuit batch proving and verification:
-
-```rust
-use unigroth::{batch_prove, batch_verify, BatchConfig};
-
-let config = BatchConfig { num_threads: 8 };
-let proofs = batch_prove(&circuits, &pks, &config, &mut rng)?;
-let ok = batch_verify(&proofs, &vks, &public_inputs)?;
-```
-
----
-
-## Test Results
+## Project layout
 
 ```
-running 137 tests
-... aggregation, batch, circuit_builder, circuits, folding, kzg,
-    key_compression, optimizations, plonkish, pq_inner, public_input_pok,
-    recursion, security, solidity, streaming, wasm_verifier ...
-test result: ok. 137 passed; 0 failed    <- unit tests
-
-test result: ok.   6 passed; 0 failed    <- full_pipeline_test
-test result: ok.  11 passed; 0 failed    <- groth16_comparison (head-to-head)
-test result: ok.   1 passed; 0 failed    <- mimc (real MiMC hash circuit)
-test result: ok.   1 passed; 0 failed    <- phrase_test (advanced features)
----------------------------------------------------
-Total: 156 passed | 0 failed | 0 warnings | 0 clippy lints
+UniGroth/                 Rust workspace
+  src/                    library modules (config.rs holds global constants)
+  src/bin/                compare (vs ark-groth16), auth_setup
+  tests/ benches/         integration tests and benchmarks
+  wasm-auth/              browser prover / server verifier for the auth circuit
+src/ test/                JavaScript reference implementation and tests
+phrase.circom verifier.sol  Circom / snarkjs demo circuit and verifier
+site/                     demo site
 ```
-
----
-
-## Security Properties
-
-| Property | Mechanism | Status |
-|----------|-----------|--------|
-| Knowledge soundness | AGM (Algebraic Group Model) | Implemented |
-| Zero-knowledge | Standard Groth16 randomization | Implemented |
-| Simulation-extractability | BG18 blinding or ROM hash blinding | Implemented |
-| Subversion zero-knowledge | Proof rerandomization at proving time | Implemented |
-| Public input binding | Schnorr proof-of-knowledge | Implemented |
-| Toxic waste zeroing | `black_box` zeroing after keygen | Implemented |
-| Post-quantum resistance | SHA-256-backed Binius/Plonky3/Hybrid | Implemented |
-
-**This is research software. Audit before deploying to mainnet.**
-
----
-
-## Supported Curves
-
-| Curve | Use Case |
-|-------|---------|
-| BN254 | Ethereum on-chain verification (EIP-196/197) |
-| BLS12-381 | Zcash, Ethereum consensus |
-| BLS12-377 | Celo, inner curve for BW6-761 recursion |
-| BW6-761 | Outer curve for BLS12-377 recursive composition |
-| MNT4-298 | Two-cycle recursion |
-
----
-
-## Architecture
-
-```
-                    Application Layer
-         (zkEVM, zkML, Private Transactions)
-                         |
-              Flexible Arithmetization
-       SAP / Plonkish + Custom Gates + Lookups
-                         |
-             Folding & Recursion Engine
-      ProtoStar IVC + Full Decision Predicate
-                         |
-          Universal Polynomial Commitments
-               KZG (Powers-of-Tau)
-                         |
-           Groth16-Style Compression Core
-      Linear Interactive Proof + Pairing Encoding
-            (192-256 byte final proof)
-```
-
-### Module Map
-
-| Module | Lines | Purpose |
-|--------|-------|---------|
-| `lib.rs` | 264 | SNARK trait impl, module exports |
-| `kzg.rs` | 416 | KZG polynomial commitments, `UniversalSRS` |
-| `universal_setup.rs` | 426 | Circuit-agnostic key derivation |
-| `sap.rs` | 370 | Square Arithmetic Programs |
-| `plonkish.rs` | 896 | Custom gates, lookups, Plonkish-to-R1CS |
-| `folding.rs` | 1156 | ProtoStar folding, IVC, relaxed R1CS decision predicate |
-| `security.rs` | 824 | Simulation-extractability, Subversion ZK |
-| `optimizations.rs` | 1205 | Dynark FFT, parallel MSM, compression, CSR |
-| `pq_inner.rs` | 950 | Post-quantum provers (Binius, Plonky3, Hybrid) |
-| `aggregation.rs` | 308 | SnarkPack N-to-1 proof aggregation |
-| `public_input_pok.rs` | 340 | Schnorr PoK for public inputs |
-| `streaming.rs` | 371 | Streaming prover for large circuits |
-| `batch.rs` | 278 | Parallel batch proving |
-| `solidity.rs` | 336 | Solidity verifier contract generation |
-| `wasm_verifier.rs` | 297 | WASM verifier code generation |
-| `key_compression.rs` | 402 | VK compression via KZG |
-| `circuit_builder.rs` | 462 | Circuit builder SDK |
-| `circuits.rs` | 503 | Poseidon, Merkle tree, range check circuits |
-| `recursion.rs` | 274 | Recursive proof composition |
-| `constraints.rs` | 591 | R1CS gadgets (feature: `r1cs`) |
-| `prover.rs` | 307 | Core proof generation |
-| `verifier.rs` | 113 | Core verification |
-| `generator.rs` | 231 | Setup / key generation |
-| `data_structures.rs` | 148 | Proof, ProvingKey, VerifyingKey types |
-
-**Total: ~11,870 lines across 28 source files.**
-
----
-
-## Project Structure
-
-```
-UniGroth/
-  UniGroth/               <- Rust library (production)
-    src/                  <- 28 source modules
-    tests/                <- 4 integration test suites (19 tests)
-    benches/              <- Criterion benchmarks
-    scripts/              <- Dev tooling
-  src/                    <- JS/Circom reference implementation
-  phrase.circom           <- Circom phrase-knowledge circuit
-  verifier.sol            <- Reference Solidity verifier
-```
-
----
 
 ## CI
 
-Every push and PR runs:
+Every push and PR runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo build`, `cargo test --workspace`, and `npm test`, with a read-only workflow token.
 
-1. `cargo fmt --check` -- zero formatting drift
-2. `cargo clippy -- -D warnings` -- zero warnings
-3. `cargo build --verbose` -- clean compilation
-4. `cargo test --verbose` -- all 156 tests pass
+## Research foundation
 
----
-
-## Research Foundation
-
-| Paper | Year | What UniGroth Uses |
-|-------|------|--------------------|
-| [Groth16](https://eprint.iacr.org/2016/260) | 2016 | Core protocol |
-| [BG18](https://eprint.iacr.org/2018/187) | 2018 | Simulation-extractability |
-| [ABPR19](https://eprint.iacr.org/2018/280) | 2019 | Updatable universal CRS |
-| [SnarkPack](https://eprint.iacr.org/2021/529) | 2022 | Proof aggregation |
-| [Nova](https://eprint.iacr.org/2021/370) | 2022 | Relaxed R1CS folding |
-| [ProtoStar](https://eprint.iacr.org/2023/620) | 2023 | Generic accumulation |
-| [Binius](https://eprint.iacr.org/2023/1784) | 2023 | Binary-field PQ proofs |
-| [Polymath](https://eprint.iacr.org/2024/916) | 2024 | SAP-based proofs |
-| [Dynark](https://eprint.iacr.org/2025/123) | 2025 | FFT optimizations |
-
----
-
-## Cargo Features
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `parallel` | Yes | Multi-threaded proving via rayon |
-| `std` | Yes | Standard library support |
-| `r1cs` | No | Constraint system gadgets for recursive verification |
-| `solidity` | No | Solidity + WASM verifier contract generation |
-| `universal` | No | Universal setup extensions |
-| `sap` | No | SAP arithmetization |
-| `gpu` | No | GPU MSM dispatch (icicle backend) |
-| `wasm` | No | WASM compilation target |
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](UniGroth/CONTRIBUTING.md).
+[Groth16](https://eprint.iacr.org/2016/260) · [BKSV20 rerandomization](https://eprint.iacr.org/2020/811) · [SnarkPack](https://eprint.iacr.org/2021/529) · [Nova](https://eprint.iacr.org/2021/370) · [ProtoStar](https://eprint.iacr.org/2023/620) · [Poseidon](https://eprint.iacr.org/2019/458) · [Lasso](https://eprint.iacr.org/2023/1216) · [Bulletproofs](https://eprint.iacr.org/2017/1066)
 
 ## License
 
-Dual-licensed under MIT and Apache 2.0.
-
-Built on [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16) by **MeridianAlgo**.
+Dual-licensed under MIT and Apache 2.0. Built on [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16) by **MeridianAlgo**.

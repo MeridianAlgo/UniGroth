@@ -410,29 +410,40 @@ pub fn fri_prove<F: PrimeField>(
     }
 }
 
-/// Verify a FRI low-degree proof.
+/// Verify a FRI proof's Merkle structure.
 ///
 /// Checks that:
-/// 1. Each query path has consistent Merkle proofs against the committed roots.
-/// 2. The folding relation `new[i] = even[i] + challenge * odd[i]` holds at
-///    each round for each queried position.
-/// 3. The final value matches the serialized constant in `proof.final_poly`.
+/// 1. The number of rounds and queries matches the committed domain.
+/// 2. Each query path has consistent Merkle proofs against the committed roots.
+/// 3. The final leaf matches the serialized constant in `proof.final_poly`.
 ///
-/// Returns `true` if all checks pass, `false` otherwise.
+/// **Limitation:** query paths carry leaf hashes, not the sibling values, so
+/// the folding relation `new[i] = even[i] + challenge * odd[i]` is *not*
+/// checked, and folding runs all the way to length 1. This therefore does not
+/// establish that the committed vector is close to a low-degree polynomial;
+/// it only shows the prover committed to a consistent set of Merkle trees.
+/// Do not rely on it as a proximity test.
+///
+/// Malformed proofs return `false`; they never panic.
 pub fn fri_verify<F: PrimeField>(
     commitment: &FriCommitment,
     proof: &FriProof,
     config: &FriConfig,
 ) -> bool {
-    if proof.round_commitments.is_empty() {
+    let domain = commitment.domain_size;
+    if domain == 0 || !domain.is_power_of_two() {
+        return false;
+    }
+    let num_rounds = domain.trailing_zeros() as usize; // folding rounds down to one element
+    if proof.round_commitments.len() != num_rounds + 1
+        || proof.query_paths.len() != config.num_queries
+    {
         return false;
     }
     // First round root must match the commitment
     if proof.round_commitments[0] != commitment.merkle_root {
         return false;
     }
-
-    let num_rounds = proof.round_commitments.len() - 1; // folding rounds
 
     // Recompute Fiat-Shamir challenges
     let mut challenges: Vec<F> = Vec::with_capacity(num_rounds);
@@ -460,13 +471,15 @@ pub fn fri_verify<F: PrimeField>(
         }
 
         // ── Verify Merkle authentication paths ──
-        // Round 0: domain_size = initial_domain_size
-        // Round r: domain_size = initial_domain_size / 2^r
+        // Round r has initial_domain_size / 2^r leaves (a power of two).
         let mut cur_pos = qpath.position;
         for r in 0..=num_rounds {
             let domain_size_r = initial_domain_size >> r;
-            let n_padded = domain_size_r.next_power_of_two();
-            let safe_pos = cur_pos % domain_size_r.max(1);
+            let n_padded = domain_size_r;
+            let safe_pos = cur_pos % domain_size_r;
+            if qpath.auth_paths[r].len() != num_rounds - r {
+                return false;
+            }
 
             let root_r = proof.round_commitments[r];
             if !verify_merkle_path(
@@ -508,11 +521,6 @@ pub fn fri_verify<F: PrimeField>(
         }
     }
 
-    // Verify num_queries matches config
-    if proof.query_paths.len() != config.num_queries {
-        return false;
-    }
-
     true
 }
 
@@ -527,6 +535,8 @@ pub struct IpaConfig<G: CurveGroup> {
     pub generators: Vec<G::Affine>,
     /// Blinding generator `H` (independent from `generators`).
     pub h: G::Affine,
+    /// Generator `U` that carries the inner product `<a, b>` inside the argument.
+    pub u: G::Affine,
     /// Number of coefficients (and generators) `n`.
     pub domain_size: usize,
 }
@@ -535,27 +545,29 @@ impl<G: CurveGroup> IpaConfig<G>
 where
     G::ScalarField: UniformRand,
 {
-    /// Sample `n + 1` independent random generators and return an `IpaConfig`.
+    /// Sample `n + 2` independent random generators and return an `IpaConfig`.
     ///
-    /// The first `n` generators become `generators`; the last becomes `h`.
+    /// The first `n` generators become `generators`, then `h`, then `u`.
     pub fn setup(n: usize, rng: &mut impl RngCore) -> Self {
-        let all: Vec<G::Affine> = (0..=n).map(|_| G::rand(rng).into_affine()).collect();
-        let h = all[n];
-        let generators = all[..n].to_vec();
+        let all: Vec<G> = (0..n + 2).map(|_| G::rand(rng)).collect();
+        let mut all = G::normalize_batch(&all);
+        let u = all.pop().expect("n + 2 >= 2");
+        let h = all.pop().expect("n + 1 >= 1");
         Self {
-            generators,
+            generators: all,
             h,
+            u,
             domain_size: n,
         }
     }
 
     /// Estimate proof size in bytes.
     ///
-    /// An IPA proof contains `2 * log2(n)` group elements plus 3 field elements.
+    /// An IPA proof contains `2 * log2(n)` group elements plus 2 field elements.
     /// Using 32 bytes per compressed group element and 32 bytes per field element.
     pub fn proof_size_bytes(&self) -> usize {
         let log2_n = (self.domain_size.next_power_of_two()).trailing_zeros() as usize;
-        2 * log2_n * 32 + 3 * 32
+        2 * log2_n * 32 + 2 * 32
     }
 }
 
@@ -568,25 +580,20 @@ pub struct IpaCommitment<G: CurveGroup> {
     pub commitment: G,
 }
 
-/// An IPA proof of evaluation.
+/// An IPA proof of evaluation (Bulletproofs / Halo2 style).
 ///
-/// Proves that a committed polynomial `f` satisfies `f(z) = v` using the
-/// recursive inner-product halving from Halo2 / Bulletproofs.
+/// Proves that a committed polynomial `f` satisfies `f(z) = v`. The claimed
+/// value is folded into the commitment through the generator `U`, so the
+/// cross terms `<a_lo, b_hi>` and `<a_hi, b_lo>` are bound by `L` and `R`
+/// rather than sent as free scalars.
 #[derive(Clone, Debug)]
 pub struct IpaProof<G: CurveGroup> {
-    /// Left cross-term (group element) for each recursive round.
+    /// Left cross-term `L = <a_lo, G_hi> + <a_lo, b_hi>·U + r_L·H` per round.
     pub l_vec: Vec<G>,
-    /// Right cross-term (group element) for each recursive round.
+    /// Right cross-term `R = <a_hi, G_lo> + <a_hi, b_lo>·U + r_R·H` per round.
     pub r_vec: Vec<G>,
-    /// Scalar inner-product left cross-term `<a_lo, b_hi>` per round.
-    /// Required to reconstruct the evaluation check after folding.
-    pub l_scalars: Vec<G::ScalarField>,
-    /// Scalar inner-product right cross-term `<a_hi, b_lo>` per round.
-    pub r_scalars: Vec<G::ScalarField>,
     /// Final single coefficient `a` after all rounds.
     pub a_final: G::ScalarField,
-    /// Final single basis value `b` after all rounds.
-    pub b_final: G::ScalarField,
     /// Final blinding scalar.
     pub blinding_final: G::ScalarField,
 }
@@ -610,6 +617,19 @@ fn ipa_challenge<G: CurveGroup>(transcript: &mut Vec<u8>, l: &G, r: &G) -> G::Sc
     G::ScalarField::from_le_bytes_mod_order(&hash)
 }
 
+/// Transcript prefix binding the commitment, evaluation point and claimed value.
+fn ipa_transcript<G: CurveGroup>(
+    commitment: &G,
+    eval_point: &G::ScalarField,
+    eval_value: &G::ScalarField,
+) -> Vec<u8> {
+    let mut transcript = crate::config::DOMAIN_IPA.to_vec();
+    transcript.extend_from_slice(&group_to_bytes(commitment));
+    transcript.extend_from_slice(&field_to_bytes(eval_point));
+    transcript.extend_from_slice(&field_to_bytes(eval_value));
+    transcript
+}
+
 /// Compute `b` vector for evaluation at point `z` of length `n`.
 ///
 /// The IPA evaluation trick uses basis `b = [1, z, z², ..., z^{n-1}]`
@@ -625,7 +645,6 @@ fn powers_of_z<F: PrimeField>(z: F, n: usize) -> Vec<F> {
 }
 
 /// Inner product of two scalar vectors.
-#[cfg_attr(not(test), allow(dead_code))]
 fn inner_product<F: PrimeField>(a: &[F], b: &[F]) -> F {
     assert_eq!(a.len(), b.len());
     a.iter().zip(b.iter()).map(|(x, y)| *x * y).sum()
@@ -646,14 +665,11 @@ pub fn ipa_commit<G: CurveGroup>(
     IpaCommitment { commitment }
 }
 
-/// Prove that the committed polynomial evaluates to `eval_value` at `eval_point`.
+/// Prove that the committed polynomial evaluates to `f(eval_point)`.
 ///
-/// Uses the recursive IPA halving protocol:
-/// 1. Split `a` (coefficients) and `G` (generators) into lo/hi halves.
-/// 2. Compute cross-terms `L = <a_lo, G_hi> + r_L * H` and `R = <a_hi, G_lo> + r_R * H`.
-/// 3. Derive Fiat-Shamir challenge `u`.
-/// 4. Fold: `a' = a_lo + u * a_hi`, `G' = G_lo + u * G_hi`, `b' = b_lo + u * b_hi`.
-/// 5. Repeat until length 1, then output the final scalars.
+/// Recursive halving: each round sends `L`, `R`, derives a Fiat-Shamir
+/// challenge `u`, and folds `a' = a_lo + u·a_hi`, `b' = b_lo + u⁻¹·b_hi`,
+/// `G' = G_lo + u⁻¹·G_hi` until one element remains.
 pub fn ipa_prove<G: CurveGroup>(
     coeffs: &[G::ScalarField],
     eval_point: G::ScalarField,
@@ -672,16 +688,15 @@ where
     let mut b = powers_of_z(eval_point, n);
     let mut generators: Vec<G::Affine> = config.generators.clone();
     let mut blind = blinding;
+    let u_gen = config.u.into_group();
+    let h_gen = config.h.into_group();
 
     let mut l_vec: Vec<G> = Vec::new();
     let mut r_vec: Vec<G> = Vec::new();
-    let mut l_scalars: Vec<G::ScalarField> = Vec::new();
-    let mut r_scalars: Vec<G::ScalarField> = Vec::new();
 
-    // Transcript starts with the commitment bytes and eval_point
     let comm = ipa_commit::<G>(coeffs, blinding, config);
-    let mut transcript = group_to_bytes(&comm.commitment);
-    transcript.extend_from_slice(&field_to_bytes(&eval_point));
+    let eval_value = inner_product(&a, &b);
+    let mut transcript = ipa_transcript(&comm.commitment, &eval_point, &eval_value);
 
     let mut cur_n = n;
     while cur_n > 1 {
@@ -691,82 +706,57 @@ where
         let (b_lo, b_hi) = b.split_at(half);
         let (g_lo, g_hi) = generators.split_at(half);
 
-        // Scalar cross-terms for the evaluation accumulator.
-        // <a', b'> = <a, b> + u_inv * <a_lo, b_hi> + u * <a_hi, b_lo>
-        let l_scalar = inner_product(a_lo, b_hi);
-        let r_scalar = inner_product(a_hi, b_lo);
-
-        // Sample blinding scalars for L and R
         let r_l = G::ScalarField::rand(rng);
         let r_r = G::ScalarField::rand(rng);
 
-        // L = <a_lo, G_hi> + r_L * H
-        let l: G = msm::<G>(g_hi, a_lo) + config.h.into_group() * r_l;
-        // R = <a_hi, G_lo> + r_R * H
-        let r: G = msm::<G>(g_lo, a_hi) + config.h.into_group() * r_r;
+        let l: G = msm::<G>(g_hi, a_lo) + u_gen * inner_product(a_lo, b_hi) + h_gen * r_l;
+        let r: G = msm::<G>(g_lo, a_hi) + u_gen * inner_product(a_hi, b_lo) + h_gen * r_r;
 
         l_vec.push(l);
         r_vec.push(r);
-        l_scalars.push(l_scalar);
-        r_scalars.push(r_scalar);
 
-        // Fiat-Shamir challenge
         let u: G::ScalarField = ipa_challenge::<G>(&mut transcript, &l, &r);
         let u_inv = u.inverse().unwrap_or(G::ScalarField::from(1u64));
 
-        // Fold a: a' = a_lo + u * a_hi
         let new_a: Vec<G::ScalarField> = a_lo
             .iter()
             .zip(a_hi.iter())
             .map(|(lo, hi)| *lo + u * hi)
             .collect();
-
-        // Fold b: b' = b_lo + u_inv * b_hi
         let new_b: Vec<G::ScalarField> = b_lo
             .iter()
             .zip(b_hi.iter())
             .map(|(lo, hi)| *lo + u_inv * hi)
             .collect();
-
-        // Fold generators: G' = G_lo + u_inv * G_hi
-        let new_g: Vec<G::Affine> = g_lo
+        let new_g: Vec<G> = g_lo
             .iter()
             .zip(g_hi.iter())
-            .map(|(lo, hi)| {
-                let combined = lo.into_group() + hi.into_group() * u_inv;
-                combined.into_affine()
-            })
+            .map(|(lo, hi)| lo.into_group() + *hi * u_inv)
             .collect();
 
-        // Update blinding: blind' = r_L * u_inv + blind + r_R * u
-        // Derived from C' = C + u_inv*L + u*R with L=<a_lo,G_hi>, R=<a_hi,G_lo>
+        // P' = P + u⁻¹·L + u·R, so the blinding folds the same way.
         blind = r_l * u_inv + blind + r_r * u;
 
         a = new_a;
         b = new_b;
-        generators = new_g;
+        generators = G::normalize_batch(&new_g);
         cur_n = half;
     }
 
     IpaProof {
         l_vec,
         r_vec,
-        l_scalars,
-        r_scalars,
         a_final: a[0],
-        b_final: b[0],
         blinding_final: blind,
     }
 }
 
 /// Verify an IPA proof.
 ///
-/// Reconstructs the folded commitment using the round challenges and cross-terms,
-/// checks `C_folded == a_final * G_final + blinding_final * H`, and verifies the
-/// evaluation claim using the scalar cross-term accumulator:
-/// `a_final * b_final == eval_value + Σ_k (u_k^{-1} * l_scalars[k] + u_k * r_scalars[k])`.
-///
-/// Returns `true` if both checks pass.
+/// With `P = C + v·U`, checks
+/// `P + Σ (u_k⁻¹·L_k + u_k·R_k) == a·G_final + (a·b_final)·U + blinding·H`,
+/// where `G_final = <s, G>` and `b_final = <s, (1, z, …, z^{n-1})>` for the
+/// folding coefficients `s` derived from the challenges.
 pub fn ipa_verify<G: CurveGroup>(
     commitment: &IpaCommitment<G>,
     proof: &IpaProof<G>,
@@ -775,101 +765,37 @@ pub fn ipa_verify<G: CurveGroup>(
     config: &IpaConfig<G>,
 ) -> bool {
     let n = config.domain_size;
-    if !n.is_power_of_two() {
+    if !n.is_power_of_two() || config.generators.len() != n {
         return false;
     }
-    let num_rounds = proof.l_vec.len();
-    if proof.r_vec.len() != num_rounds {
-        return false;
-    }
-    let expected_rounds = n.trailing_zeros() as usize;
-    if num_rounds != expected_rounds {
+    let num_rounds = n.trailing_zeros() as usize;
+    if proof.l_vec.len() != num_rounds || proof.r_vec.len() != num_rounds {
         return false;
     }
 
-    // Recompute Fiat-Shamir challenges
-    let mut transcript = group_to_bytes(&commitment.commitment);
-    transcript.extend_from_slice(&field_to_bytes(&eval_point));
-
-    let mut challenges: Vec<G::ScalarField> = Vec::with_capacity(num_rounds);
+    // Recompute Fiat-Shamir challenges and fold the commitment.
+    let mut transcript = ipa_transcript(&commitment.commitment, &eval_point, &eval_value);
+    let u_gen = config.u.into_group();
+    let mut p = commitment.commitment + u_gen * eval_value;
+    // s[i] = Π_k u_k^{-bit_k(i)}, where round k fixes the k-th most significant bit.
+    let mut s = vec![G::ScalarField::from(1u64)];
     for (l, r) in proof.l_vec.iter().zip(proof.r_vec.iter()) {
         let u = ipa_challenge::<G>(&mut transcript, l, r);
-        challenges.push(u);
+        let Some(u_inv) = u.inverse() else {
+            return false;
+        };
+        p += *l * u_inv + *r * u;
+        s = s.iter().flat_map(|x| [*x, *x * u_inv]).collect();
     }
 
-    // Reconstruct the folded commitment
-    // C' = C + Σ (u_k * L_k + u_k^{-1} * R_k)
-    let mut c_folded = commitment.commitment;
-    for (k, (l, r)) in proof.l_vec.iter().zip(proof.r_vec.iter()).enumerate() {
-        let u = challenges[k];
-        let u_inv = u.inverse().unwrap_or(G::ScalarField::from(1u64));
-        c_folded = c_folded + *l * u_inv + *r * u;
-    }
+    let g_final = msm::<G>(&config.generators, &s);
+    let b_final = inner_product(&s, &powers_of_z(eval_point, n));
 
-    // Reconstruct the folded generator G_final
-    let mut generators: Vec<G::Affine> = config.generators.clone();
-    for (k, _) in challenges.iter().enumerate() {
-        let u_inv = challenges[k]
-            .inverse()
-            .unwrap_or(G::ScalarField::from(1u64));
-        let half = generators.len() / 2;
-        let (g_lo, g_hi) = generators.split_at(half);
-        let new_g: Vec<G::Affine> = g_lo
-            .iter()
-            .zip(g_hi.iter())
-            .map(|(lo, hi)| (lo.into_group() + hi.into_group() * u_inv).into_affine())
-            .collect();
-        generators = new_g;
-    }
-    // generators now has exactly one element
-    if generators.len() != 1 {
-        return false;
-    }
-    let g_final = generators[0];
+    let expected = g_final * proof.a_final
+        + u_gen * (proof.a_final * b_final)
+        + config.h.into_group() * proof.blinding_final;
 
-    // Check: C_folded == a_final * G_final + blinding_final * H
-    let expected_c =
-        g_final.into_group() * proof.a_final + config.h.into_group() * proof.blinding_final;
-
-    if c_folded != expected_c {
-        return false;
-    }
-
-    // Verify eval using the scalar cross-term accumulator.
-    // After folding: <a_folded, b_folded> = eval_value + Σ_k (u_k^{-1} * l_scalars[k] + u_k * r_scalars[k])
-    // So: a_final * b_final == eval_value + accumulated_cross
-    if proof.l_scalars.len() != num_rounds || proof.r_scalars.len() != num_rounds {
-        return false;
-    }
-    let mut accumulated_cross = G::ScalarField::from(0u64);
-    for k in 0..num_rounds {
-        let u = challenges[k];
-        let u_inv = u.inverse().unwrap_or(G::ScalarField::from(1u64));
-        accumulated_cross += u_inv * proof.l_scalars[k] + u * proof.r_scalars[k];
-    }
-
-    // Re-derive b_final from challenges and eval_point
-    let mut b_vals = powers_of_z(eval_point, n);
-    for k in 0..num_rounds {
-        let u_inv = challenges[k]
-            .inverse()
-            .unwrap_or(G::ScalarField::from(1u64));
-        let half = b_vals.len() / 2;
-        let (b_lo, b_hi) = b_vals.split_at(half);
-        let new_b: Vec<G::ScalarField> = b_lo
-            .iter()
-            .zip(b_hi.iter())
-            .map(|(lo, hi)| *lo + u_inv * hi)
-            .collect();
-        b_vals = new_b;
-    }
-    let b_final_derived = b_vals[0];
-
-    if proof.a_final * b_final_derived != eval_value + accumulated_cross {
-        return false;
-    }
-
-    true
+    p == expected
 }
 
 // ─── Part 3: CommitmentScheme enum ───────────────────────────────────────────

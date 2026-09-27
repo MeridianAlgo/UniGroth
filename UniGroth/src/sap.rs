@@ -24,12 +24,9 @@ use ark_relations::{
     gr1cs::{ConstraintSystemRef, Result as R1CSResult, SynthesisError, R1CS_PREDICATE_LABEL},
     utils::matrix::Matrix,
 };
-use ark_std::{cfg_iter_mut, vec::Vec};
+use ark_std::vec::Vec;
 
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
-
-use crate::r1cs_to_qap::{evaluate_constraint, R1CSToQAP};
+use crate::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 
 /// SAP constraint system representation.
 ///
@@ -101,87 +98,17 @@ impl R1CSToSAP {
     }
 }
 
+/// The key-generation and witness maps must encode exactly the same relation,
+/// or constraints silently disappear from the proving key. An earlier version
+/// dropped every addition-only constraint (`A·1 = C`) from the instance map,
+/// so those constraints were never enforced. Until a real SAP reduction exists,
+/// this delegates to the standard QAP reduction, which enforces every row.
 impl R1CSToQAP for R1CSToSAP {
     fn instance_map_with_evaluation<F: PrimeField, D: EvaluationDomain<F>>(
         cs: ConstraintSystemRef<F>,
         t: &F,
     ) -> Result<(Vec<F>, Vec<F>, Vec<F>, F, usize, usize), SynthesisError> {
-        let conversion_time = start_timer!(|| "R1CS to SAP conversion");
-
-        let matrices = &cs.to_matrices().unwrap()[R1CS_PREDICATE_LABEL];
-        let num_inputs = cs.num_instance_variables();
-        let num_constraints = cs.num_constraints();
-
-        let domain_size = num_constraints + num_inputs;
-        let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let domain_size = domain.size();
-
-        let zt = domain.evaluate_vanishing_polynomial(*t);
-
-        // Evaluate all Lagrange polynomials
-        let u = domain.evaluate_all_lagrange_coefficients(*t);
-
-        let qap_num_variables = (num_inputs - 1) + cs.num_witness_variables();
-
-        // Initialize SAP polynomials
-        let mut sap_u = vec![F::zero(); qap_num_variables + 1];
-        let mut b = vec![F::zero(); qap_num_variables + 1];
-        let mut c = vec![F::zero(); qap_num_variables + 1];
-
-        // Copy instance variables
-        {
-            let start = 0;
-            let end = num_inputs;
-            sap_u[start..end]
-                .copy_from_slice(&u[(start + num_constraints)..(end + num_constraints)]);
-        }
-
-        // Process constraints and convert to SAP form
-        let mut addition_count = 0;
-        let mut multiplication_count = 0;
-
-        for (i, u_i) in u.iter().enumerate().take(num_constraints) {
-            let a_constraint = &matrices[0][i];
-            let b_constraint = &matrices[1][i];
-            let c_constraint = &matrices[2][i];
-
-            if R1CSToSAP::is_addition_only(a_constraint, b_constraint) {
-                addition_count += 1;
-                // Optimized handling for addition constraints
-                // These contribute less to the final polynomial degree
-                for &(ref coeff, index) in a_constraint {
-                    sap_u[index] += &(*u_i * coeff);
-                }
-                for &(ref coeff, index) in c_constraint {
-                    sap_u[index] += &(*u_i * coeff);
-                }
-            } else {
-                multiplication_count += 1;
-                // Standard R1CS constraint handling
-                for &(ref coeff, index) in a_constraint {
-                    sap_u[index] += &(*u_i * coeff);
-                }
-                for &(ref coeff, index) in b_constraint {
-                    b[index] += &(*u_i * coeff);
-                }
-                for &(ref coeff, index) in c_constraint {
-                    c[index] += &(*u_i * coeff);
-                }
-            }
-        }
-
-        end_timer!(conversion_time);
-
-        println!(
-            "SAP conversion: {} addition gates, {} multiplication gates",
-            addition_count, multiplication_count
-        );
-        println!(
-            "Effective circuit size reduction: {:.1}%",
-            (addition_count as f64 / num_constraints as f64) * 100.0
-        );
-
-        Ok((sap_u, b, c, zt, qap_num_variables, domain_size))
+        LibsnarkReduction::instance_map_with_evaluation::<F, D>(cs, t)
     }
 
     fn witness_map_from_matrices<F: PrimeField, D: EvaluationDomain<F>>(
@@ -190,41 +117,12 @@ impl R1CSToQAP for R1CSToSAP {
         num_constraints: usize,
         full_assignment: &[F],
     ) -> R1CSResult<Vec<F>> {
-        let witness_time = start_timer!(|| "SAP witness computation");
-
-        let domain =
-            D::new(num_constraints + num_inputs).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let domain_size = domain.size();
-        let zero = F::zero();
-
-        let mut a = vec![zero; domain_size];
-        let mut b = vec![zero; domain_size];
-
-        // Compute witness values for each constraint
-        cfg_iter_mut!(a[..num_constraints])
-            .zip(&mut b[..num_constraints])
-            .zip(&matrices[0])
-            .zip(&matrices[1])
-            .for_each(|(((a, b), at_i), bt_i)| {
-                *a = evaluate_constraint(at_i, full_assignment);
-                *b = evaluate_constraint(bt_i, full_assignment);
-            });
-
-        // Copy instance variables
-        {
-            let start = num_constraints;
-            let end = start + num_inputs;
-            a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
-        }
-
-        // c_evals not needed: compute_witness_4fft derives h from polynomial multiplication
-        let result = crate::optimizations::compute_witness_4fft(&domain, a, b);
-        let mut h = result.h_poly;
-        h.truncate(domain_size - 1);
-
-        end_timer!(witness_time);
-
-        Ok(h)
+        LibsnarkReduction::witness_map_from_matrices::<F, D>(
+            matrices,
+            num_inputs,
+            num_constraints,
+            full_assignment,
+        )
     }
 
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
@@ -233,15 +131,7 @@ impl R1CSToQAP for R1CSToSAP {
         zt: F,
         delta_inverse: F,
     ) -> Result<Vec<F>, SynthesisError> {
-        // Same as standard Groth16
-        let mut scalars = Vec::with_capacity(max_power);
-        let base = zt * delta_inverse;
-        let mut acc = base;
-        for _ in 0..max_power {
-            scalars.push(acc);
-            acc *= t;
-        }
-        Ok(scalars)
+        LibsnarkReduction::h_query_scalars::<F, D>(max_power, t, zt, delta_inverse)
     }
 }
 

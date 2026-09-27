@@ -490,6 +490,12 @@ pub fn prove_pq(config: &PqConfig, witness: &[u8], public_inputs: &[u8]) -> PqPr
 }
 
 /// Dispatch verification to the appropriate verifier based on scheme.
+///
+/// **Not a proof verifier.** The "proof" is a hash of the witness plus a
+/// binding to the public inputs; anyone can pick an arbitrary 32-byte
+/// commitment and build a proof this function accepts for any public inputs,
+/// and nothing checks that a witness satisfies a circuit. Use it only as a
+/// tamper-evidence check on data you already trust.
 pub fn verify_pq(config: &PqConfig, proof: &PqProof, public_inputs: &[u8]) -> bool {
     match config.scheme {
         PqScheme::Binius => BiniusProver::verify(config, proof, public_inputs),

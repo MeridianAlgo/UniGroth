@@ -17,8 +17,11 @@
 //! ## Security
 //!
 //! - **Privacy**: No single party learns the full witness (additive sharing).
-//! - **Binding**: Each share is hash-bound to the party's identity to prevent
-//!   substitution attacks.
+//! - **Integrity tags, not authentication**: each share carries an unkeyed
+//!   SHA-256 tag over (party, session, value). It detects accidental
+//!   corruption only; anyone can recompute it, so it does **not** stop a
+//!   malicious party or network attacker from substituting a share. Use an
+//!   authenticated channel (or signatures/MACs) between parties.
 //! - **Threshold extension**: Shamir secret sharing (t-of-N) is sketched in
 //!   [`ShamirShare`] for future threshold proving.
 //!

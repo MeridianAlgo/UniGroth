@@ -315,13 +315,40 @@ pub enum LassoError {
     MleEvalMismatch,
 }
 
+/// Fiat-Shamir query weights bound to the table, the indices and the claimed
+/// values, plus the transcript the sumcheck continues from.
+///
+/// The weights must not be chosen by the prover: with a free choice, a zero
+/// weight (or two cancelling ones) lets a wrong claimed value through.
+fn lasso_transcript<F: PrimeField>(
+    table: &LassoTable<F>,
+    indices: &[usize],
+    claimed_values: &[F],
+) -> (Vec<F>, Vec<u8>) {
+    let mut transcript = crate::config::DOMAIN_LASSO.to_vec();
+    transcript.extend_from_slice(&(table.entries.len() as u64).to_le_bytes());
+    for t in &table.entries {
+        transcript.extend_from_slice(&field_to_bytes(t));
+    }
+    transcript.extend_from_slice(&(indices.len() as u64).to_le_bytes());
+    for &i in indices {
+        transcript.extend_from_slice(&(i as u64).to_le_bytes());
+    }
+    for v in claimed_values {
+        transcript.extend_from_slice(&field_to_bytes(v));
+    }
+    let weights = (0..indices.len())
+        .map(|_| hash_to_field(&mut transcript, b"lasso-weight"))
+        .collect();
+    (weights, transcript)
+}
+
 /// Prove that `v_j = T[i_j]` for the given indices.
 ///
 /// Returns a `LassoProof` or `LassoError` if any index is out of range.
 pub fn prove_lasso<F: PrimeField>(
     table: &LassoTable<F>,
     indices: &[usize],
-    rng: &mut impl ark_std::rand::RngCore,
 ) -> Result<LassoProof<F>, LassoError> {
     // Validate indices
     for &idx in indices {
@@ -336,8 +363,8 @@ pub fn prove_lasso<F: PrimeField>(
     // Claimed values
     let claimed_values: Vec<F> = indices.iter().map(|&i| table.entries[i]).collect();
 
-    // Random weights w_j (Fiat-Shamir via rng for simplicity)
-    let query_weights: Vec<F> = (0..indices.len()).map(|_| F::rand(rng)).collect();
+    // Weights w_j derived by Fiat-Shamir from the full statement
+    let (query_weights, mut transcript) = lasso_transcript(table, indices, &claimed_values);
 
     // Build the indicator polynomial: for each table entry b, sum w_j over j where i_j = b
     let mut indicator = vec![F::zero(); table.entries.len()];
@@ -369,7 +396,6 @@ pub fn prove_lasso<F: PrimeField>(
     );
 
     // Run sumcheck on the product polynomial
-    let mut transcript = b"lasso-sumcheck".to_vec();
     let (sc_proof, challenges) = sumcheck_prove(&product_poly, &mut transcript);
 
     // MLE evaluation at final challenge point
@@ -397,7 +423,19 @@ pub fn verify_lasso<F: PrimeField>(
     proof: &LassoProof<F>,
 ) -> Result<(), LassoError> {
     let m = indices.len();
-    if proof.claimed_values.len() != m || proof.query_weights.len() != m {
+    if proof.claimed_values.len() != m {
+        return Err(LassoError::SumcheckFailed);
+    }
+    if let Some(&idx) = indices.iter().find(|&&i| i >= table.entries.len()) {
+        return Err(LassoError::IndexOutOfRange {
+            idx,
+            table_size: table.entries.len(),
+        });
+    }
+
+    // Recompute the Fiat-Shamir weights; never trust the prover's.
+    let (weights, mut transcript) = lasso_transcript(table, indices, &proof.claimed_values);
+    if weights != proof.query_weights {
         return Err(LassoError::SumcheckFailed);
     }
 
@@ -410,7 +448,6 @@ pub fn verify_lasso<F: PrimeField>(
         .sum();
 
     // Verify sumcheck
-    let mut transcript = b"lasso-sumcheck".to_vec();
     let (ok, challenges) = sumcheck_verify(
         &proof.sumcheck,
         claimed_sum,
@@ -597,31 +634,49 @@ mod tests {
 
     #[test]
     fn test_lasso_range_check_proves_and_verifies() {
-        let mut rng = rng();
         let table: LassoTable<Fr> = LassoTable::range_table(4); // T[i] = i, size 16
 
         let indices = vec![0usize, 3, 7, 15, 1, 5];
-        let proof = prove_lasso(&table, &indices, &mut rng).expect("prove_lasso failed");
+        let proof = prove_lasso(&table, &indices).expect("prove_lasso failed");
 
         verify_lasso(&table, &indices, &proof).expect("verify_lasso failed");
     }
 
     #[test]
+    fn test_lasso_wrong_value_with_zero_weight_rejected() {
+        // With prover-chosen weights, zeroing one weight hid a wrong value.
+        let table: LassoTable<Fr> = LassoTable::range_table(4);
+        let indices = vec![3usize, 9];
+        let mut proof = prove_lasso(&table, &indices).unwrap();
+        proof.claimed_values[1] = Fr::from(10u64);
+        proof.query_weights[1] = Fr::zero();
+        assert!(verify_lasso(&table, &indices, &proof).is_err());
+    }
+
+    #[test]
+    fn test_lasso_verify_out_of_range_index_is_error_not_panic() {
+        let table: LassoTable<Fr> = LassoTable::range_table(3);
+        let proof = prove_lasso(&table, &[1]).unwrap();
+        assert!(matches!(
+            verify_lasso(&table, &[1000], &proof),
+            Err(LassoError::IndexOutOfRange { idx: 1000, .. })
+        ));
+    }
+
+    #[test]
     fn test_lasso_xor_table_proves_and_verifies() {
-        let mut rng = rng();
         let table: LassoTable<Fr> = LassoTable::xor_table(2);
 
         // Look up a XOR b for various (a, b) pairs
         let indices = vec![0usize, 5, 10, 3]; // (0,0), (1,1), (2,2), (0,3)
-        let proof = prove_lasso(&table, &indices, &mut rng).expect("prove");
+        let proof = prove_lasso(&table, &indices).expect("prove");
         verify_lasso(&table, &indices, &proof).expect("verify");
     }
 
     #[test]
     fn test_lasso_out_of_range_error() {
-        let mut rng = rng();
         let table: LassoTable<Fr> = LassoTable::range_table(3); // size 8
-        let result = prove_lasso(&table, &[0, 5, 100], &mut rng);
+        let result = prove_lasso(&table, &[0, 5, 100]);
         assert!(matches!(
             result,
             Err(LassoError::IndexOutOfRange { idx: 100, .. })
@@ -630,10 +685,9 @@ mod tests {
 
     #[test]
     fn test_lasso_single_lookup() {
-        let mut rng = rng();
         let table: LassoTable<Fr> = LassoTable::range_table(4);
         let indices = vec![7usize];
-        let proof = prove_lasso(&table, &indices, &mut rng).unwrap();
+        let proof = prove_lasso(&table, &indices).unwrap();
         verify_lasso(&table, &indices, &proof).unwrap();
         assert_eq!(proof.claimed_values[0], Fr::from(7u64));
     }

@@ -1,5 +1,46 @@
 # CHANGELOG
 
+## UniGroth v0.8.0 (September 2026) — security release
+
+Breaking API changes are marked **(breaking)**.
+
+### Soundness fixes (forgeable before this release)
+
+- **Aggregation** — `verify_aggregated` trusted prover-supplied `pow_sum` / `inputs_agg` and never saw the statement; an all-identity aggregate verified for anything. It now takes the public inputs, derives the batching challenge by Fiat-Shamir over the VK, inputs and proofs, and runs one multi-pairing. `aggregate_proofs(&proofs)` just bundles proofs. **(breaking)**
+- **VK compression** — the opening's `aggregated_ic` was never checked, so any statement verified. The compressed key now stores a SHA-256 digest of the IC vector; the IC points are supplied and authenticated at verify time. `compress_vk(&vk)`, `create_vk_opening(&vk)`. **(breaking)**
+- **Poseidon / Merkle circuits** — outputs were tied to inputs through a free witness, so any hash or root could be "proven". Every S-box is now constrained, with Grain-LFSR round constants and MDS (8 full / 57 partial rounds).
+- **SAP reduction** — addition-only constraints (`A·1 = C`) were dropped from derived keys. `R1CSToSAP` now delegates to the standard QAP reduction.
+- **KZG batch verify** — fixed challenges 1, 2, 3… let wrong evaluations cancel; now Fiat-Shamir.
+- **IPA** — the evaluation check used unbound prover scalars; the inner product is now folded through a dedicated generator `U` (Bulletproofs-style). `IpaConfig` gains `u`; `IpaProof` drops `l_scalars`, `r_scalars`, `b_final`. **(breaking)**
+- **Lasso** — prover-chosen query weights (a zero weight hid a wrong value) are now Fiat-Shamir derived; out-of-range indices return an error instead of panicking. `prove_lasso(&table, &indices)`. **(breaking)**
+- **SE verifier** — `verify_sim_extractable` silently truncated wrong-length inputs and skipped identity checks; it now delegates to the core verifier. Proofs carrying a BG18 `se_element` are rejected (the extra pairing term was malleable and honest BG18 proofs never verified).
+- **Range check / circuit builder** — range checks can no longer wrap the field; `conditional_select` now constrains its condition to be boolean.
+- **JS reference verifier** — trusted a prover-supplied `aggregatedCheck`, spot-checked at most 32 constraints and leaked private values. It now checks every constraint and public-input binding; it is documented as not zero-knowledge.
+
+### Secret / randomness fixes
+
+- `auth_setup` used a hardcoded seed by default (toxic waste effectively public) and wall-clock time with `--rand`. It now always uses the OS CSPRNG.
+- `batch_prove` seeded proving randomness from the clock or a constant; it now takes a caller RNG. **(breaking)**
+- `wasm-auth` fell back to predictable proof randomness when OS entropy was unavailable; it now fails closed.
+- `UniversalParams` holds the α, β, γ trapdoors and derived `Debug` / serialization; both removed, zeroized on drop, docs state it is not a transparent setup.
+- Toxic waste (`t`, `tau`, powers, inverses) is zeroized after key and SRS generation.
+
+### Input-validation fixes
+
+- `wasm-auth` accepts only canonical 32-byte field elements and non-zero nonces, closing nullifier replay via `x + r` encodings.
+- Generated WASM verifiers reject non-canonical inputs and identity points; Solidity / WASM generators reject non-identifier names (code injection).
+- Prover rejects mismatched proving keys instead of panicking; FRI verification rejects malformed proofs instead of panicking.
+- Recursive chains are hash-linked with length-prefixed fields and depth checks.
+
+### Other
+
+- New `config` module with library-wide constants (security level, Poseidon parameters, Fiat-Shamir domain tags, version).
+- Faster KZG (MSM commit/open, single multi-pairing verify, batched SRS generation) and proving randomness no longer re-hashes the VK per proof.
+- CI: least-privilege workflow token, workspace tests, JS tests.
+- Documented limits of research modules: FRI (no folding check), folding decision predicate (unbound error vector), PQ scaffold, MPC integrity tags.
+
+---
+
 ## UniGroth v0.3.2 (April 2026)
 
 ### Documentation

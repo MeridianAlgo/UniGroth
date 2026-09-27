@@ -12,18 +12,17 @@
 //!
 //! This is the foundation for UniGroth's universal setup.
 
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{One, UniformRand};
+use ark_ec::{
+    pairing::Pairing, scalar_mul::BatchMulPreprocessing, AffineRepr, CurveGroup, VariableBaseMSM,
+};
+use ark_ff::{One, PrimeField, UniformRand, Zero};
 use ark_poly::{univariate::DensePolynomial, DenseUVPolynomial, Polynomial};
 use ark_serialize::*;
 use ark_std::{
-    cfg_iter,
     rand::{CryptoRng, RngCore},
     vec::Vec,
 };
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
+use zeroize::Zeroize;
 
 /// Universal Structured Reference String (SRS) for KZG commitments.
 /// This is generated once and can be reused for any circuit up to `max_degree`.
@@ -47,7 +46,7 @@ impl<E: Pairing> UniversalSRS<E> {
         let setup_time = start_timer!(|| format!("KZG Universal Setup (degree {})", max_degree));
 
         // Generate toxic waste
-        let tau = E::ScalarField::rand(rng);
+        let mut tau = E::ScalarField::rand(rng);
         let g = E::G1::rand(rng);
         let h = E::G2::rand(rng);
 
@@ -61,19 +60,21 @@ impl<E: Pairing> UniversalSRS<E> {
         }
         end_timer!(powers_time);
 
-        // Compute [τⁱG] for i = 0..max_degree
+        // Fixed-base windowed multiplication: [τⁱG] and [τⁱH] for i = 0..max_degree
         let g1_time = start_timer!(|| "Computing G1 powers");
-        let powers_of_g = cfg_iter!(powers_of_tau)
-            .map(|power| (g * power).into_affine())
-            .collect::<Vec<_>>();
+        let powers_of_g =
+            BatchMulPreprocessing::new(g, powers_of_tau.len()).batch_mul(&powers_of_tau);
         end_timer!(g1_time);
 
-        // Compute [τⁱH] for i = 0..max_degree
         let g2_time = start_timer!(|| "Computing G2 powers");
-        let powers_of_h = cfg_iter!(powers_of_tau)
-            .map(|power| (h * power).into_affine())
-            .collect::<Vec<_>>();
+        let powers_of_h =
+            BatchMulPreprocessing::new(h, powers_of_tau.len()).batch_mul(&powers_of_tau);
         end_timer!(g2_time);
+
+        // Destroy the toxic waste.
+        tau.zeroize();
+        current.zeroize();
+        powers_of_tau.iter_mut().for_each(Zeroize::zeroize);
 
         end_timer!(setup_time);
 
@@ -129,21 +130,24 @@ impl<E: Pairing> UniversalSRS<E> {
         let update_time = start_timer!(|| "Updating SRS");
 
         // Generate new randomness
-        let delta = E::ScalarField::rand(rng);
+        let mut delta = E::ScalarField::rand(rng);
 
-        // Update powers: [τⁱG] -> [δτⁱG]
+        // Update powers: [τⁱG] -> [δⁱτⁱG]
         let mut delta_power = E::ScalarField::one();
         for g in &mut self.powers_of_g {
             *g = (g.into_group() * delta_power).into_affine();
             delta_power *= delta;
         }
 
-        // Update powers: [τⁱH] -> [δτⁱH]
+        // Update powers: [τⁱH] -> [δⁱτⁱH]
         let mut delta_power = E::ScalarField::one();
         for h in &mut self.powers_of_h {
             *h = (h.into_group() * delta_power).into_affine();
             delta_power *= delta;
         }
+
+        delta.zeroize();
+        delta_power.zeroize();
 
         end_timer!(update_time);
     }
@@ -183,12 +187,8 @@ impl<E: Pairing> KZG<E> {
             "Polynomial degree exceeds SRS max degree"
         );
 
-        // Compute C = Σ aᵢ[τⁱG]
-        let coeffs = polynomial.coeffs();
-        let commitment = cfg_iter!(coeffs)
-            .zip(&srs.powers_of_g)
-            .map(|(coeff, power)| power.into_group() * coeff)
-            .sum::<E::G1>();
+        // Compute C = Σ aᵢ[τⁱG] with a single MSM
+        let commitment = E::G1::msm_unchecked(&srs.powers_of_g, polynomial.coeffs());
 
         end_timer!(commit_time);
 
@@ -219,11 +219,8 @@ impl<E: Pairing> KZG<E> {
         // Perform polynomial division
         let witness = &numerator / &denominator;
 
-        // Compute proof π = w(τ)G
-        let proof = cfg_iter!(witness.coeffs())
-            .zip(&srs.powers_of_g)
-            .map(|(coeff, power)| power.into_group() * coeff)
-            .sum::<E::G1>();
+        // Compute proof π = w(τ)G with a single MSM
+        let proof = E::G1::msm_unchecked(&srs.powers_of_g, witness.coeffs());
 
         end_timer!(open_time);
 
@@ -247,26 +244,40 @@ impl<E: Pairing> KZG<E> {
         proof: &Opening<E>,
     ) -> bool {
         let verify_time = start_timer!(|| "KZG Verify");
-
-        // Compute C - vG
-        let c_minus_v = (commitment.value.into_group() - srs.powers_of_g[0] * value).into_affine();
-
-        // Compute τH - zH
-        let tau_h_minus_z =
-            (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
-
-        // Check pairing equation: e(C - vG, H) = e(π, τH - zH)
-        let lhs = E::pairing(c_minus_v, srs.powers_of_h[0]);
-        let rhs = E::pairing(proof.proof, tau_h_minus_z);
-
+        let ok = Self::check(
+            srs,
+            commitment.value.into_group(),
+            point,
+            *value,
+            proof.proof,
+        );
         end_timer!(verify_time);
+        ok
+    }
 
-        lhs == rhs
+    /// e(C - vG, H) · e(-π, τH - zH) == 1, as one multi-pairing.
+    fn check(
+        srs: &UniversalSRS<E>,
+        commitment: E::G1,
+        point: &E::ScalarField,
+        value: E::ScalarField,
+        proof: E::G1Affine,
+    ) -> bool {
+        if srs.powers_of_g.is_empty() || srs.powers_of_h.len() < 2 {
+            return false;
+        }
+        let c_minus_v = commitment - srs.powers_of_g[0] * value;
+        let tau_h_minus_z = srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point;
+        let g1 = E::G1::normalize_batch(&[c_minus_v, -proof.into_group()]);
+        let g2 = E::G2::normalize_batch(&[srs.powers_of_h[0].into_group(), tau_h_minus_z]);
+        E::multi_pairing(g1, g2).is_zero()
     }
 
     /// Batch verify multiple openings at the same point.
     ///
-    /// More efficient than verifying each opening individually.
+    /// The openings are combined with powers of a Fiat-Shamir challenge derived
+    /// from every commitment, value and proof, so a prover cannot pick wrong
+    /// values whose errors cancel out.
     pub fn batch_verify(
         srs: &UniversalSRS<E>,
         commitments: &[Commitment<E>],
@@ -274,45 +285,61 @@ impl<E: Pairing> KZG<E> {
         values: &[E::ScalarField],
         proofs: &[Opening<E>],
     ) -> bool {
-        assert_eq!(commitments.len(), values.len());
-        assert_eq!(commitments.len(), proofs.len());
+        let n = commitments.len();
+        if n == 0 || values.len() != n || proofs.len() != n {
+            return false;
+        }
 
-        let verify_time = start_timer!(|| format!("KZG Batch Verify ({})", commitments.len()));
+        let verify_time = start_timer!(|| format!("KZG Batch Verify ({})", n));
 
-        // Generate random challenges for batching
-        let challenges: Vec<_> = (0..commitments.len())
-            .map(|i| E::ScalarField::from((i + 1) as u64))
-            .collect();
+        let r = Self::batch_challenge(commitments, point, values, proofs);
+        let mut challenges = Vec::with_capacity(n);
+        let mut acc = E::ScalarField::one();
+        for _ in 0..n {
+            challenges.push(acc);
+            acc *= r;
+        }
 
-        // Compute batched commitment: Σ rⁱCᵢ
-        let batched_commitment = cfg_iter!(commitments)
-            .zip(&challenges)
-            .map(|(c, challenge)| c.value.into_group() * challenge)
-            .sum::<E::G1>();
+        let c_bases: Vec<E::G1Affine> = commitments.iter().map(|c| c.value).collect();
+        let p_bases: Vec<E::G1Affine> = proofs.iter().map(|p| p.proof).collect();
+        let batched_commitment = E::G1::msm_unchecked(&c_bases, &challenges);
+        let batched_proof = E::G1::msm_unchecked(&p_bases, &challenges).into_affine();
+        let batched_value: E::ScalarField =
+            values.iter().zip(&challenges).map(|(v, c)| *v * c).sum();
 
-        // Compute batched value: Σ rⁱvᵢ
-        let batched_value = cfg_iter!(values)
-            .zip(&challenges)
-            .map(|(v, challenge)| *v * challenge)
-            .sum::<E::ScalarField>();
-
-        // Compute batched proof: Σ rⁱπᵢ
-        let batched_proof = cfg_iter!(proofs)
-            .zip(&challenges)
-            .map(|(p, challenge)| p.proof.into_group() * challenge)
-            .sum::<E::G1>();
-
-        // Verify batched opening
-        let c_minus_v = (batched_commitment - srs.powers_of_g[0] * batched_value).into_affine();
-        let tau_h_minus_z =
-            (srs.powers_of_h[1].into_group() - srs.powers_of_h[0] * point).into_affine();
-
-        let lhs = E::pairing(c_minus_v, srs.powers_of_h[0]);
-        let rhs = E::pairing(batched_proof.into_affine(), tau_h_minus_z);
+        let ok = Self::check(srs, batched_commitment, point, batched_value, batched_proof);
 
         end_timer!(verify_time);
 
-        lhs == rhs
+        ok
+    }
+
+    /// SHA-256 Fiat-Shamir challenge over the whole batch statement.
+    fn batch_challenge(
+        commitments: &[Commitment<E>],
+        point: &E::ScalarField,
+        values: &[E::ScalarField],
+        proofs: &[Opening<E>],
+    ) -> E::ScalarField {
+        use sha2::{Digest, Sha256};
+        let mut buf = Vec::new();
+        commitments
+            .serialize_compressed(&mut buf)
+            .expect("serializing to a Vec cannot fail");
+        point
+            .serialize_compressed(&mut buf)
+            .expect("serializing to a Vec cannot fail");
+        values
+            .serialize_compressed(&mut buf)
+            .expect("serializing to a Vec cannot fail");
+        proofs
+            .serialize_compressed(&mut buf)
+            .expect("serializing to a Vec cannot fail");
+        let digest = Sha256::new()
+            .chain_update(crate::config::DOMAIN_KZG_BATCH)
+            .chain_update(&buf)
+            .finalize();
+        E::ScalarField::from_le_bytes_mod_order(&digest)
     }
 }
 
@@ -387,6 +414,18 @@ mod tests {
             &commitments,
             &point,
             &values,
+            &proofs
+        ));
+
+        // Errors that cancel under fixed weights (1, 2) must still be caught.
+        let mut bad = values.clone();
+        bad[0] += Fr::from(2u64);
+        bad[1] -= Fr::from(1u64);
+        assert!(!KZG::batch_verify(
+            &srs,
+            &commitments,
+            &point,
+            &bad,
             &proofs
         ));
     }

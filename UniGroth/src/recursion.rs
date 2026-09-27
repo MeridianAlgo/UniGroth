@@ -4,6 +4,12 @@
 //! Framework for proving UniGroth/Groth16 verification inside UniGroth itself,
 //! enabling recursive proof composition and proof chains.
 //!
+//! **Status:** no in-circuit verifier is wired in yet. [`RecursiveProof`] is a
+//! hash-linked audit log of (proof, VK, inputs) triples. [`verify_recursive_chain`]
+//! checks the log's integrity only; it does **not** verify any inner proof,
+//! and anyone can build a valid-looking chain for arbitrary bytes. Verify each
+//! inner proof with the Groth16 verifier before trusting a chain.
+//!
 //! Recursive composition allows:
 //! - Proving that a previous proof was valid (proof of proof)
 //! - Chaining proofs for incrementally verifiable computation
@@ -104,13 +110,14 @@ pub fn create_recursive_proof(
 
     let mut proof_chain = previous.map(|p| p.proof_chain.clone()).unwrap_or_default();
 
-    // Add current proof commitment to the chain
-    let mut proof_hasher = Sha256::new();
-    proof_hasher.update(b"UniGroth-Proof-Commit-v1");
-    proof_hasher.update(inner_proof_bytes);
-    proof_hasher.update(&vk_commitment);
-    proof_hasher.update(public_inputs_hash);
-    proof_chain.push(proof_hasher.finalize().to_vec());
+    // Each entry commits to the previous one, so earlier links cannot be swapped.
+    let entry = chain_entry(
+        proof_chain.last().map(Vec::as_slice),
+        inner_proof_bytes,
+        &vk_commitment,
+        public_inputs_hash,
+    );
+    proof_chain.push(entry);
 
     RecursiveProof {
         inner_proof: inner_proof_bytes.to_vec(),
@@ -121,22 +128,36 @@ pub fn create_recursive_proof(
     }
 }
 
-/// Verify a recursive proof's chain integrity.
+/// Hash one chain link: H(prev || len-prefixed proof, VK commitment, inputs hash).
+///
+/// Length prefixes stop bytes from being shifted between adjacent fields.
+fn chain_entry(prev: Option<&[u8]>, proof: &[u8], vk_commitment: &[u8], pi_hash: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(crate::config::DOMAIN_RECURSION_CHAIN);
+    for part in [prev.unwrap_or(&[]), proof, vk_commitment, pi_hash] {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    hasher.finalize().to_vec()
+}
+
+/// Check a recursive proof's hash-chain integrity (not the inner proofs; see module docs).
+///
+/// The latest entry must commit to the previous entry and the current
+/// (proof, VK commitment, inputs hash), and the depth must match the chain length.
 pub fn verify_recursive_chain(proof: &RecursiveProof) -> bool {
-    if proof.proof_chain.is_empty() {
+    let n = proof.proof_chain.len();
+    if n == 0 || proof.recursion_depth != n - 1 {
         return false;
     }
-
-    // Verify the latest entry matches the proof data
-    let mut hasher = Sha256::new();
-    hasher.update(b"UniGroth-Proof-Commit-v1");
-    hasher.update(&proof.inner_proof);
-    hasher.update(&proof.vk_commitment);
-    hasher.update(&proof.public_inputs_hash);
-    let expected = hasher.finalize().to_vec();
-
-    let last = &proof.proof_chain[proof.proof_chain.len() - 1];
-    *last == expected
+    let prev = n.checked_sub(2).map(|i| proof.proof_chain[i].as_slice());
+    let expected = chain_entry(
+        prev,
+        &proof.inner_proof,
+        &proof.vk_commitment,
+        &proof.public_inputs_hash,
+    );
+    proof.proof_chain[n - 1] == expected
 }
 
 /// Estimate the cost of recursive verification.
@@ -232,6 +253,18 @@ mod tests {
 
         rp.inner_proof = b"tampered".to_vec();
         assert!(!verify_recursive_chain(&rp));
+    }
+
+    #[test]
+    fn test_spliced_chain_fails() {
+        let config = RecursionConfig::default();
+        let rp0 = create_recursive_proof(b"proof-0", b"vk-0", b"pi-0", None, &config);
+        let mut rp1 = create_recursive_proof(b"proof-1", b"vk-1", b"pi-1", Some(&rp0), &config);
+        assert!(verify_recursive_chain(&rp1));
+
+        // Replacing the earlier link breaks the latest entry.
+        rp1.proof_chain[0] = vec![0u8; 32];
+        assert!(!verify_recursive_chain(&rp1));
     }
 
     #[test]

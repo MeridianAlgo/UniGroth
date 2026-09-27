@@ -351,19 +351,18 @@ fn compare_aggregation_unigroth_exclusive() {
     }
 
     // Aggregate all 8 → single verification
-    let agg = ug::aggregate_proofs::<Bn254, _>(&proofs, &inputs, &mut rng);
-    assert_eq!(agg.n, 8);
+    let agg = ug::aggregate_proofs::<Bn254>(&proofs);
+    assert_eq!(agg.proofs.len(), 8);
     assert!(
-        ug::verify_aggregated(&ug_vk, &agg),
+        ug::verify_aggregated(&ug_vk, &inputs, &agg),
         "8-proof aggregation must verify"
     );
 
     // Verify aggregation is sound: tampered proof should fail
     let mut bad_inputs = inputs.clone();
     bad_inputs[3] = vec![Fr::from(999u64)]; // wrong input for proof #4
-    let bad_agg = ug::aggregate_proofs::<Bn254, _>(&proofs, &bad_inputs, &mut rng);
     assert!(
-        !ug::verify_aggregated(&ug_vk, &bad_agg),
+        !ug::verify_aggregated(&ug_vk, &bad_inputs, &agg),
         "Aggregation with wrong input must be rejected"
     );
 

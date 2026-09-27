@@ -1,144 +1,61 @@
-// unigroth verifier — verifies zero-knowledge proofs
-// checks merkle openings, constraint satisfaction, and aggregated check
+// unigroth js verifier — checks every constraint of a reference (non-zk) proof
+//
+// nothing is taken on the prover's word: each value must be a canonical field
+// element, signal 0 must be 1, every claimed public input must equal its
+// witness signal, and every r1cs constraint is re-evaluated.
 const F = require('./field');
-const { MerkleTree, Transcript } = require('./commitment');
+const { PROTOCOL } = require('./prover');
+
+// accept only canonical decimal strings in [0, ORDER) so each value has one encoding
+function parseField(v) {
+    if (typeof v !== 'string' || !/^[0-9]{1,78}$/.test(v)) return null;
+    const x = BigInt(v);
+    return x < F.ORDER ? x : null;
+}
 
 function verify(circuit, proof) {
     const t0 = performance.now();
-    const results = { checks: [], passed: true };
+    const results = { checks: [], passed: false };
+    const done = () => {
+        results.verifyTimeMs = Math.round((performance.now() - t0) * 100) / 100;
+        return results;
+    };
+    const fail = (name, detail) => {
+        results.checks.push({ name, passed: false, detail });
+        return done();
+    };
 
-    // step 1: parse commitments
-    const witnessRoot = Buffer.from(proof.witnessCommitment, 'hex');
-    const blindRoot = Buffer.from(proof.blindingCommitment, 'hex');
+    if (!proof || proof.protocol !== PROTOCOL || !Array.isArray(proof.witness)) {
+        return fail('format', 'malformed proof');
+    }
+    if (proof.witness.length !== circuit.nSignals) {
+        return fail('format', `expected ${circuit.nSignals} signals, got ${proof.witness.length}`);
+    }
 
-    // step 2: rebuild fiat-shamir transcript (must match prover's)
-    const transcript = new Transcript('unigroth_prove_v1');
-    transcript.absorbBytes(witnessRoot);
-    transcript.absorbBytes(blindRoot);
+    const w = proof.witness.map(parseField);
+    const bad = w.indexOf(null);
+    if (bad !== -1) return fail('format', `signal ${bad} is not a canonical field element`);
+    if (w[0] !== 1n) return fail('one_signal', 'signal 0 must equal 1');
 
-    // absorb public inputs
     for (const pi of circuit.publicInputs) {
-        const pubVal = proof.publicInputs[pi.name];
-        if (pubVal === undefined) {
-            results.checks.push({ name: 'public_input', passed: false, detail: `missing: ${pi.name}` });
-            results.passed = false;
-            return results;
-        }
-        transcript.absorb(BigInt(pubVal));
+        const claimed = parseField(proof.publicInputs ? proof.publicInputs[pi.name] : undefined);
+        if (claimed === null) return fail(`public_input_${pi.name}`, 'missing or malformed');
+        if (claimed !== w[pi.index]) return fail(`public_input_${pi.name}`, 'does not match witness');
     }
+    results.checks.push({ name: 'public_inputs', passed: true, detail: 'bound to witness' });
 
-    // step 3: derive same challenges as prover
-    const alpha = transcript.squeeze();
-    const beta = transcript.squeeze();
-    const gamma = transcript.squeeze();
-
-    // step 4: check aggregated constraint evaluation equals zero
-    const aggCheck = BigInt(proof.aggregatedCheck);
-    const aggPassed = F.eq(aggCheck, 0n);
-    results.checks.push({
-        name: 'aggregated_constraint_check',
-        passed: aggPassed,
-        detail: aggPassed ? 'T = 0 (all constraints satisfied)' : `T = ${aggCheck} (FAILED)`,
-    });
-    if (!aggPassed) results.passed = false;
-
-    // step 5: verify spot-check merkle openings
-    let spotChecksPassed = 0;
-    for (const sc of proof.spotChecks) {
-        const con = circuit.constraints[sc.constraintIndex];
-        if (!con) {
-            results.checks.push({ name: `spot_check_${sc.constraintIndex}`, passed: false, detail: 'invalid constraint index' });
-            results.passed = false;
-            continue;
-        }
-
-        // verify each merkle opening
-        let allOpeningsValid = true;
-        const openedValues = {};
-
-        for (const [sigIdx, opening] of Object.entries(sc.openings)) {
-            const val = BigInt(opening.value);
-            const merkleProof = opening.proof.map(p => ({
-                hash: Buffer.from(p.hash, 'hex'),
-                position: p.position,
-            }));
-
-            const valid = MerkleTree.verify(val, merkleProof, witnessRoot);
-            if (!valid) {
-                allOpeningsValid = false;
-                results.checks.push({
-                    name: `merkle_opening_${sigIdx}`,
-                    passed: false,
-                    detail: `signal ${sigIdx} merkle proof invalid`,
-                });
-                results.passed = false;
-            }
-            openedValues[parseInt(sigIdx)] = val;
-        }
-
-        if (allOpeningsValid) {
-            // verify the constraint using opened values
-            let aVal = 0n, bVal = 0n, cVal = 0n;
-            for (const [idx, coeff] of Object.entries(con.a)) {
-                const i = parseInt(idx);
-                if (openedValues[i] !== undefined) {
-                    aVal = F.add(aVal, F.mul(coeff, openedValues[i]));
-                }
-            }
-            for (const [idx, coeff] of Object.entries(con.b)) {
-                const i = parseInt(idx);
-                if (openedValues[i] !== undefined) {
-                    bVal = F.add(bVal, F.mul(coeff, openedValues[i]));
-                }
-            }
-            for (const [idx, coeff] of Object.entries(con.c)) {
-                const i = parseInt(idx);
-                if (openedValues[i] !== undefined) {
-                    cVal = F.add(cVal, F.mul(coeff, openedValues[i]));
-                }
-            }
-
-            const constraintSatisfied = F.eq(F.mul(aVal, bVal), cVal);
-            results.checks.push({
-                name: `constraint_${sc.constraintIndex}`,
-                passed: constraintSatisfied,
-                detail: constraintSatisfied
-                    ? `(a·w)(b·w) = c·w ✓`
-                    : `constraint violated: ${F.mul(aVal, bVal)} ≠ ${cVal}`,
-            });
-            if (!constraintSatisfied) results.passed = false;
-            else spotChecksPassed++;
-        }
+    const check = circuit.checkWitness(w);
+    if (!check.valid) {
+        return fail(`constraint_${check.failedConstraint}`, 'constraint violated');
     }
-
     results.checks.push({
-        name: 'spot_checks_summary',
-        passed: spotChecksPassed === proof.spotChecks.length,
-        detail: `${spotChecksPassed}/${proof.spotChecks.length} spot checks passed`,
+        name: 'constraints',
+        passed: true,
+        detail: `all ${circuit.constraints.length} constraints satisfied`,
     });
 
-    // step 6: check public input consistency
-    for (const pi of circuit.publicInputs) {
-        const claimed = BigInt(proof.publicInputs[pi.name]);
-        let found = false;
-        for (const sc of proof.spotChecks) {
-            if (sc.openings[pi.index.toString()]) {
-                const opened = BigInt(sc.openings[pi.index.toString()].value);
-                if (F.eq(claimed, opened)) found = true;
-            }
-        }
-        // also verify via merkle if available in any opening
-        results.checks.push({
-            name: `public_input_${pi.name}`,
-            passed: true,
-            detail: `value: ${claimed.toString().slice(0, 20)}...`,
-        });
-    }
-
-    const verifyTime = performance.now() - t0;
-    results.verifyTimeMs = Math.round(verifyTime * 100) / 100;
-
-    return results;
+    results.passed = true;
+    return done();
 }
 
 module.exports = { verify };

@@ -1,24 +1,19 @@
-// unigroth — self-contained zero-knowledge proof framework
-// no circom, no snarkjs, no external ceremony — just import and prove
+// unigroth — javascript reference implementation (NOT zero-knowledge)
+// proofs are sound but carry the full witness; use the rust library for zk
 const { Circuit } = require('./circuit');
-const { prove } = require('./prover');
+const { prove, PROTOCOL } = require('./prover');
 const { verify } = require('./verifier');
 const F = require('./field');
 
 class UniGroth {
-    // universal setup — no per-circuit ceremony, no toxic waste
-    // works for ANY circuit up to any size (hash-based, transparent)
-    static setup(options = {}) {
-        const securityLevel = options.securityLevel || 128;
+    // parameters of the reference protocol (no setup or trapdoor needed)
+    static setup() {
         return {
-            protocol: 'unigroth-v1',
-            type: 'universal-transparent',
-            securityBits: securityLevel,
+            protocol: PROTOCOL,
+            zeroKnowledge: false,
             field: 'bn254-scalar',
             fieldOrder: F.ORDER.toString(),
-            commitmentScheme: 'merkle-sha256',
             hashFunction: 'mimc-bn254-91r',
-            created: new Date().toISOString(),
         };
     }
 
@@ -40,7 +35,8 @@ class UniGroth {
         // separate public and private inputs
         const publicInputs = {};
         for (const pi of circuit.publicInputs) {
-            publicInputs[pi.name] = inputs[pi.name].toString();
+            if (inputs[pi.name] === undefined) throw new Error(`missing public input: ${pi.name}`);
+            publicInputs[pi.name] = F.toBigInt(inputs[pi.name]).toString();
         }
 
         // compute witness (fills in all intermediate values)

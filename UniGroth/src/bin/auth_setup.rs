@@ -12,14 +12,15 @@
 //! ## Usage
 //!
 //! ```bash
-//! cargo run --release --features compare --bin auth_setup -- --out keys/
+//! cargo run --release --features auth-bin --bin auth_setup -- --out keys/
 //! ```
 //!
 //! ## Security note
 //!
-//! This binary uses a deterministic RNG seeded for reproducibility. For a
-//! production deployment, run a multi-party trusted setup ceremony (or pass
-//! `--rand` to draw from `OsRng`).
+//! The setup randomness (toxic waste) is drawn from the operating system's
+//! CSPRNG and dropped when the process exits. Anyone who learns it can forge
+//! proofs, so there is deliberately no deterministic or seeded mode. For a
+//! production deployment, run a multi-party ceremony instead of a single machine.
 
 use std::{
     fs,
@@ -29,22 +30,20 @@ use std::{
 use ark_bn254::{Bn254, Fr};
 use ark_serialize::CanonicalSerialize;
 use ark_snark::SNARK;
-use ark_std::rand::{rngs::StdRng, SeedableRng};
+use ark_std::rand::rngs::OsRng;
 
 use unigroth::{auth::mimc_round_constants, auth::AuthCircuit, Groth16};
 
-fn parse_args() -> (PathBuf, bool) {
+fn parse_args() -> PathBuf {
     let mut out_dir = PathBuf::from("keys");
-    let mut use_os_rng = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--out" => {
                 out_dir = PathBuf::from(args.next().expect("--out requires a directory argument"));
             },
-            "--rand" => use_os_rng = true,
             "-h" | "--help" => {
-                eprintln!("auth_setup --out <dir> [--rand]");
+                eprintln!("auth_setup --out <dir>");
                 std::process::exit(0);
             },
             other => {
@@ -53,7 +52,7 @@ fn parse_args() -> (PathBuf, bool) {
             },
         }
     }
-    (out_dir, use_os_rng)
+    out_dir
 }
 
 fn write_file<T: CanonicalSerialize>(path: &Path, value: &T) -> std::io::Result<usize> {
@@ -64,30 +63,15 @@ fn write_file<T: CanonicalSerialize>(path: &Path, value: &T) -> std::io::Result<
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (out_dir, use_os_rng) = parse_args();
+    let out_dir = parse_args();
     fs::create_dir_all(&out_dir)?;
 
     let constants = mimc_round_constants::<Fr>();
     let empty = AuthCircuit::<Fr>::empty(constants);
 
-    let seed: u64 = if use_os_rng {
-        // Mix wall-clock nanos + per-process address entropy into the seed.
-        // For a real ceremony, replace with the output of a proper MPC ritual.
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or_default();
-        let addr_entropy = (&nanos as *const _ as usize) as u64;
-        nanos ^ addr_entropy
-    } else {
-        // Deterministic CI-friendly default.
-        0xA17_C1F1Cu64
-    };
-    let mut rng = StdRng::seed_from_u64(seed);
-
     eprintln!("[auth_setup] generating Groth16 keys for AuthCircuit on BN254 ...");
     let started = std::time::Instant::now();
-    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(empty, &mut rng)?;
+    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(empty, &mut OsRng)?;
     eprintln!("[auth_setup] setup done in {:?}", started.elapsed());
 
     let pk_path = out_dir.join("pk.bin");

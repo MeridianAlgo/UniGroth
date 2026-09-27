@@ -3,24 +3,26 @@
 //!
 //! Common circuit gadgets for building zkSNARK applications:
 //!
-//! - **Poseidon Hash**: Sponge-based algebraic hash (R1CS-friendly)
-//! - **Merkle Tree**: Binary Merkle tree membership proofs
-//! - **SHA-256 Gadget**: Bitwise SHA-256 in R1CS
-//! - **EdDSA Signature**: Signature verification circuit
+//! - **Poseidon Hash**: x⁵ Poseidon permutation, every S-box constrained
+//! - **Merkle Tree**: Binary Merkle tree membership proofs over Poseidon
+//! - **Range Check**: bit decomposition
 //!
 //! All gadgets implement `ConstraintSynthesizer` and can be composed
 //! with each other and used directly with the Groth16/UniGroth prover.
 
+use ark_crypto_primitives::sponge::poseidon::find_poseidon_ark_and_mds;
 use ark_ff::{BigInteger, PrimeField};
 use ark_relations::{
-    gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
+    gr1cs::{
+        ConstraintSynthesizer, ConstraintSystemRef, LinearCombination, SynthesisError, Variable,
+    },
     lc,
 };
 use ark_std::vec::Vec;
 
 // ─── Poseidon Hash Circuit ─────────────────────────────────────────────────
 
-/// Simplified Poseidon hash parameters.
+/// Poseidon hash parameters (x⁵ S-box).
 #[derive(Clone, Debug)]
 pub struct PoseidonParams<F: PrimeField> {
     /// Number of full rounds
@@ -29,39 +31,46 @@ pub struct PoseidonParams<F: PrimeField> {
     pub partial_rounds: usize,
     /// Width of the state (t)
     pub width: usize,
-    /// Round constants
+    /// Round constants, `width` per round, row-major
     pub round_constants: Vec<F>,
     /// MDS matrix (width x width)
     pub mds_matrix: Vec<Vec<F>>,
 }
 
 impl<F: PrimeField> PoseidonParams<F> {
-    /// Create default Poseidon parameters for width=3 (2-to-1 hash).
+    /// Poseidon parameters for width=3 (2-to-1 hash): 8 full and 57 partial
+    /// rounds, with round constants and MDS matrix from the reference Grain
+    /// LFSR generator. The x⁵ S-box requires gcd(5, p − 1) = 1, which holds
+    /// for the BN254 and BLS12-381 scalar fields.
     pub fn default_2_to_1() -> Self {
-        let width = 3;
-        let full_rounds = 8;
-        let partial_rounds = 56;
-        let total_rounds = full_rounds + partial_rounds;
-
-        let round_constants: Vec<F> = (0..total_rounds * width)
-            .map(|i| F::from((i * 7 + 13) as u64))
-            .collect();
-
-        let mds_matrix: Vec<Vec<F>> = (0..width)
-            .map(|i| {
-                (0..width)
-                    .map(|j| if i == j { F::from(2u64) } else { F::from(1u64) })
-                    .collect()
-            })
-            .collect();
-
+        let (full_rounds, partial_rounds) = (
+            crate::config::POSEIDON_FULL_ROUNDS,
+            crate::config::POSEIDON_PARTIAL_ROUNDS,
+        );
+        let (ark, mds_matrix) = find_poseidon_ark_and_mds::<F>(
+            F::MODULUS_BIT_SIZE as u64,
+            crate::config::POSEIDON_WIDTH - 1,
+            full_rounds as u64,
+            partial_rounds as u64,
+            0,
+        );
         Self {
             full_rounds,
             partial_rounds,
-            width,
-            round_constants,
+            width: crate::config::POSEIDON_WIDTH,
+            round_constants: ark.into_iter().flatten().collect(),
             mds_matrix,
         }
+    }
+
+    /// Whether round `r` applies the S-box to every state element.
+    fn is_full_round(&self, r: usize) -> bool {
+        let half = self.full_rounds / 2;
+        r < half || r >= half + self.partial_rounds
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.full_rounds + self.partial_rounds
     }
 }
 
@@ -83,58 +92,20 @@ fn poseidon_sbox<F: PrimeField>(x: F) -> F {
 
 fn poseidon_permutation<F: PrimeField>(state: &mut [F], params: &PoseidonParams<F>) {
     let w = params.width;
-    let half_full = params.full_rounds / 2;
-    let mut rc_idx = 0;
-
-    // First half of full rounds
-    for _ in 0..half_full {
+    for r in 0..params.num_rounds() {
         for j in 0..w {
-            state[j] += params.round_constants[rc_idx];
-            rc_idx += 1;
+            state[j] += params.round_constants[r * w + j];
         }
-        for j in 0..w {
-            state[j] = poseidon_sbox(state[j]);
+        if params.is_full_round(r) {
+            for s in state.iter_mut() {
+                *s = poseidon_sbox(*s);
+            }
+        } else {
+            state[0] = poseidon_sbox(state[0]);
         }
         let old = state.to_vec();
         for j in 0..w {
-            state[j] = F::from(0u64);
-            for k in 0..w {
-                state[j] += params.mds_matrix[j][k] * old[k];
-            }
-        }
-    }
-
-    // Partial rounds (S-box only on first element)
-    for _ in 0..params.partial_rounds {
-        for j in 0..w {
-            state[j] += params.round_constants[rc_idx.min(params.round_constants.len() - 1)];
-            rc_idx += 1;
-        }
-        state[0] = poseidon_sbox(state[0]);
-        let old = state.to_vec();
-        for j in 0..w {
-            state[j] = F::from(0u64);
-            for k in 0..w {
-                state[j] += params.mds_matrix[j][k] * old[k];
-            }
-        }
-    }
-
-    // Second half of full rounds
-    for _ in 0..half_full {
-        for j in 0..w {
-            state[j] += params.round_constants[rc_idx.min(params.round_constants.len() - 1)];
-            rc_idx += 1;
-        }
-        for j in 0..w {
-            state[j] = poseidon_sbox(state[j]);
-        }
-        let old = state.to_vec();
-        for j in 0..w {
-            state[j] = F::from(0u64);
-            for k in 0..w {
-                state[j] += params.mds_matrix[j][k] * old[k];
-            }
+            state[j] = (0..w).map(|k| params.mds_matrix[j][k] * old[k]).sum();
         }
     }
 }
@@ -148,6 +119,79 @@ pub fn poseidon_hash<F: PrimeField>(left: F, right: F, params: &PoseidonParams<F
     state[0]
 }
 
+/// A value in the circuit: a linear combination of variables and its assignment.
+type Wire<F> = (LinearCombination<F>, Option<F>);
+
+/// Constrain `out = x⁵` with three multiplication constraints.
+fn sbox_gadget<F: PrimeField>(
+    cs: &ConstraintSystemRef<F>,
+    x: &Wire<F>,
+) -> Result<Wire<F>, SynthesisError> {
+    let (x_lc, x_val) = x;
+    let x2_val = x_val.map(|v| v * v);
+    let x4_val = x2_val.map(|v| v * v);
+    let x5_val = x4_val.zip(*x_val).map(|(a, b)| a * b);
+    let x2 = cs.new_witness_variable(|| x2_val.ok_or(SynthesisError::AssignmentMissing))?;
+    let x4 = cs.new_witness_variable(|| x4_val.ok_or(SynthesisError::AssignmentMissing))?;
+    let x5 = cs.new_witness_variable(|| x5_val.ok_or(SynthesisError::AssignmentMissing))?;
+    cs.enforce_r1cs_constraint(|| x_lc.clone(), || x_lc.clone(), || lc!() + x2)?;
+    cs.enforce_r1cs_constraint(|| lc!() + x2, || lc!() + x2, || lc!() + x4)?;
+    cs.enforce_r1cs_constraint(|| lc!() + x4, || x_lc.clone(), || lc!() + x5)?;
+    Ok((lc!() + x5, x5_val))
+}
+
+/// Constrain the Poseidon 2-to-1 hash of `left` and `right`, returning the output wire.
+///
+/// Round-constant additions and the MDS layer are linear and folded into
+/// linear combinations; every S-box is enforced by R1CS constraints.
+fn poseidon_gadget<F: PrimeField>(
+    cs: &ConstraintSystemRef<F>,
+    left: Wire<F>,
+    right: Wire<F>,
+    params: &PoseidonParams<F>,
+) -> Result<Wire<F>, SynthesisError> {
+    let w = params.width;
+    let mut state: Vec<Wire<F>> = vec![left, right];
+    state.resize(w, (lc!(), Some(F::zero())));
+
+    for r in 0..params.num_rounds() {
+        for (j, (s_lc, s_val)) in state.iter_mut().enumerate() {
+            let c = params.round_constants[r * w + j];
+            *s_lc = s_lc.clone() + (c, Variable::One);
+            *s_val = s_val.map(|v| v + c);
+        }
+        let sboxed = if params.is_full_round(r) { w } else { 1 };
+        for s in state.iter_mut().take(sboxed) {
+            *s = sbox_gadget(cs, s)?;
+        }
+        state = (0..w)
+            .map(|j| {
+                let mut out_lc = lc!();
+                let mut out_val = Some(F::zero());
+                for (k, (s_lc, s_val)) in state.iter().enumerate() {
+                    let m = params.mds_matrix[j][k];
+                    out_lc = out_lc + (m, s_lc);
+                    out_val = out_val.zip(*s_val).map(|(acc, v)| acc + m * v);
+                }
+                (out_lc, out_val)
+            })
+            .collect();
+    }
+
+    Ok(state.swap_remove(0))
+}
+
+/// Allocate a fresh witness wire for `lc` so later constraints reference one variable.
+fn materialize<F: PrimeField>(
+    cs: &ConstraintSystemRef<F>,
+    wire: Wire<F>,
+) -> Result<(Variable, Option<F>), SynthesisError> {
+    let (w_lc, w_val) = wire;
+    let var = cs.new_witness_variable(|| w_val.ok_or(SynthesisError::AssignmentMissing))?;
+    cs.enforce_r1cs_constraint(|| w_lc, || lc!() + Variable::One, || lc!() + var)?;
+    Ok((var, w_val))
+}
+
 impl<F: PrimeField> ConstraintSynthesizer<F> for PoseidonHashCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let left =
@@ -155,36 +199,16 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for PoseidonHashCircuit<F> {
         let right =
             cs.new_witness_variable(|| self.right.ok_or(SynthesisError::AssignmentMissing))?;
 
-        let output_val = match (self.left, self.right) {
-            (Some(l), Some(r)) => Some(poseidon_hash(l, r, &self.params)),
-            _ => None,
-        };
-        let output =
-            cs.new_input_variable(|| output_val.ok_or(SynthesisError::AssignmentMissing))?;
-
-        // Simplified constraint: left * right contributes to the hash
-        // In a full implementation, each round of Poseidon would be constrained.
-        // Here we constrain: left * right = intermediate, and intermediate feeds into output.
-        let lr_val = match (self.left, self.right) {
-            (Some(l), Some(r)) => Some(l * r),
-            _ => None,
-        };
-        let lr = cs.new_witness_variable(|| lr_val.ok_or(SynthesisError::AssignmentMissing))?;
-        cs.enforce_r1cs_constraint(|| lc!() + left, || lc!() + right, || lc!() + lr)?;
-
-        // Bind output via a non-trivial relation
-        // output = poseidon(left, right), enforced natively; the R1CS just binds the wires.
-        // This is the "hash-then-constrain" pattern used in production Poseidon gadgets.
-        let diff_val = match (output_val, lr_val) {
-            (Some(o), Some(p)) => Some(o - p),
-            _ => None,
-        };
-        let diff = cs.new_witness_variable(|| diff_val.ok_or(SynthesisError::AssignmentMissing))?;
-        cs.enforce_r1cs_constraint(
-            || lc!() + diff + lr,
-            || lc!() + Variable::One,
-            || lc!() + output,
+        let (hash_lc, hash_val) = poseidon_gadget(
+            &cs,
+            (lc!() + left, self.left),
+            (lc!() + right, self.right),
+            &self.params,
         )?;
+        let output = cs.new_input_variable(|| hash_val.ok_or(SynthesisError::AssignmentMissing))?;
+
+        // output == Poseidon(left, right)
+        cs.enforce_r1cs_constraint(|| hash_lc, || lc!() + Variable::One, || lc!() + output)?;
 
         Ok(())
     }
@@ -231,7 +255,9 @@ impl<F: PrimeField> MerkleProofCircuit<F> {
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for MerkleProofCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let depth = self.path.len();
+        if self.path_indices.len() != self.path.len() {
+            return Err(SynthesisError::Unsatisfiable);
+        }
 
         let leaf_var =
             cs.new_witness_variable(|| self.leaf.ok_or(SynthesisError::AssignmentMissing))?;
@@ -240,73 +266,50 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for MerkleProofCircuit<F> {
         let root_var =
             cs.new_input_variable(|| root_val.ok_or(SynthesisError::AssignmentMissing))?;
 
-        let mut current_val = self.leaf;
-        let mut current_var = leaf_var;
+        let mut current = (leaf_var, self.leaf);
 
-        for i in 0..depth {
-            let sibling_val = self.path[i];
+        for (sibling_val, idx_val) in self.path.iter().zip(&self.path_indices) {
+            let (cur_var, cur_val) = current;
             let sibling_var =
                 cs.new_witness_variable(|| sibling_val.ok_or(SynthesisError::AssignmentMissing))?;
-
-            let idx_val = self.path_indices[i];
             let idx_var =
                 cs.new_witness_variable(|| idx_val.ok_or(SynthesisError::AssignmentMissing))?;
 
-            // Enforce idx is boolean
+            // idx is boolean
             cs.enforce_r1cs_constraint(
                 || lc!() + idx_var,
                 || lc!() + Variable::One - idx_var,
                 || lc!(),
             )?;
 
-            // Compute next hash: if idx=0, hash(current, sibling); if idx=1, hash(sibling, current)
-            let next_val = match (current_val, sibling_val, idx_val) {
-                (Some(c), Some(s), Some(idx)) => {
-                    if idx == F::from(0u64) {
-                        Some(poseidon_hash(c, s, &self.params))
-                    } else {
-                        Some(poseidon_hash(s, c, &self.params))
-                    }
-                },
+            // t = idx · (sibling − current); left = current + t, right = sibling − t
+            let t_val = match (*idx_val, *sibling_val, cur_val) {
+                (Some(i), Some(s), Some(c)) => Some(i * (s - c)),
                 _ => None,
             };
-
-            let next_var =
-                cs.new_witness_variable(|| next_val.ok_or(SynthesisError::AssignmentMissing))?;
-
-            // Constrain: current * sibling feeds into next (simplified binding)
-            let prod_val = match (current_val, sibling_val) {
-                (Some(c), Some(s)) => Some(c * s),
-                _ => None,
-            };
-            let prod_var =
-                cs.new_witness_variable(|| prod_val.ok_or(SynthesisError::AssignmentMissing))?;
+            let t_var =
+                cs.new_witness_variable(|| t_val.ok_or(SynthesisError::AssignmentMissing))?;
             cs.enforce_r1cs_constraint(
-                || lc!() + current_var,
-                || lc!() + sibling_var,
-                || lc!() + prod_var,
+                || lc!() + idx_var,
+                || lc!() + sibling_var - cur_var,
+                || lc!() + t_var,
             )?;
 
-            // Bind next_var to the computed hash
-            let diff_val = match (next_val, prod_val) {
-                (Some(n), Some(p)) => Some(n - p),
-                _ => None,
-            };
-            let diff_var =
-                cs.new_witness_variable(|| diff_val.ok_or(SynthesisError::AssignmentMissing))?;
-            cs.enforce_r1cs_constraint(
-                || lc!() + diff_var + prod_var,
-                || lc!() + Variable::One,
-                || lc!() + next_var,
-            )?;
-
-            current_val = next_val;
-            current_var = next_var;
+            let left = (
+                lc!() + cur_var + t_var,
+                cur_val.zip(t_val).map(|(c, t)| c + t),
+            );
+            let right = (
+                lc!() + sibling_var - t_var,
+                sibling_val.zip(t_val).map(|(s, t)| s - t),
+            );
+            let hash = poseidon_gadget(&cs, left, right, &self.params)?;
+            current = materialize(&cs, hash)?;
         }
 
         // Final hash must equal root
         cs.enforce_r1cs_constraint(
-            || lc!() + current_var - root_var,
+            || lc!() + current.0 - root_var,
             || lc!() + Variable::One,
             || lc!(),
         )?;
@@ -318,6 +321,9 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for MerkleProofCircuit<F> {
 // ─── Range Check Gadget ────────────────────────────────────────────────────
 
 /// Range check circuit: proves 0 <= value < 2^num_bits.
+///
+/// `num_bits` must be below the field's bit size so the bit sum cannot wrap
+/// around the modulus.
 #[derive(Clone)]
 pub struct RangeCheckCircuit<F: PrimeField> {
     pub value: Option<F>,
@@ -326,27 +332,20 @@ pub struct RangeCheckCircuit<F: PrimeField> {
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for RangeCheckCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        if self.num_bits >= F::MODULUS_BIT_SIZE as usize {
+            return Err(SynthesisError::Unsatisfiable);
+        }
         let val = cs.new_input_variable(|| self.value.ok_or(SynthesisError::AssignmentMissing))?;
 
-        let value_u64 = self
-            .value
-            .map(|v| {
-                let bytes = v.into_bigint().to_bytes_le();
-                let mut arr = [0u8; 8];
-                for (i, b) in bytes.iter().take(8).enumerate() {
-                    arr[i] = *b;
-                }
-                u64::from_le_bytes(arr)
-            })
-            .unwrap_or(0);
+        let bits = self.value.map(|v| v.into_bigint().to_bits_le());
 
-        let mut bit_vars = Vec::with_capacity(self.num_bits);
         let mut reconstructed_lc = lc!();
+        let mut coeff = F::one();
 
         for i in 0..self.num_bits {
-            let bit = (value_u64 >> i) & 1;
-            let bit_val = F::from(bit);
-            let bit_var = cs.new_witness_variable(|| Ok(bit_val))?;
+            let bit_val = bits.as_ref().map(|b| F::from(b[i]));
+            let bit_var =
+                cs.new_witness_variable(|| bit_val.ok_or(SynthesisError::AssignmentMissing))?;
 
             // Enforce boolean: bit * (1 - bit) = 0
             cs.enforce_r1cs_constraint(
@@ -355,9 +354,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for RangeCheckCircuit<F> {
                 || lc!(),
             )?;
 
-            let coeff = F::from(1u64 << i);
             reconstructed_lc += (coeff, bit_var);
-            bit_vars.push(bit_var);
+            coeff.double_in_place();
         }
 
         // Enforce: sum(bit_i * 2^i) = value
@@ -381,6 +379,41 @@ mod tests {
 
     fn make_rng() -> ark_std::rand::rngs::StdRng {
         ark_std::rand::rngs::StdRng::seed_from_u64(ark_std::test_rng().next_u64())
+    }
+
+    #[test]
+    fn test_poseidon_gadget_is_bound_to_output() {
+        use ark_relations::gr1cs::ConstraintSystem;
+        let params = PoseidonParams::<Fr>::default_2_to_1();
+        let (l, r) = (Fr::from(3u64), Fr::from(4u64));
+        let expected = poseidon_hash(l, r, &params);
+
+        for (claimed, ok) in [(expected, true), (expected + Fr::from(1u64), false)] {
+            let cs = ConstraintSystem::<Fr>::new_ref();
+            let lv = cs.new_witness_variable(|| Ok(l)).unwrap();
+            let rv = cs.new_witness_variable(|| Ok(r)).unwrap();
+            let (h, h_val) =
+                poseidon_gadget(&cs, (lc!() + lv, Some(l)), (lc!() + rv, Some(r)), &params)
+                    .unwrap();
+            assert_eq!(h_val, Some(expected));
+            let out = cs.new_input_variable(|| Ok(claimed)).unwrap();
+            cs.enforce_r1cs_constraint(|| h, || lc!() + Variable::One, || lc!() + out)
+                .unwrap();
+            assert_eq!(cs.is_satisfied().unwrap(), ok);
+        }
+    }
+
+    #[test]
+    fn test_range_check_rejects_out_of_range() {
+        use ark_relations::gr1cs::ConstraintSystem;
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        RangeCheckCircuit::<Fr> {
+            value: Some(Fr::from(300u64)),
+            num_bits: 8,
+        }
+        .generate_constraints(cs.clone())
+        .unwrap();
+        assert!(!cs.is_satisfied().unwrap());
     }
 
     #[test]

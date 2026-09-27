@@ -11,7 +11,7 @@ use ark_relations::{
     gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
     lc,
 };
-use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
+use ark_snark::SNARK;
 use ark_std::{rand::SeedableRng, time::Instant};
 use std::hint::black_box;
 
@@ -112,14 +112,14 @@ fn bench_aggregation_vs_individual() {
         let start = Instant::now();
         let mut agg = None;
         for _ in 0..iters {
-            agg = Some(aggregate_proofs(&inner_proofs, &public_inputs, &mut rng));
+            agg = Some(aggregate_proofs(&inner_proofs));
         }
         let aggregate_us = start.elapsed().as_micros() as f64 / iters as f64;
 
         let agg_proof = agg.unwrap();
         let start = Instant::now();
         for _ in 0..iters {
-            let ok = verify_aggregated(&vk, &agg_proof);
+            let ok = verify_aggregated(&vk, &public_inputs, &agg_proof);
             assert!(ok, "aggregated proof must verify");
             black_box(ok);
         }
@@ -204,8 +204,8 @@ fn bench_aggregation_throughput() {
 
         let start = Instant::now();
         for _ in 0..iters {
-            let agg = aggregate_proofs(&inner_proofs, &public_inputs, &mut rng);
-            let ok = verify_aggregated(&vk, &agg);
+            let agg = aggregate_proofs(&inner_proofs);
+            let ok = verify_aggregated(&vk, &public_inputs, &agg);
             assert!(ok);
             black_box(ok);
         }

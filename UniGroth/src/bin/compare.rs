@@ -514,8 +514,8 @@ fn main() {
 
         // Aggregated: aggregate + verify (raw inner proofs, no SE wrapper needed)
         let t = now_us();
-        let agg = aggregate_proofs::<Bn254, _>(raw_proofs, inputs, &mut rng);
-        let ok = verify_aggregated(&ug_vk, &agg);
+        let agg = aggregate_proofs::<Bn254>(raw_proofs);
+        let ok = verify_aggregated(&ug_vk, inputs, &agg);
         let aggregated_us = now_us() - t;
         assert!(ok, "aggregated proof must verify for n={}", n);
 
@@ -560,13 +560,12 @@ fn main() {
     let rows = [
         ("Knowledge soundness (AGM)", "✓", "✓"),
         ("Zero-knowledge", "✓", "✓"),
-        ("Simulation-extractability", "✗", "✓  (ROM blinding)"),
-        ("Subversion ZK", "✗", "✓  (rerandomize)"),
-        ("Universal setup ready", "✗", "✓  (KZG SRS)"),
-        ("Folding / IVC (ProtoStar)", "✗", "✓"),
-        ("Proof aggregation", "✗", "✓  (SnarkPack-style)"),
-        ("Proof compression", "✗", "✓  (Polymath/batch)"),
-        ("Post-quantum", "✗", "✓  (Binius/Plonky3)"),
+        ("Simulation-extractability", "✗", "✗  (not proven)"),
+        ("Subversion ZK", "✓ (rerandomize)", "✓ (rerandomize)"),
+        ("Universal setup", "✗", "✗  (trapdoor held)"),
+        ("Folding / IVC (ProtoStar)", "✗", "scaffold"),
+        ("Batch verification", "✗", "✓  (Fiat-Shamir)"),
+        ("Post-quantum", "✗", "✗  (scaffold)"),
     ];
     for (prop, ark, ug) in &rows {
         println!("  {:<w$}  {:^14}  {:^14}", prop, ark, ug);
@@ -615,10 +614,10 @@ fn main() {
     println!("║  Batch affine conversion    │ ~1 field inversion saved per proof   ║");
     println!("║  Coset domain cache         │ domain rebuild eliminated (rollups)  ║");
     println!("║  Sparse QAP (CSR)           │ 40-70% on sparse circuits            ║");
-    println!("║  Proof aggregation          │ N verifications → 1 pairing check    ║");
+    println!("║  Batch verification         │ N proofs → 1 multi-pairing check     ║");
     println!("║  Dynark 5-FFT (active)      │ 17% fewer FFTs vs standard path      ║");
     println!("║  Parallel MSM (rayon)       │ ~1.2× on multicore systems           ║");
-    println!("║  SE blinding (ROM)          │ simulation-extractability + sub-ZK   ║");
+    println!("║  Toxic-waste zeroization    │ trapdoors wiped after key generation ║");
     println!("╚══════════════════════════════════════════════════════════════════════╝");
     println!();
 }

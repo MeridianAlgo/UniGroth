@@ -12,9 +12,12 @@
 //! nullifier(secret_bytes, nonce_bytes) -> Vec<u8>
 //! ```
 //!
-//! All byte arguments are big-endian 32-byte field elements (BN254 scalar field),
-//! with one exception: `prove()` accepts a `secret_bytes` of arbitrary length and
-//! hashes it to a field element via SHA-256.
+//! All field-element arguments are exactly 32 big-endian bytes holding a
+//! *canonical* BN254 scalar (strictly below the field modulus); anything else
+//! is rejected, so every value has one encoding and replay checks on the
+//! nullifier bytes cannot be bypassed with `x + r`. `secret_bytes` may be any
+//! length and is hashed to a field element via SHA-256. Nonce 0 is rejected
+//! because `H(s, 0)` is the commitment.
 //!
 //! `prove()` returns a self-describing blob: `[proof || commitment || nullifier]`,
 //! each component a length-prefixed 4-byte big-endian field followed by raw bytes.
@@ -22,7 +25,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use ark_bn254::{Bn254, Fr};
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInteger, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 use ark_std::rand::SeedableRng;
@@ -52,9 +55,25 @@ fn bytes_to_fr_hash(bytes: &[u8]) -> Fr {
     Fr::from_le_bytes_mod_order(&digest)
 }
 
-/// Interpret 32 big-endian bytes as a BN254 scalar (reduced mod r).
-fn be_bytes_to_fr(bytes: &[u8]) -> Fr {
-    Fr::from_be_bytes_mod_order(bytes)
+/// Parse exactly 32 big-endian bytes as a canonical BN254 scalar (< r).
+fn be_bytes_to_fr(bytes: &[u8]) -> Result<Fr, &'static str> {
+    if bytes.len() != 32 {
+        return Err("field element must be exactly 32 bytes");
+    }
+    let fr = Fr::from_be_bytes_mod_order(bytes);
+    if fr_to_be_bytes(&fr) != bytes {
+        return Err("field element is not canonical (>= modulus)");
+    }
+    Ok(fr)
+}
+
+/// Parse a nonce; zero is rejected because `H(s, 0)` equals the commitment.
+fn parse_nonce(bytes: &[u8]) -> Result<Fr, &'static str> {
+    let n = be_bytes_to_fr(bytes)?;
+    if n.is_zero() {
+        return Err("nonce must be non-zero");
+    }
+    Ok(n)
 }
 
 /// Serialize a BN254 scalar as 32 big-endian bytes.
@@ -65,19 +84,13 @@ fn fr_to_be_bytes(f: &Fr) -> Vec<u8> {
     le
 }
 
-/// Derive a per-proof RNG seed from the public inputs + a fresh OS draw.
-fn rng_from_seed(domain: &[u8], nonce_bytes: &[u8]) -> ChaCha20Rng {
-    let mut hasher = Sha256::new();
-    hasher.update(domain);
-    hasher.update(nonce_bytes);
-    let mut os_seed = [0u8; 32];
-    if getrandom::getrandom(&mut os_seed).is_ok() {
-        hasher.update(os_seed);
-    }
-    let digest = hasher.finalize();
+/// Seed the proving RNG from the OS CSPRNG. Fails closed: without OS entropy
+/// the proof randomness would be predictable and could leak the secret.
+fn os_rng() -> Result<ChaCha20Rng, JsValue> {
     let mut seed = [0u8; 32];
-    seed.copy_from_slice(&digest);
-    ChaCha20Rng::from_seed(seed)
+    getrandom::getrandom(&mut seed)
+        .map_err(|e| JsValue::from_str(&alloc::format!("no OS randomness: {e}")))?;
+    Ok(ChaCha20Rng::from_seed(seed))
 }
 
 // ─── Hash exports (server + browser parity) ─────────────────────────────────
@@ -93,12 +106,12 @@ pub fn commitment(secret_bytes: &[u8]) -> Vec<u8> {
 
 /// Compute the nullifier `H(secret, nonce)` and return 32 big-endian bytes.
 #[wasm_bindgen]
-pub fn nullifier(secret_bytes: &[u8], nonce_bytes: &[u8]) -> Vec<u8> {
+pub fn nullifier(secret_bytes: &[u8], nonce_bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
     let constants = mimc_round_constants::<Fr>();
     let s = bytes_to_fr_hash(secret_bytes);
-    let n = be_bytes_to_fr(nonce_bytes);
+    let n = parse_nonce(nonce_bytes).map_err(JsValue::from_str)?;
     let nf = mimc_hash(s, n, &constants);
-    fr_to_be_bytes(&nf)
+    Ok(fr_to_be_bytes(&nf))
 }
 
 // ─── Prove ──────────────────────────────────────────────────────────────────
@@ -118,13 +131,13 @@ pub fn prove(pk_bytes: &[u8], secret_bytes: &[u8], nonce_bytes: &[u8]) -> Result
 
     let constants = mimc_round_constants::<Fr>();
     let secret = bytes_to_fr_hash(secret_bytes);
-    let nonce = be_bytes_to_fr(nonce_bytes);
+    let nonce = parse_nonce(nonce_bytes).map_err(JsValue::from_str)?;
 
     let circuit = AuthCircuit::new(secret, nonce, constants);
     let commitment = circuit.commitment.expect("commitment computed");
     let nullifier_val = circuit.nullifier.expect("nullifier computed");
 
-    let mut rng = rng_from_seed(b"unigroth-wasm-auth/v1", nonce_bytes);
+    let mut rng = os_rng()?;
     let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)
         .map_err(|e| JsValue::from_str(&alloc::format!("prove: {e}")))?;
 
@@ -162,9 +175,9 @@ pub fn verify(
         .map_err(|e| JsValue::from_str(&alloc::format!("proof deserialize: {e}")))?;
 
     let public = [
-        be_bytes_to_fr(commitment_bytes),
-        be_bytes_to_fr(nullifier_bytes),
-        be_bytes_to_fr(nonce_bytes),
+        be_bytes_to_fr(commitment_bytes).map_err(JsValue::from_str)?,
+        be_bytes_to_fr(nullifier_bytes).map_err(JsValue::from_str)?,
+        parse_nonce(nonce_bytes).map_err(JsValue::from_str)?,
     ];
 
     Groth16::<Bn254>::verify(&vk, &public, &proof)
@@ -209,7 +222,7 @@ mod tests {
         let n = &bundle[cur..cur + n_len];
 
         let expected_c = commitment(secret);
-        let expected_n = nullifier(secret, &nonce_bytes);
+        let expected_n = nullifier(secret, &nonce_bytes).unwrap();
         assert_eq!(c, &expected_c[..]);
         assert_eq!(n, &expected_n[..]);
 
@@ -218,8 +231,27 @@ mod tests {
 
         // Tamper with nullifier — must reject.
         let mut bad = expected_n.clone();
-        bad[0] ^= 0xff;
+        bad[31] ^= 1; // still canonical, different field element
         let ok2 = verify(&vk_bytes, proof, c, &bad, &nonce_bytes).unwrap();
         assert!(!ok2);
+    }
+
+    #[test]
+    fn rejects_non_canonical_and_zero_encodings() {
+        // Same field element as nonce 7, but encoded as 7 + r: must be rejected.
+        let r = <Fr as PrimeField>::MODULUS.to_bytes_be();
+        let mut non_canonical = [0u8; 32];
+        let mut carry = 7u16;
+        for i in (0..32).rev() {
+            let s = r[i] as u16 + carry;
+            non_canonical[i] = s as u8;
+            carry = s >> 8;
+        }
+        assert!(be_bytes_to_fr(&non_canonical).is_err());
+        assert!(be_bytes_to_fr(&[0u8; 31]).is_err());
+        assert!(parse_nonce(&[0u8; 32]).is_err());
+        let mut seven = [0u8; 32];
+        seven[31] = 7;
+        assert_eq!(parse_nonce(&seven).unwrap(), Fr::from(7u64));
     }
 }

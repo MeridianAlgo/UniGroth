@@ -23,7 +23,6 @@ use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_serialize::*;
 use ark_std::{rand::RngCore, vec::Vec};
-use core::ops::Neg;
 
 use crate::{PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
 
@@ -66,62 +65,22 @@ impl<'de, E: Pairing> ::serde::Deserialize<'de> for SimExtractableProof<E> {
     }
 }
 
+/// Domain-separated SHA-256 digest of a proof, reduced into the scalar field.
+///
+/// This is a fingerprint only. The verifier does not check it and it adds no
+/// soundness; a valid Groth16 proof is still rerandomizable.
 pub fn compute_proof_hash<E: Pairing>(proof: &Proof<E>) -> E::ScalarField {
-    use ark_crypto_primitives::sponge::{
-        poseidon::{PoseidonConfig, PoseidonSponge},
-        CryptographicSponge,
-    };
-    use ark_ff::UniformRand;
-    use ark_std::rand::SeedableRng;
-    use ark_std::vec;
+    use sha2::{Digest, Sha256};
 
-    // Simplistic default config for ROM hashing
-    let full_rounds = 8;
-    let partial_rounds = 31;
-    let alpha = 5;
-    let mds = vec![
-        vec![
-            E::ScalarField::from(1u128),
-            E::ScalarField::from(0u128),
-            E::ScalarField::from(0u128),
-        ],
-        vec![
-            E::ScalarField::from(0u128),
-            E::ScalarField::from(1u128),
-            E::ScalarField::from(0u128),
-        ],
-        vec![
-            E::ScalarField::from(0u128),
-            E::ScalarField::from(0u128),
-            E::ScalarField::from(1u128),
-        ],
-    ];
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(0u64);
-    let round_constants = (0..(full_rounds + partial_rounds))
-        .map(|_| {
-            vec![
-                E::ScalarField::rand(&mut rng),
-                E::ScalarField::rand(&mut rng),
-                E::ScalarField::rand(&mut rng),
-            ]
-        })
-        .collect::<Vec<_>>();
-    let config = PoseidonConfig::new(
-        full_rounds,
-        partial_rounds,
-        alpha,
-        mds,
-        round_constants,
-        2,
-        1,
-    );
-
-    let mut sponge = PoseidonSponge::new(&config);
     let mut bytes = Vec::new();
-    proof.serialize_uncompressed(&mut bytes).unwrap();
-
-    sponge.absorb(&bytes);
-    sponge.squeeze_field_elements(1)[0]
+    proof
+        .serialize_compressed(&mut bytes)
+        .expect("serializing to a Vec cannot fail");
+    let digest = Sha256::new()
+        .chain_update(crate::config::DOMAIN_PROOF_HASH)
+        .chain_update(&bytes)
+        .finalize();
+    E::ScalarField::from_le_bytes_mod_order(&digest)
 }
 
 impl<E: Pairing> SimExtractableProof<E> {
@@ -212,14 +171,13 @@ impl SEConfig {
 
 /// Wrap Groth16 proof with simulation-extractability.
 ///
-/// **BG18 construction**: Pick random ρ, set A' = A + ρ·δ_g1, D = ρ·δG₂.
-/// Verification: e(A', B)·e(δ_g1, D)⁻¹ = e(α, β)·...
+/// **BG18 mode is experimental and not verifiable**: it sets A' = A + ρ·δ_g1
+/// and D = ρ·δG₂, which does not satisfy any equation the verifier accepts.
+/// The verifier rejects every proof that carries `se_element`.
 ///
-/// **SE guarantee**: Extracting witness requires knowing ρ (uniformly random),
-/// impossible even after seeing simulated proofs.
-///
-/// **ROM alternative**: Use proof hash as blinding ρ, costs near-zero.
-/// Tradeoff: requires Random Oracle assumption instead of explicit D element.
+/// **ROM mode** (default) leaves the Groth16 proof unchanged and records a
+/// SHA-256 fingerprint in `proof_hash`. It does not add simulation-extractability
+/// on its own; Groth16 proofs remain rerandomizable.
 pub fn make_sim_extractable<E: Pairing, R: RngCore>(
     proof: Proof<E>,
     pk: &ProvingKey<E>,
@@ -266,53 +224,16 @@ pub fn make_sim_extractable<E: Pairing, R: RngCore>(
     }
 }
 
-/// Verify simulation-extractable proof.
+/// Verify a simulation-extractable proof.
 ///
-/// Checks Groth16 verification with BG18 correction e(δ_g1, -D) if present.
+/// Delegates to the core Groth16 verifier, which checks the input count,
+/// rejects identity points, and rejects proofs carrying a BG18 element.
 pub fn verify_sim_extractable<E: Pairing>(
     pvk: &PreparedVerifyingKey<E>,
     public_inputs: &[E::ScalarField],
     se_proof: &SimExtractableProof<E>,
 ) -> bool {
-    let verify_time = start_timer!(|| "SE Proof verification");
-
-    let proof = &se_proof.groth16_proof;
-
-    // Prepare inputs: Σ xᵢγᵢ
-    let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
-    for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g1.iter().skip(1)) {
-        g_ic += &b.mul_bigint(i.into_bigint());
-    }
-    let prepared_inputs = g_ic.into_affine();
-
-    // Standard Groth16 verification check (for debug)
-    let mut pairings = vec![
-        (E::G1Prepared::from(proof.a), E::G2Prepared::from(proof.b)),
-        (
-            E::G1Prepared::from(prepared_inputs),
-            pvk.gamma_g2_neg_pc.clone(),
-        ),
-        (E::G1Prepared::from(proof.c), pvk.delta_g2_neg_pc.clone()),
-    ];
-
-    if let Some(d) = se_proof.se_element {
-        // Add the BG18 correction term: e(delta_g1, D)^-1 = e(delta_g1, -D)
-        pairings.push((
-            pvk.delta_g1_prepared.clone(),
-            E::G2Prepared::from(d.into_group().neg().into_affine()),
-        ));
-    }
-
-    let final_res = E::multi_pairing(
-        pairings.iter().map(|(a, _)| a.clone()),
-        pairings.iter().map(|(_, b)| b.clone()),
-    );
-
-    let qap_valid = final_res.0 == pvk.alpha_g1_beta_g2;
-
-    end_timer!(verify_time);
-
-    qap_valid
+    crate::Groth16::<E>::verify_proof(pvk, se_proof, public_inputs).unwrap_or(false)
 }
 
 // ─── Subversion Zero-Knowledge ───────────────────────────────────────────────
@@ -362,7 +283,7 @@ pub struct SecurityParams {
 impl Default for SecurityParams {
     fn default() -> Self {
         Self {
-            lambda: 128,
+            lambda: crate::config::SECURITY_BITS,
             sim_extractable: true,
             subversion_zk: true,
             se_config: SEConfig::default(),
@@ -374,7 +295,7 @@ impl SecurityParams {
     /// Maximum security configuration.
     pub fn maximum() -> Self {
         Self {
-            lambda: 128,
+            lambda: crate::config::SECURITY_BITS,
             sim_extractable: true,
             subversion_zk: true,
             se_config: SEConfig::full_se(),

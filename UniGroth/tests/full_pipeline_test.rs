@@ -128,13 +128,13 @@ fn test_full_pipeline_prove_verify_aggregate() {
     );
 
     // Step 3: Aggregate all proofs
-    let agg = aggregate_proofs::<Bn254, _>(&proofs, &public_inputs_all, &mut rng);
-    assert_eq!(agg.n, 4);
-    let agg_valid = verify_aggregated(&vk, &agg);
+    let agg = aggregate_proofs::<Bn254>(&proofs);
+    assert_eq!(agg.proofs.len(), 4);
+    let agg_valid = verify_aggregated(&vk, &public_inputs_all, &agg);
     assert!(agg_valid, "Aggregated proof must verify");
     println!(
         "[3] Aggregated {} proofs → single verification: PASS",
-        agg.n
+        agg.proofs.len()
     );
 
     // Step 4: Security wrapping (SE + S-ZK)

@@ -694,8 +694,11 @@ pub fn fold_prover_state<F: PrimeField>(
 /// - ProtoStar §3.4 "Decision Predicate for Relaxed R1CS"
 /// - Nova §4.1 "Relaxed R1CS and its Folding"
 ///
-/// It replaces the structural-only `verify_accumulator` with a full
-/// algebraic soundness check.
+/// **Limitation:** the error vector `e` is taken from `prover_state` and is
+/// not bound to `acc.acc_e` (which is a scalar summary, not a vector
+/// commitment). A prover can therefore choose `e_i = A_i(z)·B_i(z) − μ·C_i(z)`
+/// for any `z`, so this predicate is only meaningful when `prover_state` comes
+/// from a trusted party. It is not a soundness check against a malicious prover.
 pub fn verify_decision_predicate<E: Pairing>(
     srs: &UniversalSRS<E>,
     acc: &FoldingAccumulator<E>,
@@ -716,10 +719,8 @@ pub fn verify_decision_predicate<E: Pairing>(
         let bz = eval_sparse_row(&matrices.b[i], &z);
         let cz = eval_sparse_row(&matrices.c[i], &z);
 
-        let ei = if i < prover_state.error_vector.len() {
-            prover_state.error_vector[i]
-        } else {
-            E::ScalarField::zero()
+        let Some(&ei) = prover_state.error_vector.get(i) else {
+            return Ok(false);
         };
 
         let lhs = az * bz;
@@ -730,14 +731,14 @@ pub fn verify_decision_predicate<E: Pairing>(
         }
     }
 
-    // Step 4: Verify witness commitment matches folded witness
+    // Step 4: Verify witness commitment matches folded witness. A missing
+    // commitment is a failure, not a pass.
     if !prover_state.folded_witness.is_empty() {
         let witness_poly = witness_to_poly::<E>(&prover_state.folded_witness)?;
         let expected_commit = KZG::commit(srs, &witness_poly);
-        if let Some(ref stored_commit) = acc.acc_w {
-            if stored_commit.value != expected_commit.value {
-                return Ok(false);
-            }
+        match acc.acc_w {
+            Some(ref stored_commit) if stored_commit.value == expected_commit.value => {},
+            _ => return Ok(false),
         }
     }
 
