@@ -25,11 +25,14 @@
 //! is not implemented here.
 
 use crate::{Proof, VerifyingKey};
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{pairing::Pairing, CurveGroup, VariableBaseMSM};
 use ark_ff::{One, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::vec::Vec;
+use ark_std::{cfg_iter, vec::Vec};
 use sha2::{Digest, Sha256};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// N Groth16 proofs for one verifying key, verified together by [`verify_aggregated`].
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -64,24 +67,22 @@ pub fn aggregate_proofs<E: Pairing>(proofs: &[Proof<E>]) -> AggregatedProof<E> {
     }
 }
 
-/// Fiat-Shamir challenge binding the verifying key, every statement and every proof.
+/// Fiat-Shamir challenge binding the verifying key, every statement, every
+/// proof and any caller-supplied `entropy`.
 fn batch_challenge<E: Pairing>(
     vk: &VerifyingKey<E>,
     public_inputs: &[Vec<E::ScalarField>],
     proofs: &[Proof<E>],
+    entropy: &[u8],
 ) -> E::ScalarField {
     let mut buf = Vec::new();
-    vk.serialize_compressed(&mut buf)
-        .expect("serializing to a Vec cannot fail");
-    public_inputs
-        .serialize_compressed(&mut buf)
-        .expect("serializing to a Vec cannot fail");
-    proofs
+    (vk, public_inputs, proofs)
         .serialize_compressed(&mut buf)
         .expect("serializing to a Vec cannot fail");
     let digest = Sha256::new()
         .chain_update(crate::config::DOMAIN_AGGREGATE)
         .chain_update(&buf)
+        .chain_update(entropy)
         .finalize();
     E::ScalarField::from_le_bytes_mod_order(&digest)
 }
@@ -95,7 +96,21 @@ pub fn verify_aggregated<E: Pairing>(
     public_inputs: &[Vec<E::ScalarField>],
     agg: &AggregatedProof<E>,
 ) -> bool {
-    let proofs = &agg.proofs;
+    verify_batch(vk, public_inputs, &agg.proofs, &[])
+}
+
+/// Batch-verify Groth16 proofs for one verifying key with a single multi-pairing.
+///
+/// The challenge is derived from the whole batch plus `entropy`, so a weak or
+/// predictable `entropy` source cannot help a cheater: the proofs are fixed
+/// before the challenge exists. Cost: k+3 Miller loops, one final
+/// exponentiation, and one MSM of size ℓ+1 for all public inputs combined.
+pub fn verify_batch<E: Pairing>(
+    vk: &VerifyingKey<E>,
+    public_inputs: &[Vec<E::ScalarField>],
+    proofs: &[Proof<E>],
+    entropy: &[u8],
+) -> bool {
     let n = proofs.len();
     if n == 0 || public_inputs.len() != n {
         return false;
@@ -106,14 +121,11 @@ pub fn verify_aggregated<E: Pairing>(
     {
         return false;
     }
-    if proofs
-        .iter()
-        .any(|p| p.a.is_zero() || p.b.is_zero() || p.c.is_zero())
-    {
+    if !cfg_iter!(proofs).all(crate::proof_points_valid) {
         return false;
     }
 
-    let r = batch_challenge(vk, public_inputs, proofs);
+    let r = batch_challenge(vk, public_inputs, proofs, entropy);
     if r.is_zero() {
         return false;
     }
@@ -144,7 +156,10 @@ pub fn verify_aggregated<E: Pairing>(
     };
 
     // Σᵢ e(rⁱAᵢ, Bᵢ) − e(pow_sum·α, β) − e(PI_agg, γ) − e(C_agg, δ) == 0
-    let mut g1: Vec<E::G1> = proofs.iter().zip(&powers).map(|(p, ri)| p.a * ri).collect();
+    let mut g1: Vec<E::G1> = cfg_iter!(proofs)
+        .zip(&powers)
+        .map(|(p, ri)| p.a * ri)
+        .collect();
     g1.push(-(vk.alpha_g1 * pow_sum));
     g1.push(-pi_agg);
     g1.push(-c_agg);
@@ -200,7 +215,7 @@ mod tests {
 
         let se_proof = Groth16::<Bn254>::prove(&pk, SquareCircuit { x, y }, &mut rng).unwrap();
 
-        let agg = aggregate_proofs::<Bn254>(&[se_proof.groth16_proof]);
+        let agg = aggregate_proofs::<Bn254>(&[se_proof]);
         assert_eq!(agg.proofs.len(), 1);
         assert!(
             verify_aggregated(&vk, &[vec![y]], &agg),
@@ -233,7 +248,7 @@ mod tests {
         for (x, y) in &pairs {
             let se_proof =
                 Groth16::<Bn254>::prove(&pk, SquareCircuit { x: *x, y: *y }, &mut rng).unwrap();
-            proofs.push(se_proof.groth16_proof);
+            proofs.push(se_proof);
             inputs.push(vec![*y]);
         }
 

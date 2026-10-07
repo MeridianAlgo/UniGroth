@@ -44,14 +44,18 @@ wasm-pack build --release --target web --out-dir pkg
 ## 3 — Browser API
 
 ```ts
-import init, { prove, verify, commitment, nullifier }
+import init, { derive_secret, prove, verify, commitment, nullifier }
   from "./pkg/unigroth_wasm_auth.js";
 
 await init();
 
-// Registration: store H(secret) in your DB
-const secret = new TextEncoder().encode("hunter2");
+// Registration: the server picks a random 16+ byte salt per user and stores it
+// (it is not secret) next to the commitment.
+const salt   = crypto.getRandomValues(new Uint8Array(16));
+const secret = derive_secret(new TextEncoder().encode(password), salt); // Argon2id, ~1 s
 const commit = commitment(secret);             // Uint8Array(32)
+
+// Login: fetch this user's salt, derive the same secret.
 
 // Upload: server issues a fresh 32-byte nonce. It must be a canonical,
 // non-zero field element; clearing the top 3 bits keeps it below the modulus.
@@ -92,11 +96,28 @@ use unigroth_wasm_auth::verify;
 let ok = verify(&vk_bytes, &proof, &commitment, &nullifier, &nonce)?;
 ```
 
-Server-side anti-replay: persist `(commitment, nullifier)` pairs; reject any
-repeat nullifier for a given commitment. `verify` rejects non-canonical and
-wrong-length encodings, so each nullifier has exactly one byte form. Never
-deduplicate on proof bytes: Groth16 proofs can be rerandomized. Use a
-high-entropy secret; the public commitment allows offline guessing of weak ones.
+Server-side rules:
+
+- Persist `(commitment, nullifier)` pairs and reject any repeat nullifier for
+  a given commitment. `verify` rejects non-canonical and wrong-length
+  encodings, so each nullifier has exactly one byte form.
+- Issue each nonce to one session, accept it only from that session, and
+  expire it after one use or a short timeout.
+- Never deduplicate on proof bytes: Groth16 proofs can be rerandomized.
+
+## Threat model
+
+- **Offline guessing.** The commitment is public, so the circuit secret comes
+  from Argon2id (64 MiB, 3 passes) with a per-user salt: each password guess
+  costs that much memory and time. A strong password is still the real
+  defence.
+- **Phishing and relay are not prevented.** The user types the password into
+  a page; a malicious page can collect it, or run its own copy of this WASM
+  and relay the server's nonce. No library code running in the attacker's
+  page can stop that. If you need phishing resistance, use WebAuthn
+  passkeys, where the browser binds credentials to the origin.
+- **Replay** is stopped by the nullifier and the one-time, session-bound nonce.
+- **Timing.** Proving is not constant time; run it on the user's device only.
 
 ## Wire format
 
@@ -104,9 +125,10 @@ high-entropy secret; the public commitment allows offline guessing of weak ones.
 |--------------|-----------:|-------------------------------------------|
 | `pk.bin`     | ~376 KB    | `ark-serialize` compressed `ProvingKey`   |
 | `vk.bin`     | ~360 B     | `ark-serialize` compressed `VerifyingKey` |
-| `proof`      | ~192 B     | `ark-serialize` compressed Groth16 proof  |
+| `proof`      | 128 B      | `ark-serialize` compressed Groth16 proof  |
 | field elem   | 32 B       | canonical big-endian BN254 scalar (< r)   |
-| `secret`     | arbitrary  | hashed to BN254 via SHA-256 (in-crate)    |
+| `secret`     | 32 B       | `derive_secret` output (Argon2id → BN254) |
+| `salt`       | ≥ 16 B     | random per user, stored with commitment   |
 | `nonce`      | 32 B       | canonical, non-zero BN254 scalar          |
 
 ## Soundness

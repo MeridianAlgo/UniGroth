@@ -3,7 +3,7 @@
 const F = require('./field');
 const crypto = require('crypto');
 
-// precompute mimc round constants (91 rounds for 128-bit security on bn254)
+// precompute mimc round constants (91 rounds of x^7 cover the bn254 field)
 const MIMC_ROUNDS = 91;
 const MIMC_CONSTANTS = [];
 for (let i = 0; i < MIMC_ROUNDS; i++) {
@@ -99,21 +99,18 @@ class Circuit {
         this._addConstraint({ [x]: 1n }, { 0: 1n }, { [y]: 1n });
     }
 
-    // x^3 (two constraints: sq = x*x, cu = sq*x)
-    cube(x) {
-        const sq = this.mul(x, x);
-        const cu = this.mul(sq, x);
-        return cu;
+    // x^7 (four constraints). 7 is coprime to ORDER-1, so this is a field permutation;
+    // x^3 is not (3 | ORDER-1), which made the hash 3-to-1 per round and trivially collidable.
+    pow7(x) {
+        const x2 = this.mul(x, x);
+        const x4 = this.mul(x2, x2);
+        return this.mul(this.mul(x4, x2), x);
     }
 
-    // built-in mimc hash (zk-friendly algebraic hash, 91 rounds)
-    // replaces poseidon — same security level, simpler circuit
+    // built-in mimc7 hash (zk-friendly algebraic hash, 91 rounds = ceil(log7 ORDER))
     hash(input) {
         let x = input;
-        for (let i = 0; i < MIMC_ROUNDS; i++) {
-            x = this.addConst(x, MIMC_CONSTANTS[i]);
-            x = this.cube(x);
-        }
+        for (let i = 0; i < MIMC_ROUNDS; i++) x = this.pow7(this.addConst(x, MIMC_CONSTANTS[i]));
         return x;
     }
 

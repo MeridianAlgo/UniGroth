@@ -13,7 +13,7 @@ class UniGroth {
             zeroKnowledge: false,
             field: 'bn254-scalar',
             fieldOrder: F.ORDER.toString(),
-            hashFunction: 'mimc-bn254-91r',
+            hashFunction: 'mimc7-bn254-91r',
         };
     }
 
@@ -57,8 +57,7 @@ class UniGroth {
         const { MIMC_CONSTANTS, MIMC_ROUNDS } = require('./circuit');
         let x = F.toBigInt(input);
         for (let i = 0; i < MIMC_ROUNDS; i++) {
-            x = F.add(x, MIMC_CONSTANTS[i]);
-            x = F.mul(F.mul(x, x), x); // x^3
+            x = F.pow(F.add(x, MIMC_CONSTANTS[i]), 7n);
         }
         return x;
     }

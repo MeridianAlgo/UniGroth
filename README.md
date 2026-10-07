@@ -26,9 +26,11 @@ UniGroth is an extension of [`ark-groth16`](https://github.com/arkworks-rs/groth
 |---|---|---|
 | Prove, 2^12 constraints (BLS12-381) | 20.6 ms | **14.0 ms (1.47× faster)** |
 | Prove, 2^16 constraints | 160 ms | **134 ms (1.19× faster)** |
-| Verify | 1.36–1.39 ms | 1.35–1.36 ms (parity) |
+| Verify (BN254, 12 threads) | 0.95 ms, no point checks on in-memory proofs | 1.01–1.03 ms, always subgroup-checked |
 | Batch-verify 32 proofs | 24.9 ms (one by one) | **7.6 ms (3.3× faster)** |
-| Rejects identity points and BG18-tagged proofs | ✗ | ✓ |
+| Rejects identity, off-curve and wrong-subgroup proof points in every verifier | only via validated deserialization | ✓ |
+| Batch-verify challenges bound to the proofs (Fiat-Shamir), not just the caller's RNG | ✗ | ✓ |
+| Proof size (BN254, compressed) | 128 B | 128 B |
 | Toxic waste zeroized after setup | ✗ | ✓ |
 | Solidity / WASM verifier generation | ✗ | ✓ |
 | Circuit library (Poseidon, Merkle, range, MiMC auth) | ✗ | ✓ |
@@ -146,8 +148,8 @@ These compile, are tested, and are useful for experiments. **Do not rely on them
 
 | Module | Status |
 |---|---|
-| `universal_setup` | Holds the α, β, γ trapdoors in memory; whoever holds `UniversalParams` can forge proofs for every derived circuit. This is a convenience wrapper, not a transparent setup. Not serializable, zeroized on drop. |
-| `security` (SE) | `proof_hash` is a fingerprint that nothing verifies. Groth16 proofs stay rerandomizable, so simulation-extractability is not claimed. BG18-mode proofs are rejected by the verifier. |
+| `universal_setup` | BGM17-style Phase 1 (powers of τ with α, β) plus a per-circuit Phase 2 for δ, with proofs of knowledge and full transcript checks. Holds no secrets. Still needs a real multi-party ceremony: `setup()` and `derive_keys()` are single-party conveniences whose caller knows the trapdoor. Derived keys match the trusted generator element for element (`tests/red_team_universal.rs`). Not audited. |
+| `security` | Subversion-ZK rerandomization and a security report. Groth16 proofs are rerandomizable, so simulation-extractability is not provided; put the context (sender, nonce) in a public input if replay matters. |
 | `folding` | The decision predicate trusts a prover-supplied error vector. |
 | `commitment` FRI | Does not check folding consistency, so it is not a low-degree test. |
 | `pq_inner` | SHA-256 binding scaffold. Anyone can build an accepted "proof" for any statement. Not post-quantum secure. |
@@ -166,14 +168,15 @@ Guarantees the core relies on:
 
 - Knowledge soundness and zero-knowledge of Groth16 (AGM), given a trusted setup and a CSPRNG.
 - Deserialization with validation enforces on-curve and subgroup checks.
-- The verifier rejects wrong input counts, identity points and BG18 elements.
+- Universal setup: Phase 1 and Phase 2 contributions carry Schnorr proofs of knowledge and are checked by `verify_transcript` / `verify_keys`; secure if one contributor per phase was honest.
+- Every verifier (single, batch, aggregate) rejects wrong input counts and identity, off-curve or wrong-subgroup proof points, even for proofs built in memory.
 - Setup trapdoors are zeroized on a best-effort basis; Rust does not guarantee that no copies remain.
 
 Report vulnerabilities privately through a GitHub security advisory on this repository.
 
 ## JavaScript reference implementation
 
-`src/` contains a small JavaScript R1CS toolkit (MiMC circuit builder, prover, verifier). **It is not zero-knowledge:** proofs carry the full witness, and the verifier re-checks every constraint. Use it to learn or debug circuits; use the Rust library, or `phrase.circom` with snarkjs, for private proofs. Run `npm test`.
+`src/` contains a small JavaScript R1CS toolkit (MiMC7 circuit builder, prover, verifier). **It is not zero-knowledge:** proofs carry the full witness, and the verifier re-checks every constraint. Use it to learn or debug circuits; use the Rust library, or `phrase.circom` with snarkjs, for private proofs. Run `npm test`.
 
 ## Supported curves
 

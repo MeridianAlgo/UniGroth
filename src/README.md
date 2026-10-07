@@ -1,6 +1,6 @@
 # UniGroth — JavaScript Reference Implementation
 
-A small R1CS toolkit in plain JavaScript: build circuits (including a 91-round MiMC hash), compute witnesses, and check them.
+A small R1CS toolkit in plain JavaScript: build circuits (including a 91-round MiMC7 (x^7) hash), compute witnesses, and check them.
 
 > **Not zero-knowledge.** A proof from `prover.js` carries the full witness, including private inputs, and `verifier.js` re-checks every constraint. It shows a computation was done correctly; it does not hide anything. For private proofs, use the Rust library in `../UniGroth/`, or `../phrase.circom` with snarkjs.
 

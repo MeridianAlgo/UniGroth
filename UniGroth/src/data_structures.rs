@@ -125,10 +125,6 @@ pub struct PreparedVerifyingKey<E: Pairing> {
     pub gamma_g2_neg_pc: E::G2Prepared,
     /// The element `- delta * H` in `E::G2`, prepared for use in pairings.
     pub delta_g2_neg_pc: E::G2Prepared,
-    /// The element `delta * G` in `E::G1`, prepared for use in pairings.
-    /// Note: This is usually part of the ProvingKey but needed in PreparedVerifyingKey
-    /// for simulation-extractability checks.
-    pub delta_g1_prepared: E::G1Prepared,
 }
 
 #[cfg(feature = "serde")]
@@ -153,7 +149,6 @@ impl<E: Pairing> Default for PreparedVerifyingKey<E> {
             alpha_g1_beta_g2: E::TargetField::default(),
             gamma_g2_neg_pc: E::G2Prepared::default(),
             delta_g2_neg_pc: E::G2Prepared::default(),
-            delta_g1_prepared: E::G1Prepared::default(),
         }
     }
 }

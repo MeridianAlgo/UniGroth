@@ -7,13 +7,12 @@
 //   cargo bench --no-default-features --features "std parallel" --bench lookup-benches
 
 use ark_bn254::Fr;
-use ark_ff::UniformRand;
-use ark_std::{rand::SeedableRng, time::Instant};
+use ark_std::time::Instant;
 use std::hint::black_box;
 
-use unigroth::{
-    lookup::LookupTable, prove_logup, prove_multi_table_logup, prove_plookup, range_table,
-    verify_logup, verify_multi_table_logup, verify_plookup, MultiTableLookup,
+use unigroth::lookup::{
+    prove_logup, prove_multi_table_logup, prove_plookup, range_table, verify_logup,
+    verify_multi_table_logup, verify_plookup, LookupTable, MultiTableLookup,
 };
 
 fn sep() {
@@ -48,8 +47,6 @@ fn bench_plookup_vs_logup() {
     println!("  Naive:   sort + binary search, no ZK, O(n log n)");
     println!();
 
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(1337u64);
-
     for log_table in [6u32, 8, 10, 12] {
         let table_size = 1usize << log_table;
         let query_count = table_size / 4;
@@ -64,21 +61,18 @@ fn bench_plookup_vs_logup() {
             .map(|i| Fr::from((i % table_size) as u64))
             .collect();
 
-        let beta = Fr::rand(&mut rng);
-        let gamma = Fr::rand(&mut rng);
-
         // Plookup prove
         let start = Instant::now();
         let mut plookup_proof = None;
         for _ in 0..iters {
-            plookup_proof = Some(prove_plookup(&t, &queries, beta, gamma).expect("prove"));
+            plookup_proof = Some(prove_plookup(&t, &queries).expect("prove"));
         }
         let plookup_prove_us = start.elapsed().as_micros() as f64 / iters as f64;
 
         let proof = plookup_proof.unwrap();
         let start = Instant::now();
         for _ in 0..iters {
-            let ok = verify_plookup(&t, &queries, &proof, beta, gamma);
+            let ok = verify_plookup(&t, &queries, &proof);
             assert!(ok);
             black_box(ok);
         }
@@ -95,7 +89,7 @@ fn bench_plookup_vs_logup() {
         let witness = logup_witness.unwrap();
         let start = Instant::now();
         for _ in 0..iters {
-            let ok = verify_logup(&t, &queries, &witness, gamma);
+            let ok = verify_logup(&t, &queries, &witness);
             assert!(ok);
             black_box(ok);
         }
@@ -133,8 +127,6 @@ fn bench_multi_table_logup() {
     println!("  LogUp with multiple independent lookup tables.");
     println!();
 
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(9999u64);
-
     for num_tables in [2usize, 4, 8] {
         let table_size = 256usize;
         let queries_per_table = 64usize;
@@ -154,8 +146,6 @@ fn bench_multi_table_logup() {
             })
             .collect();
 
-        let gamma = Fr::rand(&mut rng);
-
         let start = Instant::now();
         let mut witnesses = None;
         for _ in 0..iters {
@@ -166,7 +156,7 @@ fn bench_multi_table_logup() {
         let w = witnesses.unwrap();
         let start = Instant::now();
         for _ in 0..iters {
-            let ok = verify_multi_table_logup(&multi, &queries, &w, gamma);
+            let ok = verify_multi_table_logup(&multi, &queries, &w);
             assert!(ok);
             black_box(ok);
         }

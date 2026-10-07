@@ -1,9 +1,10 @@
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::PrimeField;
+use ark_serialize::Valid;
 
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16};
 
-use super::{PreparedVerifyingKey, VerifyingKey};
+use super::{PreparedVerifyingKey, Proof, VerifyingKey};
 
 use ark_relations::gr1cs::{Result as R1CSResult, SynthesisError};
 
@@ -16,43 +17,22 @@ pub fn prepare_verifying_key<E: Pairing>(vk: &VerifyingKey<E>) -> PreparedVerify
         alpha_g1_beta_g2: E::pairing(vk.alpha_g1, vk.beta_g2).0,
         gamma_g2_neg_pc: vk.gamma_g2.into_group().neg().into_affine().into(),
         delta_g2_neg_pc: vk.delta_g2.into_group().neg().into_affine().into(),
-        delta_g1_prepared: E::G1Prepared::default(),
     }
 }
 
-/// Prepare the verifying key with delta_g1 for simulation-extractability support.
-pub fn prepare_verifying_key_with_delta<E: Pairing>(
-    vk: &VerifyingKey<E>,
-    delta_g1: E::G1Affine,
-) -> PreparedVerifyingKey<E> {
-    PreparedVerifyingKey {
-        vk: vk.clone(),
-        alpha_g1_beta_g2: E::pairing(vk.alpha_g1, vk.beta_g2).0,
-        gamma_g2_neg_pc: vk.gamma_g2.into_group().neg().into_affine().into(),
-        delta_g2_neg_pc: vk.delta_g2.into_group().neg().into_affine().into(),
-        delta_g1_prepared: delta_g1.into(),
-    }
+/// Check that every proof point is non-identity, on the curve and in the
+/// prime-order subgroup.
+///
+/// A=0 or B=0 makes e(A, B) = 1 and removes the prover's only degree of
+/// freedom; a point outside the subgroup (possible for in-memory proofs and
+/// on G2 of BN254, whose cofactor is not 1) breaks the pairing algebra the
+/// soundness proof relies on. ark-groth16 only gets these checks when the
+/// proof came through validated deserialization; here every verifier runs them.
+pub fn proof_points_valid<E: Pairing>(proof: &Proof<E>) -> bool {
+    !proof.a.is_zero() && !proof.b.is_zero() && !proof.c.is_zero() && proof.check().is_ok()
 }
 
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
-    /// Validate that all proof elements are non-identity curve points and that
-    /// no BG18 element is attached.
-    ///
-    /// A=0 or B=0 makes e(A, B) = 1 in GT, which removes the prover's only
-    /// degree of freedom from the equation. A BG18 element `D` is rejected
-    /// because the extra `e(δ_g1, -D)` term lets anyone shift value between
-    /// `C` and `D` (the proof is malleable), and honest BG18 proofs from
-    /// `make_sim_extractable` never satisfied that equation anyway.
-    ///
-    /// Subgroup membership is enforced by arkworks' `CanonicalDeserialize`
-    /// with validation. Proofs built in memory on curves with cofactor h>1
-    /// must be subgroup-checked by the caller.
-    #[inline]
-    fn validate_proof_points(proof: &crate::SimExtractableProof<E>) -> bool {
-        let p = &proof.groth16_proof;
-        proof.se_element.is_none() && !p.a.is_zero() && !p.b.is_zero() && !p.c.is_zero()
-    }
-
     /// Prepare proof inputs for use with [`verify_proof_with_prepared_inputs`],
     /// wrt the prepared verification key `pvk` and instance public inputs.
     ///
@@ -89,38 +69,44 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// when public inputs are known in advance (avoids re-computing MSM).
     pub fn verify_proof_with_prepared_inputs(
         pvk: &PreparedVerifyingKey<E>,
-        proof: &crate::SimExtractableProof<E>,
+        proof: &Proof<E>,
         prepared_inputs: &E::G1,
     ) -> R1CSResult<bool> {
-        if !Self::validate_proof_points(proof) {
-            return Ok(false);
-        }
-
         // e(A, B) · e(inputs, -γ) · e(C, -δ) = e(α, β)
-        let p = &proof.groth16_proof;
-        let qap = E::multi_miller_loop(
-            [
-                <E::G1Affine as Into<E::G1Prepared>>::into(p.a),
-                prepared_inputs.into_affine().into(),
-                p.c.into(),
-            ],
-            [
-                p.b.into(),
-                pvk.gamma_g2_neg_pc.clone(),
-                pvk.delta_g2_neg_pc.clone(),
-            ],
-        );
-        match E::final_exponentiation(qap) {
-            Some(test) => Ok(test.0 == pvk.alpha_g1_beta_g2),
-            None => Ok(false),
-        }
+        let pairing_check = || {
+            let qap = E::multi_miller_loop(
+                [
+                    <E::G1Affine as Into<E::G1Prepared>>::into(proof.a),
+                    prepared_inputs.into_affine().into(),
+                    proof.c.into(),
+                ],
+                [
+                    proof.b.into(),
+                    pvk.gamma_g2_neg_pc.clone(),
+                    pvk.delta_g2_neg_pc.clone(),
+                ],
+            );
+            E::final_exponentiation(qap).is_some_and(|t| t.0 == pvk.alpha_g1_beta_g2)
+        };
+
+        // The subgroup check (one G2 scalar mul) runs alongside the pairing,
+        // so the hardening costs no wall-clock time on multi-core machines.
+        #[cfg(feature = "parallel")]
+        let (valid, paired) = rayon::join(|| proof_points_valid(proof), pairing_check);
+        #[cfg(not(feature = "parallel"))]
+        let (valid, paired) = {
+            let valid = proof_points_valid(proof);
+            (valid, valid && pairing_check())
+        };
+
+        Ok(valid && paired)
     }
 
     /// Verify a Groth16 proof `proof` against the prepared verification key
     /// `pvk`, with respect to the instance `public_inputs`.
     pub fn verify_proof(
         pvk: &PreparedVerifyingKey<E>,
-        proof: &crate::SimExtractableProof<E>,
+        proof: &Proof<E>,
         public_inputs: &[E::ScalarField],
     ) -> R1CSResult<bool> {
         let prepared_inputs = Self::prepare_inputs(pvk, public_inputs)?;
@@ -181,7 +167,7 @@ mod tests {
         seed: u64,
     ) -> (
         crate::PreparedVerifyingKey<Bn254>,
-        crate::SimExtractableProof<Bn254>,
+        crate::Proof<Bn254>,
         Vec<Fr>,
     ) {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
@@ -235,15 +221,9 @@ mod tests {
     fn test_verify_flipped_proof_fails() {
         let (pvk, valid_proof, inputs) = setup_and_prove(Fr::from(2u64), Fr::from(8u64), 13u64);
 
-        let bad_raw = crate::Proof::<Bn254> {
+        let bad_proof = crate::Proof::<Bn254> {
             a: G1Affine::generator(),
-            b: valid_proof.groth16_proof.b,
-            c: valid_proof.groth16_proof.c,
-        };
-        let bad_proof = crate::SimExtractableProof::<Bn254> {
-            groth16_proof: bad_raw.clone(),
-            se_element: None,
-            proof_hash: crate::security::compute_proof_hash::<Bn254>(&bad_raw),
+            ..valid_proof
         };
 
         let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &bad_proof);

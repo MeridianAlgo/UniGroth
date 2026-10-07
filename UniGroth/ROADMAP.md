@@ -11,9 +11,9 @@ UniGroth is the **only zkSNARK** that simultaneously delivers:
 
 | Property | UniGroth | Best Competitor |
 |----------|----------|-----------------|
-| Proof size | **192–256 B** | Groth16 192 B (no extras) |
-| Universal setup | ✅ KZG | PLONK, Marlin |
-| Simulation-extractability | ✅ BG18 | None (unique) |
+| Proof size | **128 B (BN254) / 192 B (BLS12-381)** | Groth16 (same) |
+| Universal setup | ✅ BGM17 phase 1 + per-circuit phase 2 | PLONK, Marlin |
+| Simulation-extractability | ❌ (Groth16 is malleable) | BG18 / Polymath |
 | Subversion ZK | ✅ | None (unique) |
 | Public input PoK | ✅ | None (unique) |
 | Folding / IVC | ✅ ProtoStar | Nova, HyperNova |
@@ -518,7 +518,7 @@ UniGroth v1.0 will be the **only production zkSNARK system** combining:
 
 1. **Groth16-scale proof size** (192 B baseline) — smallest in class
 2. **Universal + transparent setup options** — no ceremony required if needed
-3. **Simulation-extractability** (SE/BG18) — stronger security than all competitors
+3. **Hardened verification** — identity, curve and subgroup checks in every verifier; Fiat-Shamir batch challenges
 4. **Subversion zero-knowledge** — proven secure against malicious setup
 5. **Folding + IVC** — ProtoStar with full decision predicate
 6. **Ultra-fast recursion** — target < 500 μs (competitive with Plonky2)

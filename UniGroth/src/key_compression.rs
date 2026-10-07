@@ -19,12 +19,11 @@
 //! combination is always recomputed by the verifier and never taken from the prover.
 
 use ark_ec::{pairing::Pairing, AffineRepr};
-use ark_ff::Zero;
 use ark_serialize::*;
 use ark_std::vec::Vec;
 use sha2::{Digest, Sha256};
 
-use crate::{Proof, SimExtractableProof, VerifyingKey};
+use crate::{Proof, VerifyingKey};
 
 /// A verifying key whose `gamma_abc_g1` vector is replaced by its SHA-256 digest.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -136,12 +135,7 @@ pub fn verify_with_compressed_vk<E: Pairing>(
         delta_g2: cvk.delta_g2,
         gamma_abc_g1: opening.gamma_abc_g1.clone(),
     };
-    let se_proof = SimExtractableProof {
-        groth16_proof: proof.clone(),
-        se_element: None,
-        proof_hash: E::ScalarField::zero(),
-    };
-    crate::Groth16::<E>::verify_proof(&crate::prepare_verifying_key(&vk), &se_proof, public_inputs)
+    crate::Groth16::<E>::verify_proof(&crate::prepare_verifying_key(&vk), proof, public_inputs)
         .unwrap_or(false)
 }
 
@@ -241,7 +235,7 @@ mod tests {
 
         // Verify with compressed VK
         assert!(
-            verify_with_compressed_vk(&cvk, &opening, &proof.groth16_proof, &public_inputs),
+            verify_with_compressed_vk(&cvk, &opening, &proof, &public_inputs),
             "verification with compressed VK must pass"
         );
     }
@@ -265,11 +259,11 @@ mod tests {
         assert!(verify_with_compressed_vk(
             &cvk,
             &opening,
-            &proof.groth16_proof,
+            &proof,
             &correct_inputs
         ));
         assert!(
-            !verify_with_compressed_vk(&cvk, &opening, &proof.groth16_proof, &wrong_inputs),
+            !verify_with_compressed_vk(&cvk, &opening, &proof, &wrong_inputs),
             "wrong public inputs must be rejected"
         );
 
@@ -279,7 +273,7 @@ mod tests {
         assert!(!verify_with_compressed_vk(
             &cvk,
             &bad_opening,
-            &proof.groth16_proof,
+            &proof,
             &correct_inputs
         ));
     }

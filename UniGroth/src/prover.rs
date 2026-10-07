@@ -2,7 +2,7 @@
 //! Imports
 use crate::{r1cs_to_qap::R1CSToQAP, Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
-use ark_ff::{Field, UniformRand, Zero};
+use ark_ff::Field;
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, Result as R1CSResult,
@@ -68,17 +68,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
                                 )
                             },
                             || {
-                                if !r.is_zero() {
-                                    Self::calculate_coeff(
-                                        s_g1,
-                                        &pk.b_g1_query,
-                                        pk.beta_g1,
-                                        input_assignment,
-                                        aux_assignment,
-                                    )
-                                } else {
-                                    E::G1::zero()
-                                }
+                                Self::calculate_coeff(
+                                    s_g1,
+                                    &pk.b_g1_query,
+                                    pk.beta_g1,
+                                    input_assignment,
+                                    aux_assignment,
+                                )
                             },
                         )
                     },
@@ -112,17 +108,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
                     input_assignment,
                     aux_assignment,
                 ),
-                if !r.is_zero() {
-                    Self::calculate_coeff(
-                        s_g1,
-                        &pk.b_g1_query,
-                        pk.beta_g1,
-                        input_assignment,
-                        aux_assignment,
-                    )
-                } else {
-                    E::G1::zero()
-                },
+                Self::calculate_coeff(
+                    s_g1,
+                    &pk.b_g1_query,
+                    pk.beta_g1,
+                    input_assignment,
+                    aux_assignment,
+                ),
                 Self::calculate_coeff(
                     s_g2,
                     &pk.b_g2_query,
@@ -172,12 +164,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// Sample a uniformly random non-zero scalar; a zero `r` or `s` would leave
     /// `A` or `B` unblinded and leak information about the witness.
     fn nonzero_rand<R: Rng>(rng: &mut R) -> E::ScalarField {
-        loop {
-            let x = E::ScalarField::rand(rng);
-            if !x.is_zero() {
-                return x;
-            }
-        }
+        crate::nonzero_rand(rng)
     }
 
     /// Create a Groth16 proof using randomness `r` and `s` and
@@ -243,11 +230,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     ) -> Proof<E> {
         // These are our rerandomization factors. They must be nonzero and uniformly
         // sampled.
-        let (mut r1, mut r2) = (E::ScalarField::zero(), E::ScalarField::zero());
-        while r1.is_zero() || r2.is_zero() {
-            r1 = E::ScalarField::rand(rng);
-            r2 = E::ScalarField::rand(rng);
-        }
+        let r1: E::ScalarField = crate::nonzero_rand(rng);
+        let r2: E::ScalarField = crate::nonzero_rand(rng);
 
         // See figure 1 in the paper referenced above:
         //   A' = (1/r₁)A
@@ -330,7 +314,7 @@ mod tests {
     ) -> (
         crate::ProvingKey<Bn254>,
         crate::VerifyingKey<Bn254>,
-        crate::SimExtractableProof<Bn254>,
+        crate::Proof<Bn254>,
     ) {
         let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(seed);
         let (pk, vk) = Groth16::<Bn254>::setup(TestCircuit { a, b }, &mut rng).unwrap();
@@ -435,15 +419,9 @@ mod tests {
 
         let rerandomized = Groth16::<Bn254>::rerandomize_proof(&vk, &raw_proof, &mut rng);
 
-        let se_proof = crate::SimExtractableProof {
-            groth16_proof: rerandomized.clone(),
-            se_element: None,
-            proof_hash: crate::security::compute_proof_hash::<Bn254>(&rerandomized),
-        };
-
         let pvk = crate::prepare_verifying_key(&vk);
         let inputs = vec![a * b];
-        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &se_proof);
+        let result = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &inputs, &rerandomized);
         assert!(
             matches!(result, Ok(true)),
             "Rerandomized proof must still verify: {:?}",

@@ -254,71 +254,33 @@ impl R1CSToQAP for LibsnarkReduction {
         num_constraints: usize,
         full_assignment: &[F],
     ) -> R1CSResult<Vec<F>> {
-        use crate::optimizations::{FftStrategy, ProverProfile};
-
         let domain =
             D::new(num_constraints + num_inputs).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
         let domain_size = domain.size();
         let zero = F::zero();
 
-        let strategy = ProverProfile::select_fft_strategy(num_constraints);
+        // Standard n-coset quotient (7 FFTs of size n). The Dynark poly-mul
+        // variants in `optimizations` need 2n-sized FFTs and measured slower.
+        let mut a = vec![zero; domain_size];
+        let mut b = vec![zero; domain_size];
+        let mut c = vec![zero; domain_size];
 
-        match strategy {
-            FftStrategy::Standard6Fft => {
-                // Standard 7-FFT libsnark path with explicit c_evals.
-                // For large circuits (> 2^16) where Dynark 2n expansion causes cache pressure.
-                let mut a = vec![zero; domain_size];
-                let mut b = vec![zero; domain_size];
-                let mut c = vec![zero; domain_size];
+        cfg_iter_mut!(a[..num_constraints])
+            .zip(&mut b[..num_constraints])
+            .zip(&mut c[..num_constraints])
+            .zip(&matrices[0])
+            .zip(&matrices[1])
+            .zip(&matrices[2])
+            .for_each(|(((((a, b), c), at_i), bt_i), ct_i)| {
+                *a = evaluate_constraint(at_i, full_assignment);
+                *b = evaluate_constraint(bt_i, full_assignment);
+                *c = evaluate_constraint(ct_i, full_assignment);
+            });
 
-                cfg_iter_mut!(a[..num_constraints])
-                    .zip(&mut b[..num_constraints])
-                    .zip(&mut c[..num_constraints])
-                    .zip(&matrices[0])
-                    .zip(&matrices[1])
-                    .zip(&matrices[2])
-                    .for_each(|(((((a, b), c), at_i), bt_i), ct_i)| {
-                        *a = evaluate_constraint(at_i, full_assignment);
-                        *b = evaluate_constraint(bt_i, full_assignment);
-                        *c = evaluate_constraint(ct_i, full_assignment);
-                    });
+        a[num_constraints..num_constraints + num_inputs]
+            .clone_from_slice(&full_assignment[..num_inputs]);
 
-                {
-                    let start = num_constraints;
-                    let end = start + num_inputs;
-                    a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
-                }
-
-                witness_h_standard::<F, D>(&domain, a, b, c)
-            },
-
-            // Dynark 4/5-FFT: polynomial-multiplication, no c_evals.
-            // Derives h from upper coefficients of a*b, saving 2 FFTs vs standard.
-            FftStrategy::Dynark5Fft | FftStrategy::Dynark4FftCoset => {
-                let mut a = vec![zero; domain_size];
-                let mut b = vec![zero; domain_size];
-
-                cfg_iter_mut!(a[..num_constraints])
-                    .zip(&mut b[..num_constraints])
-                    .zip(&matrices[0])
-                    .zip(&matrices[1])
-                    .for_each(|(((a, b), at_i), bt_i)| {
-                        *a = evaluate_constraint(at_i, full_assignment);
-                        *b = evaluate_constraint(bt_i, full_assignment);
-                    });
-
-                {
-                    let start = num_constraints;
-                    let end = start + num_inputs;
-                    a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
-                }
-
-                let result = crate::optimizations::compute_witness_4fft(&domain, a, b);
-                let mut h = result.h_poly;
-                h.truncate(domain_size - 1);
-                Ok(h)
-            },
-        }
+        witness_h_standard::<F, D>(&domain, a, b, c)
     }
 
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(

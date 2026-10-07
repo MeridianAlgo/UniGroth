@@ -1,292 +1,57 @@
-//! # Security Enhancements for UniGroth
+//! # Security Notes for UniGroth
 #![allow(missing_docs)]
 //!
-//! Implements enhanced security beyond standard Groth16:
+//! What the core scheme provides, and what it does not:
 //!
-//! 1. **Simulation-Extractability (SE)** – Prevents proof forgery after seeing
-//!    simulated proofs. Uses BG18 blinding (explicit G₂ element) or ROM-based
-//!    blinding (proof hash). Costs +96 bytes or near-zero overhead.
+//! 1. **Knowledge soundness** in the Algebraic Group Model (Groth16).
+//! 2. **Zero-knowledge**: the prover samples non-zero `r, s` for every proof.
+//! 3. **Subversion zero-knowledge**: [`apply_subversion_zk`] rerandomizes a
+//!    proof so it is distributed like a fresh one [BKSV20].
+//! 4. **Hardened verification**: every verifier rejects identity, off-curve and
+//!    wrong-subgroup proof points (see [`crate::proof_points_valid`]).
 //!
-//! 2. **Subversion Zero-Knowledge (S-ZK)** – ZK holds even if setup was
-//!    maliciously generated. Uses proof rerandomization at proving time.
-//!
-//! 3. **Knowledge Soundness in AGM+ROM** – Groth16 is knowledge-sound in the
-//!    Algebraic Group Model with Random Oracle.
-//!
-//! **BG18 SE**: Blind A with random ρ, add D = ρ·δG₂ to proof.
-//! **ROM SE**: Use proof hash H(A,B,x) as blinding factor (cheaper, ROM-based).
-//! **S-ZK**: Rerandomize proof via scalar ρ' to hide witness from malicious setup.
-//!
-//! References: BG18 (2018), BCFGRS16 (2016), AGM (2017), ABPR19 (2019)
+//! **Not provided: simulation-extractability.** A valid Groth16 proof can be
+//! rerandomized into a different valid proof for the same statement. If replay
+//! or proof-malleability matters, make the context (sender, nonce, message)
+//! a public input so a mauled proof is still bound to the original context.
 
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::{PrimeField, UniformRand, Zero};
-use ark_serialize::*;
-use ark_std::{rand::RngCore, vec::Vec};
+use ark_ec::pairing::Pairing;
+use ark_std::rand::RngCore;
 
-use crate::{PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
-
-// ─── Simulation-Extractable Proof ────────────────────────────────────────────
-
-/// Groth16 proof extended with SE elements.
-///
-/// **se_element** (optional): BG18 blinding D = ρ·δG₂. Adds ~96 bytes (BLS12-381)
-/// or ~64 bytes (BN254) but provides full SE security.
-///
-/// **proof_hash**: ROM blinding hash H(A,B,C). Computed when se_element is None.
-/// ROM-based SE has near-zero overhead but requires Random Oracle assumption.
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SimExtractableProof<E: Pairing> {
-    /// The standard Groth16 proof (A, B, C)
-    pub groth16_proof: Proof<E>,
-    /// BG18 SE blinding element: D = ρ · δG₂ (None if using ROM blinding)
-    pub se_element: Option<E::G2Affine>,
-    /// Proof hash used for ROM blinding (Fiat-Shamir style)
-    pub proof_hash: E::ScalarField,
-}
-
-#[cfg(feature = "serde")]
-impl<E: Pairing> ::serde::Serialize for SimExtractableProof<E> {
-    fn serialize<S: ::serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use ::serde::ser::Error as _;
-        let mut b = ark_std::vec::Vec::new();
-        self.serialize_compressed(&mut b)
-            .map_err(S::Error::custom)?;
-        ::serde::Serialize::serialize(&b, s)
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de, E: Pairing> ::serde::Deserialize<'de> for SimExtractableProof<E> {
-    fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        use ::serde::de::Error as _;
-        let b: ark_std::vec::Vec<u8> = ::serde::Deserialize::deserialize(d)?;
-        Self::deserialize_compressed(&b[..]).map_err(D::Error::custom)
-    }
-}
-
-/// Domain-separated SHA-256 digest of a proof, reduced into the scalar field.
-///
-/// This is a fingerprint only. The verifier does not check it and it adds no
-/// soundness; a valid Groth16 proof is still rerandomizable.
-pub fn compute_proof_hash<E: Pairing>(proof: &Proof<E>) -> E::ScalarField {
-    use sha2::{Digest, Sha256};
-
-    let mut bytes = Vec::new();
-    proof
-        .serialize_compressed(&mut bytes)
-        .expect("serializing to a Vec cannot fail");
-    let digest = Sha256::new()
-        .chain_update(crate::config::DOMAIN_PROOF_HASH)
-        .chain_update(&bytes)
-        .finalize();
-    E::ScalarField::from_le_bytes_mod_order(&digest)
-}
-
-impl<E: Pairing> SimExtractableProof<E> {
-    /// Size in bytes of this proof.
-    pub fn byte_size(&self) -> usize {
-        // Base Groth16: 2 × G1 + 1 × G2 = 2×48 + 96 = 192 bytes (BLS12-381)
-        // SE element (optional): +96 bytes (BLS12-381) or +64 bytes (BN254)
-        // Proof hash: +32 bytes
-        let base = 2 * E::G1Affine::generator().compressed_size()
-            + E::G2Affine::generator().compressed_size();
-        let se = if self.se_element.is_some() {
-            E::G2Affine::generator().compressed_size()
-        } else {
-            0
-        };
-        base + se + 32 // 32 bytes for field element
-    }
-}
-
-/// Unified security wrapper for UniGroth proofs.
-pub struct SecurityWrapper<E: Pairing> {
-    _p: core::marker::PhantomData<E>,
-}
-
-impl<E: Pairing> SecurityWrapper<E> {
-    /// Create a secure proof (Simulation-Extractable and optionally Subversion-ZK).
-    pub fn prove<R: RngCore>(
-        pk: &ProvingKey<E>,
-        proof: Proof<E>,
-        config: &SEConfig,
-        subversion_zk: bool,
-        rng: &mut R,
-    ) -> SimExtractableProof<E> {
-        let mut proof = proof;
-        if subversion_zk {
-            proof = apply_subversion_zk(&proof, &pk.vk, rng);
-        }
-        make_sim_extractable(proof, pk, config, rng)
-    }
-
-    /// Verify a secure proof.
-    pub fn verify(
-        pvk: &PreparedVerifyingKey<E>,
-        public_inputs: &[E::ScalarField],
-        proof: &SimExtractableProof<E>,
-    ) -> bool {
-        verify_sim_extractable(pvk, public_inputs, proof)
-    }
-}
-
-// ─── SE Prover ───────────────────────────────────────────────────────────────
-
-/// Configuration for simulation-extractability.
-#[derive(Clone, Debug)]
-pub struct SEConfig {
-    /// Use BG18 explicit G₂ blinding (stronger, +1 G₂ element)
-    pub use_bg18_blinding: bool,
-    /// Use ROM hash blinding (cheaper, requires ROM assumption)
-    pub use_rom_blinding: bool,
-}
-
-impl Default for SEConfig {
-    fn default() -> Self {
-        Self {
-            use_bg18_blinding: false,
-            use_rom_blinding: true, // ROM blinding by default (near-zero overhead)
-        }
-    }
-}
-
-impl SEConfig {
-    /// BG18 full SE mode (explicit blinding, +1 G₂).
-    pub fn full_se() -> Self {
-        Self {
-            use_bg18_blinding: true,
-            use_rom_blinding: false,
-        }
-    }
-
-    /// ROM-based SE mode (near-zero overhead, ROM assumption).
-    pub fn rom_se() -> Self {
-        Self {
-            use_bg18_blinding: false,
-            use_rom_blinding: true,
-        }
-    }
-}
-
-/// Wrap Groth16 proof with simulation-extractability.
-///
-/// **BG18 mode is experimental and not verifiable**: it sets A' = A + ρ·δ_g1
-/// and D = ρ·δG₂, which does not satisfy any equation the verifier accepts.
-/// The verifier rejects every proof that carries `se_element`.
-///
-/// **ROM mode** (default) leaves the Groth16 proof unchanged and records a
-/// SHA-256 fingerprint in `proof_hash`. It does not add simulation-extractability
-/// on its own; Groth16 proofs remain rerandomizable.
-pub fn make_sim_extractable<E: Pairing, R: RngCore>(
-    proof: Proof<E>,
-    pk: &ProvingKey<E>,
-    config: &SEConfig,
-    rng: &mut R,
-) -> SimExtractableProof<E> {
-    let se_time = start_timer!(|| "Simulation-extractability blinding");
-
-    let (blinded_proof, se_element) = if config.use_bg18_blinding {
-        // BG18: explicit G₂ blinding
-        let rho = E::ScalarField::rand(rng);
-
-        // A' = A + ρ · δ_g1 (using delta_g1 as the blinding base)
-        let a_blinded = (proof.a.into_group() + pk.delta_g1.into_group() * rho).into_affine();
-
-        let blinded = Proof {
-            a: a_blinded,
-            b: proof.b,
-            c: proof.c,
-        };
-
-        // D = ρ · δG₂ (for verification adjustment)
-        let d = (pk.vk.delta_g2.into_group() * rho).into_affine();
-
-        (blinded, Some(d))
-    } else {
-        // ROM blinding: no extra G₂ element needed
-        (proof, None)
-    };
-
-    // Compute proof hash for ROM blinding using Poseidon sponge
-    let proof_hash = if config.use_rom_blinding {
-        compute_proof_hash::<E>(&blinded_proof)
-    } else {
-        E::ScalarField::zero()
-    };
-
-    end_timer!(se_time);
-
-    SimExtractableProof {
-        groth16_proof: blinded_proof,
-        se_element,
-        proof_hash,
-    }
-}
-
-/// Verify a simulation-extractable proof.
-///
-/// Delegates to the core Groth16 verifier, which checks the input count,
-/// rejects identity points, and rejects proofs carrying a BG18 element.
-pub fn verify_sim_extractable<E: Pairing>(
-    pvk: &PreparedVerifyingKey<E>,
-    public_inputs: &[E::ScalarField],
-    se_proof: &SimExtractableProof<E>,
-) -> bool {
-    crate::Groth16::<E>::verify_proof(pvk, se_proof, public_inputs).unwrap_or(false)
-}
+use crate::{Proof, VerifyingKey};
 
 // ─── Subversion Zero-Knowledge ───────────────────────────────────────────────
 
-/// Apply subversion zero-knowledge rerandomization to proof.
+/// Rerandomize a proof so it is distributed like a fresh honest proof, even
+/// if the setup was malicious: A' = A/r₁, B' = r₁B + r₁r₂δ, C' = C + r₂A.
 ///
-/// Even if setup was maliciously generated, this rerandomization hides
-/// the witness via proof scaling with random σ and blinding with ρ'.
-///
-/// **Construction**: A'' = σ⁻¹(A + ρ'·B_g1), B'' = σ·B, C'' adjusted.
-/// Uses arkworks builtin rerandomize_proof with S-ZK guarantee.
-///
-/// Reference: BCFGRS16 §4 "Subversion-Resistant Groth16"
+/// Reference: BKSV20 (https://eprint.iacr.org/2020/811), Theorem 3.
 pub fn apply_subversion_zk<E: Pairing, R: RngCore>(
     proof: &Proof<E>,
     vk: &VerifyingKey<E>,
     rng: &mut R,
 ) -> Proof<E> {
-    let szk_time = start_timer!(|| "Subversion-ZK rerandomization");
-
-    // Use Groth16's built-in rerandomization (which achieves S-ZK)
-    let rerandomized = crate::Groth16::<E>::rerandomize_proof(vk, proof, rng);
-
-    end_timer!(szk_time);
-
-    rerandomized
+    crate::Groth16::<E>::rerandomize_proof(vk, proof, rng)
 }
 
-// ─── AGM + ROM Security Analysis ────────────────────────────────────────────
+// ─── Security Report ────────────────────────────────────────────────────────
 
 /// Security parameter set for UniGroth.
 ///
-/// These parameters determine the security level of the system.
-/// Default: 128-bit security in AGM+ROM.
+/// Default: 128-bit security in the AGM.
 #[derive(Clone, Debug)]
 pub struct SecurityParams {
     /// Security parameter λ (bits)
     pub lambda: usize,
-    /// Whether simulation-extractability is enabled
-    pub sim_extractable: bool,
     /// Whether subversion ZK is enabled
     pub subversion_zk: bool,
-    /// SE mode
-    pub se_config: SEConfig,
 }
 
 impl Default for SecurityParams {
     fn default() -> Self {
         Self {
             lambda: crate::config::SECURITY_BITS,
-            sim_extractable: true,
             subversion_zk: true,
-            se_config: SEConfig::default(),
         }
     }
 }
@@ -294,12 +59,7 @@ impl Default for SecurityParams {
 impl SecurityParams {
     /// Maximum security configuration.
     pub fn maximum() -> Self {
-        Self {
-            lambda: crate::config::SECURITY_BITS,
-            sim_extractable: true,
-            subversion_zk: true,
-            se_config: SEConfig::full_se(),
-        }
+        Self::default()
     }
 
     /// Report the claimed security guarantees.
@@ -308,7 +68,9 @@ impl SecurityParams {
             lambda: self.lambda,
             knowledge_soundness_agm: true, // Always: Groth16 is KS in AGM
             zero_knowledge: true,          // Always: Groth16 is ZK
-            simulation_extractable: self.sim_extractable,
+            // Groth16 proofs are rerandomizable, so not simulation-extractable.
+            // Bind context (sender, nonce) into a public input to stop replay.
+            simulation_extractable: false,
             subversion_zk: self.subversion_zk,
             post_quantum: false, // NOT post-quantum (pairing-based)
                                  // PQ: Would require switching to lattice-based or hash-based inner prover
@@ -440,64 +202,9 @@ mod tests {
 
         assert!(report.knowledge_soundness_agm);
         assert!(report.zero_knowledge);
-        assert!(report.simulation_extractable);
+        assert!(!report.simulation_extractable);
         assert!(report.subversion_zk);
         assert!(!report.post_quantum); // Not PQ (by design)
-    }
-
-    #[test]
-    fn test_sim_extractable_proof() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let circuit = TestCircuit { x: None };
-        let (pk, vk) =
-            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
-                .unwrap();
-
-        let x = Fr::from(5u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        // Wrap with ROM blinding (near-zero overhead)
-        let se_config = SEConfig::rom_se();
-        let se_proof = make_sim_extractable(proof.groth16_proof, &pk, &se_config, &mut rng);
-
-        // Verify
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let public_inputs = vec![x * x];
-        assert!(verify_sim_extractable(&pvk, &public_inputs, &se_proof));
-    }
-
-    #[test]
-    fn test_bg18_blinding() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let circuit = TestCircuit { x: None };
-        let (pk, _vk) =
-            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
-                .unwrap();
-
-        let x = Fr::from(7u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        // BG18 full SE blinding
-        let se_config = SEConfig::full_se();
-        let original_a = proof.groth16_proof.a;
-        let se_proof = make_sim_extractable(proof.groth16_proof, &pk, &se_config, &mut rng);
-
-        // SE element should be present
-        assert!(se_proof.se_element.is_some());
-        // Proof should be different from original
-        assert_ne!(se_proof.groth16_proof.a, original_a);
     }
 
     #[test]
@@ -518,20 +225,15 @@ mod tests {
         .unwrap();
 
         // Apply S-ZK rerandomization
-        let szk_proof = apply_subversion_zk(&proof.groth16_proof, &vk, &mut rng);
+        let szk_proof = apply_subversion_zk(&proof, &vk, &mut rng);
 
         // Rerandomized proof should be different
-        assert_ne!(szk_proof.a, proof.groth16_proof.a);
+        assert_ne!(szk_proof.a, proof.a);
 
         // But should still verify
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
+        let pvk = crate::prepare_verifying_key(&vk);
         let public_inputs = vec![x * x];
-        let szk_se = SimExtractableProof {
-            groth16_proof: szk_proof,
-            se_element: None,
-            proof_hash: Fr::zero(),
-        };
-        assert!(crate::Groth16::<Bn254>::verify_proof(&pvk, &szk_se, &public_inputs).unwrap());
+        assert!(crate::Groth16::<Bn254>::verify_proof(&pvk, &szk_proof, &public_inputs).unwrap());
     }
 
     // ─── SE Rejection Tests ───────────────────────────────────────────────────
@@ -539,227 +241,4 @@ mod tests {
     // These tests verify that the SE verifier correctly *rejects* tampered proofs,
     // wrong public inputs, and corrupted SE elements.  A verifier that accepts
     // everything is not a verifier.
-
-    #[test]
-    fn test_se_rejects_tampered_proof_a() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            TestCircuit { x: None },
-            &mut rng,
-        )
-        .unwrap();
-
-        let x = Fr::from(3u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        // Tamper: replace proof.a with the generator (random point)
-        let mut tampered = proof.clone();
-        use ark_ec::PrimeGroup;
-        tampered.groth16_proof.a =
-            (ark_bn254::G1Projective::generator() * Fr::from(77u64)).into_affine();
-
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let public_inputs = vec![x * x];
-
-        let valid = crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs).unwrap();
-        let invalid =
-            crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap();
-
-        assert!(valid, "original proof must verify");
-        assert!(!invalid, "proof with tampered A must be rejected");
-    }
-
-    #[test]
-    fn test_se_rejects_tampered_proof_c() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            TestCircuit { x: None },
-            &mut rng,
-        )
-        .unwrap();
-
-        let x = Fr::from(4u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        let mut tampered = proof.clone();
-        use ark_ec::PrimeGroup;
-        tampered.groth16_proof.c =
-            (ark_bn254::G1Projective::generator() * Fr::from(99u64)).into_affine();
-
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let public_inputs = vec![x * x];
-
-        assert!(
-            crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &public_inputs).unwrap(),
-            "original proof must verify"
-        );
-        assert!(
-            !crate::Groth16::<Bn254>::verify_proof(&pvk, &tampered, &public_inputs).unwrap(),
-            "proof with tampered C must be rejected"
-        );
-    }
-
-    #[test]
-    fn test_se_rejects_wrong_public_inputs() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            TestCircuit { x: None },
-            &mut rng,
-        )
-        .unwrap();
-
-        let x = Fr::from(6u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let correct_inputs = vec![x * x];
-        let wrong_inputs = vec![Fr::from(9999u64)]; // not x²
-
-        assert!(
-            crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &correct_inputs).unwrap(),
-            "correct public input must verify"
-        );
-        assert!(
-            !crate::Groth16::<Bn254>::verify_proof(&pvk, &proof, &wrong_inputs).unwrap(),
-            "wrong public input must be rejected"
-        );
-    }
-
-    #[test]
-    fn test_se_forged_bg18_element_on_rom_proof_rejected() {
-        // A valid ROM SE proof (se_element = None) uses the 3-pairing check.
-        // If an attacker forges an se_element and attaches it, the verifier
-        // switches to the 4-pairing check which includes e(delta_g1, -D).
-        // With a random D this check cannot pass, so the forged proof must be rejected.
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            TestCircuit { x: None },
-            &mut rng,
-        )
-        .unwrap();
-
-        let x = Fr::from(8u64);
-        let raw_proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        // Wrap with ROM blinding (se_element = None)
-        let se_config = SEConfig::rom_se();
-        let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
-        assert!(
-            se_proof.se_element.is_none(),
-            "ROM proof must NOT have BG18 element"
-        );
-
-        // Attacker forges a BG18-style se_element on top of a valid ROM proof
-        let mut forged = se_proof.clone();
-        use ark_ec::PrimeGroup;
-        forged.se_element =
-            Some((ark_bn254::G2Projective::generator() * Fr::from(123u64)).into_affine());
-
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let public_inputs = vec![x * x];
-
-        assert!(
-            verify_sim_extractable(&pvk, &public_inputs, &se_proof),
-            "original ROM SE proof must verify"
-        );
-        assert!(
-            !verify_sim_extractable(&pvk, &public_inputs, &forged),
-            "ROM proof with forged BG18 se_element must be rejected by 4-pairing check"
-        );
-    }
-
-    #[test]
-    fn test_se_rom_rejects_tampered_proof_elements() {
-        // Verify that ROM-blinded SE proofs also reject tampering.
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let (pk, vk) = crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(
-            TestCircuit { x: None },
-            &mut rng,
-        )
-        .unwrap();
-
-        let x = Fr::from(13u64);
-        let raw_proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        let se_config = SEConfig::rom_se();
-        let se_proof = make_sim_extractable(raw_proof.groth16_proof, &pk, &se_config, &mut rng);
-        assert!(
-            se_proof.se_element.is_none(),
-            "ROM SE proof must NOT have BG18 element"
-        );
-
-        let mut tampered = se_proof.clone();
-        use ark_ec::PrimeGroup;
-        tampered.groth16_proof.a =
-            (ark_bn254::G1Projective::generator() * Fr::from(55u64)).into_affine();
-
-        let pvk = crate::prepare_verifying_key_with_delta(&vk, pk.delta_g1);
-        let public_inputs = vec![x * x];
-
-        assert!(
-            verify_sim_extractable(&pvk, &public_inputs, &se_proof),
-            "original ROM SE proof must verify"
-        );
-        assert!(
-            !verify_sim_extractable(&pvk, &public_inputs, &tampered),
-            "ROM SE proof with tampered A must be rejected"
-        );
-    }
-
-    #[test]
-    fn test_proof_size() {
-        let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-
-        let circuit = TestCircuit { x: None };
-        let (pk, _vk) =
-            crate::Groth16::<Bn254, LibsnarkReduction>::circuit_specific_setup(circuit, &mut rng)
-                .unwrap();
-
-        let x = Fr::from(3u64);
-        let proof = crate::Groth16::<Bn254, LibsnarkReduction>::prove(
-            &pk,
-            TestCircuit { x: Some(x) },
-            &mut rng,
-        )
-        .unwrap();
-
-        let se_config = SEConfig::rom_se();
-        let se_proof = make_sim_extractable(proof.groth16_proof, &pk, &se_config, &mut rng);
-        let size = se_proof.byte_size();
-
-        println!("SE proof size: {} bytes", size);
-        // Groth16 BN254: 128 bytes base + overhead
-        // Target: ≤ 256 bytes
-        assert!(size <= 512, "Proof too large: {} bytes", size);
-    }
 }

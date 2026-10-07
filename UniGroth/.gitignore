@@ -11,3 +11,6 @@ wasm-auth/pkg
 *.swp
 *.swo
 compare_output.txt
+
+# Local cargo settings (machine-specific paths)
+.cargo/config.toml

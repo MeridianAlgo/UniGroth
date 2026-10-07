@@ -20,8 +20,8 @@ pub const POSEIDON_FULL_ROUNDS: usize = 8;
 /// Poseidon partial rounds (x⁵ S-box on the first state element only).
 pub const POSEIDON_PARTIAL_ROUNDS: usize = 57;
 
-/// Domain tag for the proof fingerprint in `SimExtractableProof::proof_hash`.
-pub const DOMAIN_PROOF_HASH: &[u8] = b"unigroth-proof-hash-v2";
+/// Domain tag for universal-setup proofs of knowledge and shape checks.
+pub const DOMAIN_SETUP_POK: &[u8] = b"unigroth-setup-v1";
 /// Domain tag for the batch-verification challenge in `aggregation`.
 pub const DOMAIN_AGGREGATE: &[u8] = b"unigroth-aggregate-v2";
 /// Domain tag for the KZG batch-opening challenge.
@@ -30,6 +30,8 @@ pub const DOMAIN_KZG_BATCH: &[u8] = b"unigroth-kzg-batch-v1";
 pub const DOMAIN_VK_COMPRESSION: &[u8] = b"unigroth-vk-compression-v2";
 /// Domain tag for the IPA transcript.
 pub const DOMAIN_IPA: &[u8] = b"unigroth-ipa-v2";
+/// Domain tag for Plookup / LogUp Fiat-Shamir challenges.
+pub const DOMAIN_LOOKUP: &[u8] = b"unigroth-lookup-v1";
 /// Domain tag for the Lasso transcript.
 pub const DOMAIN_LASSO: &[u8] = b"lasso-v2";
 /// Domain tag for recursive-chain entries.

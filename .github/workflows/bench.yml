@@ -37,7 +37,7 @@ jobs:
       - name: Run end-to-end benchmark (UniGroth vs ark-groth16)
         run: |
           set -o pipefail
-          cargo bench --bench groth16-benches --no-default-features --features "std parallel" -- --nocapture | tee bench.txt
+          cargo bench --locked --bench groth16-benches --no-default-features --features "std parallel" -- --nocapture | tee bench.txt
 
       - name: Publish results to job summary
         if: always()

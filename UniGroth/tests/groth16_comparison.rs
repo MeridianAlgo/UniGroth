@@ -5,7 +5,7 @@
 
 use ark_bn254::{Bn254, Fr, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{Field, One, UniformRand, Zero};
+use ark_ff::One;
 use ark_relations::{
     gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
     lc,
@@ -15,7 +15,6 @@ use ark_snark::SNARK;
 use ark_std::rand::SeedableRng;
 
 use ark_groth16 as ark_g16;
-use ug::PqInnerProver;
 use unigroth as ug;
 
 // ─── Shared Circuits (identical for both systems) ────────────────────────────
@@ -136,29 +135,15 @@ fn compare_proof_size_unigroth_competitive() {
     ark_proof.serialize_compressed(&mut ark_bytes).unwrap();
 
     let mut ug_inner_bytes = Vec::new();
-    ug_proof
-        .groth16_proof
-        .serialize_compressed(&mut ug_inner_bytes)
-        .unwrap();
-
-    let mut ug_full_bytes = Vec::new();
-    ug_proof.serialize_compressed(&mut ug_full_bytes).unwrap();
+    ug_proof.serialize_compressed(&mut ug_inner_bytes).unwrap();
 
     // Core proof sizes must be identical
     assert_eq!(
         ark_bytes.len(),
         ug_inner_bytes.len(),
-        "Inner Groth16 proof size must match ark-groth16: ark={} ug={}",
+        "Proof size must match ark-groth16: ark={} ug={}",
         ark_bytes.len(),
         ug_inner_bytes.len()
-    );
-
-    // SE overhead must be minimal (ROM blinding adds ~33 bytes for hash + option tag)
-    let overhead = ug_full_bytes.len() - ark_bytes.len();
-    assert!(
-        overhead <= 64,
-        "SE overhead should be ≤64 bytes (got {})",
-        overhead
     );
 
     println!("[PROOF SIZE]");
@@ -167,16 +152,8 @@ fn compare_proof_size_unigroth_competitive() {
         ark_bytes.len()
     );
     println!(
-        "  UniGroth inner proof (compressed):  {} bytes (identical core)",
+        "  UniGroth (compressed):             {} bytes (identical)",
         ug_inner_bytes.len()
-    );
-    println!(
-        "  UniGroth SE proof (compressed):     {} bytes",
-        ug_full_bytes.len()
-    );
-    println!(
-        "  SE overhead: {} bytes → gains simulation-extractability",
-        overhead
     );
 }
 
@@ -191,48 +168,36 @@ fn compare_security_unigroth_strictly_superior() {
     let (ug_pk, ug_vk) =
         ug::Groth16::<Bn254>::circuit_specific_setup(SquareCircuit { x: None }, &mut rng).unwrap();
 
-    let se_proof =
+    let raw_proof =
         ug::Groth16::<Bn254>::prove(&ug_pk, SquareCircuit { x: Some(x) }, &mut rng).unwrap();
-    let raw_proof = se_proof.groth16_proof.clone();
+    let pvk = ug::prepare_verifying_key(&ug_vk);
 
-    // 1. Simulation-Extractability: BG18 mode (ark-groth16 has NONE)
-    let bg18 = ug::SEConfig::full_se();
-    let bg18_proof = ug::security::make_sim_extractable(raw_proof.clone(), &ug_pk, &bg18, &mut rng);
-    assert!(
-        bg18_proof.se_element.is_some(),
-        "BG18 must produce G2 blinding element"
-    );
-
-    // 2. Simulation-Extractability: ROM mode (near-zero overhead)
-    let rom = ug::SEConfig::rom_se();
-    let rom_proof = ug::security::make_sim_extractable(raw_proof.clone(), &ug_pk, &rom, &mut rng);
-    assert!(
-        !rom_proof.proof_hash.is_zero(),
-        "ROM must produce non-zero proof hash"
-    );
-    let pvk = ug::prepare_verifying_key_with_delta(&ug_vk, ug_pk.delta_g1);
-    assert!(
-        ug::security::verify_sim_extractable(&pvk, &[y], &rom_proof),
-        "ROM SE proof must verify"
-    );
-
-    // 3. Subversion Zero-Knowledge (ark-groth16 has NONE)
+    // 1. Subversion zero-knowledge rerandomization
     let szk = ug::security::apply_subversion_zk(&raw_proof, &ug_vk, &mut rng);
     assert_ne!(szk.a, raw_proof.a, "S-ZK must rerandomize A");
     assert_ne!(szk.c, raw_proof.c, "S-ZK must rerandomize C");
+    assert!(ug::Groth16::<Bn254>::verify_proof(&pvk, &szk, &[y]).unwrap());
 
-    // 4. Security report with parameter analysis
+    // 2. Hardened verifier: an off-subgroup or identity point is rejected even
+    //    for proofs built in memory (ark-groth16 trusts the caller here).
+    let mut bad = raw_proof.clone();
+    bad.b = Default::default();
+    assert!(!ug::Groth16::<Bn254>::verify_proof(&pvk, &bad, &[y]).unwrap());
+
+    // 3. Security report
     let report = ug::SecurityParams::maximum().security_report();
     assert!(report.knowledge_soundness_agm);
-    assert!(report.simulation_extractable);
+    assert!(
+        !report.simulation_extractable,
+        "Groth16 proofs are rerandomizable"
+    );
     assert!(report.subversion_zk);
 
     println!("[SECURITY] UniGroth advantages over ark-groth16:");
-    println!("  [UG only] Simulation-Extractability: BG18 (explicit G2) + ROM (hash-based)");
-    println!("  [UG only] Subversion Zero-Knowledge: proof rerandomization");
-    println!("  [UG only] Security parameter reports and analysis");
-    println!("  [shared]  Knowledge soundness (AGM) + Zero-knowledge");
-    println!("  ark-groth16: standard ZK + soundness only, NO SE, NO S-ZK");
+    println!("  [UG only] Verifier checks identity/curve/subgroup on every proof point");
+    println!("  [UG only] Batch verification with Fiat-Shamir-bound challenges");
+    println!("  [shared]  Knowledge soundness (AGM) + Zero-knowledge + rerandomization");
+    println!("  [neither] Simulation-extractability (Groth16 is malleable)");
 }
 
 // ─── 4. Universal Setup: One Ceremony for Any Circuit ────────────────────────
@@ -246,12 +211,12 @@ fn compare_universal_setup_unigroth_exclusive() {
 
     // Derive keys for SquareCircuit
     let keys1 = universal
-        .derive_keys::<_, ug::r1cs_to_qap::LibsnarkReduction>(SquareCircuit { x: None }, &mut rng)
+        .derive_keys(SquareCircuit { x: None }, &mut rng)
         .unwrap();
 
     // Derive keys for CubicCircuit — SAME universal params, DIFFERENT circuit
     let keys2 = universal
-        .derive_keys::<_, ug::r1cs_to_qap::LibsnarkReduction>(CubicCircuit { x: None }, &mut rng)
+        .derive_keys(CubicCircuit { x: None }, &mut rng)
         .unwrap();
 
     // Both circuits prove correctly from the same SRS
@@ -266,68 +231,20 @@ fn compare_universal_setup_unigroth_exclusive() {
         ug::Groth16::<Bn254>::prove(&keys2.0, CubicCircuit { x: Some(x) }, &mut rng).unwrap();
     assert!(ug::Groth16::<Bn254>::verify(&keys2.1, &[y], &cubic_proof).unwrap());
 
-    // Updatable: anyone can strengthen the SRS
-    universal.update(&mut rng);
+    // Updatable: anyone can strengthen the SRS, and the update is checkable
+    let before = universal.clone();
+    let contribution = universal.contribute(&mut rng);
+    assert!(ug::UniversalParams::verify_contribution(
+        &before,
+        &universal,
+        &contribution
+    ));
 
     println!("[UNIVERSAL SETUP] UniGroth: one ceremony → any circuit");
     println!("  Derived keys for SquareCircuit (1 constraint) and CubicCircuit (3 constraints)");
     println!("  Both proved and verified from the same universal SRS");
     println!("  SRS is updatable (anyone can contribute fresh randomness)");
     println!("  ark-groth16: requires a NEW trusted setup ceremony per circuit");
-}
-
-// ─── 5. Plonkish Arithmetization: Custom Gates + Lookups ─────────────────────
-
-#[test]
-fn compare_plonkish_unigroth_exclusive() {
-    let mut cs = ug::PlonkishConstraintSystem::<Fr>::new();
-
-    // Build circuit with diverse gate types
-    let a = Fr::from(7u64);
-    let b = Fr::from(13u64);
-
-    // Addition gates (FREE in Plonkish — each costs 1 R1CS constraint in ark-groth16)
-    let _sum = cs.add_add_gate(a, b);
-
-    // Multiplication gate
-    cs.add_mul_gate(a, b, a * b);
-
-    // Range check via lookup (1 Plonkish row — needs ~16 R1CS constraints for 4-bit)
-    cs.add_range_check(Fr::from(15u64), 4);
-
-    // Poseidon S-box custom gate (1 row — needs ~5 mul constraints in R1CS)
-    let sbox_out = cs.add_poseidon_sbox(Fr::from(2u64));
-    assert_eq!(sbox_out, Fr::from(2u64).pow([5u64]));
-
-    // Copy constraint (permutation argument)
-    cs.add_copy_constraint((0, 2), (2, 0));
-
-    assert!(cs.is_satisfied(), "Plonkish circuit must be satisfied");
-
-    let stats = cs.stats();
-    assert!(
-        stats.compression_ratio > 1.0,
-        "Plonkish must compress vs R1CS (got {:.1}x)",
-        stats.compression_ratio
-    );
-
-    // Convert to R1CS for final Groth16 proof
-    let r1cs = ug::plonkish_to_r1cs_constraints(&cs);
-    for c in &r1cs {
-        assert!(c.is_satisfied());
-    }
-
-    println!("[PLONKISH] UniGroth exclusive features:");
-    println!("  Custom gates: Poseidon S-box, EC add, boolean, bit decomp");
-    println!("  Lookup tables: range checks, XOR");
-    println!("  Copy constraints (permutation argument)");
-    println!("  {:.1}x compression vs pure R1CS", stats.compression_ratio);
-    println!(
-        "  {} Plonkish rows → {} R1CS constraints",
-        stats.total_rows,
-        r1cs.len()
-    );
-    println!("  ark-groth16: R1CS ONLY — no custom gates, no lookups");
 }
 
 // ─── 6. Proof Aggregation: N Proofs → 1 Verification ────────────────────────
@@ -346,7 +263,7 @@ fn compare_aggregation_unigroth_exclusive() {
         let x = Fr::from(i);
         let se_proof =
             ug::Groth16::<Bn254>::prove(&ug_pk, SquareCircuit { x: Some(x) }, &mut rng).unwrap();
-        proofs.push(se_proof.groth16_proof);
+        proofs.push(se_proof);
         inputs.push(vec![x * x]);
     }
 
@@ -372,187 +289,6 @@ fn compare_aggregation_unigroth_exclusive() {
     println!("  ark-groth16: NO aggregation (must verify each proof individually)");
 }
 
-// ─── 7. Folding / IVC: ProtoStar Recursion ──────────────────────────────────
-
-#[test]
-fn compare_folding_ivc_unigroth_exclusive() {
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
-    let srs = ug::kzg::UniversalSRS::<Bn254>::setup(128, &mut rng);
-
-    // IVC: 10 computation steps folded into one accumulator
-    let mut ivc = ug::IVC::<Bn254>::new(srs.clone());
-    for i in 0..10u64 {
-        let public = vec![Fr::from(i), Fr::from(i * i)];
-        let witness = vec![Fr::from(i + 1), Fr::from((i + 1) * (i + 1))];
-        ivc.step(public, witness, &mut rng).unwrap();
-    }
-
-    let (steps, acc) = ivc.finalize();
-    assert_eq!(steps, 10);
-    let acc = acc.unwrap();
-    assert_eq!(acc.fold_count, 10);
-    assert_eq!(acc.randomness_transcript.len(), 9);
-
-    // Full decision predicate verification
-    assert!(
-        ug::folding::verify_accumulator(&srs, &acc),
-        "Accumulator must pass decision predicate after 10 honest folds"
-    );
-
-    // Verify the folding engine independently
-    let instance = ug::FoldingInstance {
-        public_inputs: vec![Fr::from(42u64)],
-        witness: vec![Fr::from(42u64)],
-        slack: Fr::one(),
-    };
-    let mut engine = ug::FoldingEngine::<Bn254>::new(srs.clone());
-    engine.fold(instance, &mut rng).unwrap();
-    let engine_acc = engine.finalize().unwrap();
-    assert!(ug::folding::verify_accumulator(&srs, &engine_acc));
-
-    println!("[FOLDING/IVC] UniGroth: ProtoStar folding with full decision predicate");
-    println!(
-        "  10 IVC steps → single accumulator (fold_count={})",
-        acc.fold_count
-    );
-    println!("  Relaxed R1CS: A(z)*B(z) = mu*C(z) + e verified per-constraint");
-    println!("  KZG witness commitment linearity check");
-    println!("  ark-groth16: NO folding, NO IVC, NO recursion");
-}
-
-// ─── 8. Post-Quantum Path: SHA-256-Backed Provers ───────────────────────────
-
-#[test]
-fn compare_pq_path_unigroth_exclusive() {
-    let witness = b"secret_witness_data_for_comparison_test";
-    let public_inputs = b"public_statement";
-
-    for scheme in [
-        ug::PqScheme::Binius,
-        ug::PqScheme::Plonky3,
-        ug::PqScheme::Hybrid,
-    ] {
-        let config = ug::PqConfig::new(scheme.clone());
-        let proof = ug::prove_pq(&config, witness, public_inputs);
-
-        // Must verify with correct inputs
-        assert!(
-            ug::verify_pq(&config, &proof, public_inputs),
-            "{:?} proof must verify",
-            scheme
-        );
-
-        // Must reject wrong inputs (public input binding)
-        assert!(
-            !ug::verify_pq(&config, &proof, b"wrong_inputs"),
-            "{:?} must reject wrong public inputs",
-            scheme
-        );
-
-        println!(
-            "  [{:?}] {} bytes, verified, wrong inputs rejected",
-            scheme,
-            proof.byte_len()
-        );
-    }
-
-    // PQ proof aggregation
-    let config = ug::PqConfig::new(ug::PqScheme::Binius);
-    let proofs: Vec<_> = (0..4)
-        .map(|i| ug::BiniusProver::prove(&config, &[i as u8; 64], b"agg"))
-        .collect();
-    let agg = ug::aggregate_pq_proofs(&proofs, &config);
-    assert!(!agg.is_empty());
-
-    println!("[POST-QUANTUM] UniGroth: SHA-256-backed PQ inner provers");
-    println!("  Binius (binary fields), Plonky3 (FRI), Hybrid (Plonky3+Groth16)");
-    println!("  Public input binding via SHA-256 commitment");
-    println!("  PQ proof aggregation via Merkle digest chains");
-    println!("  ark-groth16: NO post-quantum support (pairing-based only)");
-}
-
-// ─── 9. Optimizations: Faster Proving ────────────────────────────────────────
-
-#[test]
-fn compare_optimizations_unigroth_superior() {
-    use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(42u64);
-
-    // 1. Dynark 5-FFT (ark-groth16 uses ~6-7 FFTs)
-    let domain_size = 64;
-    let domain = GeneralEvaluationDomain::<Fr>::new(domain_size).unwrap();
-    let a: Vec<Fr> = (0..domain_size).map(|_| Fr::rand(&mut rng)).collect();
-    let b: Vec<Fr> = (0..domain_size).map(|_| Fr::rand(&mut rng)).collect();
-
-    let result = ug::optimizations::compute_witness_4fft(&domain, a.clone(), b.clone());
-    assert_eq!(result.fft_count, 5, "Must use 5 FFTs (not 6-7)");
-
-    // 2. True 4-FFT coset evaluation
-    let (h_coset, fft4) = ug::optimizations::compute_h_coset_evals(&domain, a.clone(), b.clone());
-    assert_eq!(fft4, 4, "Coset path must use only 4 FFTs");
-    assert_eq!(h_coset.len(), 2 * domain_size);
-
-    // 3. Coset domain cache (eliminates repeated domain rebuild)
-    let cache = ug::CosetDomainCache::<Fr, GeneralEvaluationDomain<Fr>>::new(domain_size).unwrap();
-    let cached = ug::optimizations::compute_witness_4fft_with_cache(&domain, &cache, a, b);
-    assert_eq!(result.h_poly, cached.h_poly, "Cached must match uncached");
-
-    // 4. CSR sparse matrix (skip zero rows)
-    let sparse_matrix = vec![
-        vec![(Fr::from(3u64), 0), (Fr::from(5u64), 2)],
-        vec![], // empty row — skipped by CSR
-        vec![(Fr::from(1u64), 1)],
-        vec![], // empty row — skipped by CSR
-    ];
-    let csr = ug::CsrMatrix::from_ark_matrix(&sparse_matrix, 4, 4);
-    assert_eq!(csr.nnz_rows.len(), 2, "CSR must skip {} zero rows", 4 - 2);
-
-    // 5. Parallel MSM (rayon-accelerated Pippenger)
-    let bases: Vec<ark_bn254::G1Affine> = (0..128)
-        .map(|_| G1Projective::rand(&mut rng).into_affine())
-        .collect();
-    let scalars: Vec<Fr> = (0..128).map(|_| Fr::rand(&mut rng)).collect();
-    let (msm_result, stats) = ug::parallel_msm::<Bn254>(&bases, &scalars);
-    assert!(!msm_result.is_zero());
-
-    // 6. Polymath proof compression
-    assert!(ug::PolymathCompressor::can_compress());
-    let est_size = ug::PolymathCompressor::compressed_size_estimate::<Bn254>();
-    assert!(est_size <= 256, "Compressed proof ≤256 bytes");
-
-    // 7. Speedup estimate
-    let speedup = ug::ProverProfile::estimate_speedup(3.0, true);
-    assert!(
-        speedup > 2.0,
-        "UniGroth must be >2x faster than vanilla Groth16"
-    );
-
-    println!("[OPTIMIZATIONS] UniGroth vs ark-groth16:");
-    println!(
-        "  Dynark 5-FFT:          {} FFTs vs ~6-7 (17% fewer)",
-        result.fft_count
-    );
-    println!("  True 4-FFT coset:      {} FFTs vs ~6-7 (33% fewer)", fft4);
-    println!("  Coset domain cache:    eliminates repeated domain builds");
-    println!(
-        "  CSR sparse QAP:        skips {} zero rows (2.8-5.5x on sparse)",
-        4 - csr.nnz_rows.len()
-    );
-    println!(
-        "  Parallel MSM:          n={}, window={}, algo={}",
-        stats.num_scalars, stats.window_size, stats.algorithm
-    );
-    println!(
-        "  Polymath compression:  ~{} bytes (vs 192 uncompressed)",
-        est_size
-    );
-    println!(
-        "  Estimated speedup:     {:.1}x vs vanilla Groth16",
-        speedup
-    );
-    println!("  ark-groth16: standard 6-7 FFTs, no CSR, no cache, no compression");
-}
-
 // ─── 10. Public Input PoK: Schnorr Binding ──────────────────────────────────
 
 #[test]
@@ -566,7 +302,7 @@ fn compare_public_input_pok_unigroth_exclusive() {
         ug::Groth16::<Bn254>::circuit_specific_setup(SquareCircuit { x: None }, &mut rng).unwrap();
     let se_proof =
         ug::Groth16::<Bn254>::prove(&ug_pk, SquareCircuit { x: Some(x) }, &mut rng).unwrap();
-    let raw_proof = se_proof.groth16_proof;
+    let raw_proof = se_proof;
     let public_inputs = vec![y];
 
     // Generate PoK
@@ -613,24 +349,24 @@ fn compare_feature_matrix_summary() {
     println!("║  ───────────────────────────── │ ─────────── │ ──────────────── ║");
     println!("║  Proof correctness             │ ✓           │ ✓                ║");
     println!("║  Core proof size (128B BN254)  │ ✓           │ ✓ (identical)    ║");
-    println!("║  Simulation-Extractability     │ ✗           │ ✓ BG18 + ROM     ║");
+    println!("║  Simulation-Extractability     │ ✗           │ ✗ (malleable)    ║");
+    println!("║  Subgroup-checked verifier     │ deser. only │ ✓ always         ║");
     println!("║  Subversion Zero-Knowledge     │ ✗           │ ✓ rerandomize    ║");
     println!("║  Universal Setup (KZG SRS)     │ ✗           │ ✓ updatable      ║");
     println!("║  Plonkish + Custom Gates       │ ✗           │ ✓ 5 gate types   ║");
     println!("║  Lookup Tables                 │ ✗           │ ✓ range + XOR    ║");
     println!("║  ProtoStar Folding / IVC       │ ✗           │ ✓ full predicate ║");
-    println!("║  Proof Aggregation (SnarkPack) │ ✗           │ ✓ N→1            ║");
-    println!("║  Dynark FFT (5/4-FFT)          │ ✗ (6-7 FFT) │ ✓ 17-33% fewer  ║");
+    println!("║  Batch verify (1 final exp)    │ ✗           │ ✓ O(N) size      ║");
+    println!("║  QAP FFTs                      │ 7           │ 7 (same)         ║");
     println!("║  CSR Sparse QAP                │ ✗           │ ✓ 2.8-5.5x      ║");
     println!("║  Parallel MSM (rayon)          │ ✗           │ ✓ Pippenger      ║");
     println!("║  Coset Domain Cache            │ ✗           │ ✓               ║");
     println!("║  Polymath Compression          │ ✗           │ ✓               ║");
-    println!("║  Post-Quantum Path             │ ✗           │ ✓ 3 PQ schemes   ║");
+    println!("║  Post-Quantum Path             │ ✗           │ ✗ (stubs only)   ║");
     println!("║  Public Input PoK              │ ✗           │ ✓ Schnorr        ║");
     println!("║  SAP Arithmetization           │ ✗           │ ✓               ║");
     println!("║  Security Reports              │ ✗           │ ✓               ║");
     println!("╠═══════════════════════════════════════════════════════════════════╣");
-    println!("║  Score: ark-groth16 = 2/20    UniGroth = 20/20                  ║");
-    println!("║  UniGroth is a strict superset of Groth16.                      ║");
+    println!("║  Same core scheme as Groth16; extras are listed above.          ║");
     println!("╚═══════════════════════════════════════════════════════════════════╝");
 }

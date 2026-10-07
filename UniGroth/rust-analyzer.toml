@@ -1,0 +1,7 @@
+# Keep rust-analyzer light: `cargo check` on save, default features, lib only.
+[check]
+command = "check"
+allTargets = false
+
+[cachePriming]
+numThreads = 2

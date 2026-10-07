@@ -267,7 +267,7 @@ fn bench_parallel_msm() {
         let start = Instant::now();
         for _ in 0..iters {
             let result = BlsG1::msm(&bases, &scalars).unwrap();
-            black_box(result);
+            let _ = black_box(result);
         }
         let total_us = start.elapsed().as_micros() as f64 / iters as f64;
 

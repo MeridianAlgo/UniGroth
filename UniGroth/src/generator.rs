@@ -96,7 +96,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         let reduction_time = start_timer!(|| "R1CS to QAP Instance Map with Evaluation");
         let num_instance_variables = cs.num_instance_variables();
-        let (a, b, c, zt, qap_num_variables, m_raw) =
+        let (mut a, mut b, mut c, zt, qap_num_variables, m_raw) =
             QAP::instance_map_with_evaluation::<E::ScalarField, D<E::ScalarField>>(cs, &t)?;
         end_timer!(reduction_time);
 
@@ -112,19 +112,21 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let mut gamma_inverse = gamma.inverse().ok_or(SynthesisError::DivisionByZero)?;
         let mut delta_inverse = delta.inverse().ok_or(SynthesisError::DivisionByZero)?;
 
-        let gamma_abc = cfg_iter!(a[..num_instance_variables])
+        let mut gamma_abc = cfg_iter!(a[..num_instance_variables])
             .zip(&b[..num_instance_variables])
             .zip(&c[..num_instance_variables])
             .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &gamma_inverse)
             .collect::<Vec<_>>();
 
-        let l = cfg_iter!(a[num_instance_variables..])
+        let mut l = cfg_iter!(a[num_instance_variables..])
             .zip(&b[num_instance_variables..])
             .zip(&c[num_instance_variables..])
             .map(|((a, b), c)| (beta * a + &(alpha * b) + c) * &delta_inverse)
             .collect::<Vec<_>>();
 
-        drop(c);
+        // Each of a, b, c, l, gamma_abc holds evaluations at τ, from which τ
+        // can be recovered; wipe them rather than just freeing them.
+        c.iter_mut().for_each(Zeroize::zeroize);
 
         // gamma_inverse is no longer needed after gamma_abc is collected.
         // Zero it immediately. (delta_inverse is still needed for h_query_scalars.)
@@ -165,13 +167,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         // Compute the A-query
         let a_time = start_timer!(|| "Calculate A");
         let a_query = g1_table.batch_mul(&a);
-        drop(a);
+        a.iter_mut().for_each(Zeroize::zeroize);
         end_timer!(a_time);
 
         // Compute the B-query in G1
         let b_g1_time = start_timer!(|| "Calculate B G1");
         let b_g1_query = g1_table.batch_mul(&b);
-        drop(b);
+        b.iter_mut().for_each(Zeroize::zeroize);
         end_timer!(b_g1_time);
 
         // Compute the H-query
@@ -189,7 +191,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         // Compute the L-query
         let l_time = start_timer!(|| "Calculate L");
         let l_query = g1_table.batch_mul(&l);
-        drop(l);
+        l.iter_mut().for_each(Zeroize::zeroize);
         end_timer!(l_time);
 
         end_timer!(proving_key_time);
@@ -198,6 +200,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let verifying_key_time = start_timer!(|| "Generate the R1CS verification key");
         let gamma_g2 = g2_generator * &gamma;
         let gamma_abc_g1 = g1_table.batch_mul(&gamma_abc);
+        gamma_abc.iter_mut().for_each(Zeroize::zeroize);
         drop(g1_table);
 
         // gamma last used above; zero it now.

@@ -1,70 +1,42 @@
-//! # UniGroth: Next-Generation Universal zkSNARK Framework
+//! # UniGroth
 //!
-//! UniGroth is an evolutionary zkSNARK framework that addresses the fundamental
-//! limitations of Groth16 while preserving its legendary proof size and verification speed.
+//! Groth16 with a verifiable universal setup and a hardened verifier, built on
+//! [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16).
 //!
-//! ## Overview
+//! - **Groth16 core**: setup, prove, verify; proofs are plain Groth16 (128
+//!   bytes on BN254).
+//! - **Hardened verification**: every verifier (single, batch, aggregate)
+//!   rejects identity, off-curve and wrong-subgroup proof points; batch
+//!   verification uses Fiat-Shamir challenges bound to the whole batch.
+//! - **Universal setup** ([`universal_setup`]): BGM17-style Phase 1 powers of
+//!   τ plus a per-circuit Phase 2 for δ, with proofs of knowledge, transcript
+//!   checks and a random-beacon final step.
+//! - **Circuits**: Poseidon, Merkle, range checks, a MiMC auth circuit and a
+//!   small circuit builder; Solidity/WASM verifier generation (feature `solidity`).
 //!
-//! Built on the foundation of [`Groth16`](https://eprint.iacr.org/2016/260.pdf),
-//! UniGroth aims to provide:
+//! **Research software. Not audited.** Groth16 proofs are rerandomizable (not
+//! simulation-extractable): bind context such as a sender or nonce into the
+//! public inputs if that matters.
 //!
-//! - **Universal Setup**: One-time ceremony, reusable for any circuit
-//! - **Flexible Arithmetization**: SAP/Plonkish with custom gates and lookups
-//! - **Groth16-Level Performance**: 192-256 byte proofs, 3-5 pairing verification
-//! - **Enhanced Security**: Simulation-extractable, subversion-resistant
-//! - **Folding & Recursion**: ProtoStar/Nova integration for IVC
+//! ## Experimental modules
 //!
-//! ## Current Status
+//! Folding, FRI/IPA commitments, the "post-quantum" inner provers, recursion,
+//! MPC, lookups, Plonkish gates, zkVM and the prover-optimization experiments
+//! are behind the `experimental` feature. Several are scaffolds with known
+//! soundness gaps (some are forgeable); each module documents its limits. Do
+//! not use them for anything that needs security.
 //!
-//! **Research software.** The classical Groth16 core (setup, prove, verify)
-//! is the main path; several extension modules are scaffolds with
-//! documented limitations (see each module's docs). Audit before production use.
-//!
-//! ## Example Usage
+//! ## Example
 //!
 //! ```rust,ignore
-//! use unigroth::{Groth16, ProvingKey, VerifyingKey};
 //! use ark_bn254::Bn254;
-//! use ark_relations::r1cs::ConstraintSynthesizer;
 //! use ark_snark::SNARK;
+//! use unigroth::Groth16;
 //!
-//! // Define your circuit
-//! struct MyCircuit { /* ... */ }
-//!
-//! impl ConstraintSynthesizer<Fr> for MyCircuit {
-//!     fn generate_constraints(/* ... */) -> Result<(), SynthesisError> {
-//!         // Define constraints
-//!         Ok(())
-//!     }
-//! }
-//!
-//! // Setup
 //! let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit, &mut rng)?;
-//!
-//! // Prove (returns SimExtractableProof)
-//! let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)?;
-//!
-//! // Verify
-//! let valid = Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)?;
+//! let proof = Groth16::<Bn254>::prove(&pk, circuit_with_witness, &mut rng)?;
+//! assert!(Groth16::<Bn254>::verify(&vk, &public_inputs, &proof)?);
 //! ```
-//!
-//! ## Architecture
-//!
-//! UniGroth is organized into several key modules:
-//!
-//! - [`data_structures`]: Core types (proving keys, verifying keys, proofs)
-//! - [`generator`]: Setup and key generation
-//! - [`prover`]: Proof generation
-//! - [`verifier`]: Proof verification
-//! - [`r1cs_to_qap`]: R1CS to QAP reduction (SAP support coming)
-//! - [`constraints`]: R1CS gadgets for recursive verification (feature: `r1cs`)
-//!
-//! ## Acknowledgements
-//!
-//! Built on the framework from [arkworks-rs/groth16](https://github.com/arkworks-rs/groth16).
-//! Extended by MeridianAlgo (2026).
-//!
-//! [`Groth16`]: https://eprint.iacr.org/2016/260.pdf
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(
@@ -86,6 +58,8 @@
 
 #[macro_use]
 extern crate ark_std;
+
+// ─── Groth16 core ────────────────────────────────────────────────────────────
 
 /// Library-wide constants: security level, Poseidon parameters, domain tags.
 pub mod config;
@@ -109,79 +83,30 @@ pub mod verifier;
 #[cfg(feature = "r1cs")]
 pub mod constraints;
 
-/// KZG polynomial commitment scheme for universal setup.
-pub mod kzg;
-
-/// Square Arithmetic Programs (SAP) - more efficient than R1CS.
-pub mod sap;
-
-/// Universal trusted setup - one ceremony for all circuits.
-pub mod universal_setup;
-
-/// ProtoStar-style folding / IVC for recursion and scalability.
-pub mod folding;
-
-/// Security upgrades: simulation-extractability, subversion ZK, AGM+ROM.
+/// Subversion-ZK rerandomization and the security report.
 pub mod security;
 
-/// Prover optimizations: Dynark 4-FFT, parallel MSM, proof compression.
-pub mod optimizations;
+// ─── Setup ───────────────────────────────────────────────────────────────────
 
-/// Plonkish arithmetization: custom gates, lookups, copy constraints.
-pub mod plonkish;
+/// KZG polynomial commitments over a validated powers-of-τ SRS.
+pub mod kzg;
 
-/// Lookup arguments: Plookup (grand-product) and LogUp (log-derivative).
-/// Competitive with PLONK/Halo2 lookup argument support.
-/// Types: `lookup::LookupTable`, `lookup::PlookupProof`, `lookup::LogUpWitness`,
-/// `lookup::MultiTableLookup`. Functions re-exported at crate root below.
-pub mod lookup;
-pub use self::lookup::{
-    prove_logup, prove_multi_table_logup, prove_plookup, range_table, verify_logup,
-    verify_multi_table_logup, verify_plookup, LogUpWitness, LookupError, MultiTableLookup,
-    PlookupProof,
-};
+/// Universal setup: verifiable Phase 1 / Phase 2 ceremony and key derivation.
+pub mod universal_setup;
 
-/// Custom gate library: SHA-256 Σ/σ, elliptic-curve addition, Montgomery multiplication,
-/// Poseidon full/partial rounds, Keccak-f XOR — all with optimised constraint counts
-/// versus naive flat R1CS encodings (3–16× reduction per gate).
-pub mod gates;
-pub use self::gates::{
-    EcAddGate, GateLibrary, GateType, KeccakXorGate, MontgomeryMulGate, PoseidonRoundGate,
-    PoseidonRoundType, Sha256GateType, Sha256SigmaGate,
-};
+// ─── Verification helpers ────────────────────────────────────────────────────
 
-/// Polynomial commitment schemes: FRI (transparent, hash-based) and IPA (discrete-log).
-/// Provides a ceremony-free alternative to KZG; both support the `CommitmentScheme` enum.
-pub mod commitment;
-pub use self::commitment::{
-    fri_commit, fri_prove, fri_verify, ipa_commit, ipa_prove, ipa_verify, CommitmentScheme,
-    FriCommitment, FriConfig, FriProof, IpaCommitment, IpaConfig, IpaProof,
-};
-
-/// Post-quantum inner prover interface (Binius, Plonky3, Hybrid).
-pub mod pq_inner;
-
-/// Proof aggregation: compress N Groth16 proofs into one (SnarkPack-style).
+/// Batch verification of many proofs for one verifying key.
 pub mod aggregation;
-pub use self::aggregation::{aggregate_proofs, verify_aggregated, AggregatedProof};
 
-/// Schnorr proof-of-knowledge binding the prover to their public input choices.
-pub mod public_input_pok;
-pub use self::public_input_pok::{prove_public_input_pok, verify_public_input_pok, PublicInputPoK};
-
-/// Memory-efficient streaming prover for large circuits (>2^20 constraints).
-pub mod streaming;
-pub use self::streaming::{
-    create_streaming_proof, estimate_peak_memory, streaming_msm, StreamingConfig,
-    StreamingMSMResult,
-};
-
-/// Batch prover: parallel multi-circuit proving.
+/// Batch proving and verification.
 pub mod batch;
-pub use self::batch::{
-    batch_prove, batch_verify, batch_verify_optimized, BatchConfig, BatchProofResult, BatchResult,
-    BatchThroughputEstimate,
-};
+
+/// Verifying-key compression: a digest of the input-commitment vector.
+pub mod key_compression;
+
+/// Schnorr proof of knowledge binding a prover to their public inputs.
+pub mod public_input_pok;
 
 /// Solidity verifier contract generation for on-chain verification.
 #[cfg(any(feature = "solidity", test))]
@@ -191,109 +116,108 @@ pub mod solidity;
 #[cfg(any(feature = "solidity", test))]
 pub mod wasm_verifier;
 
-/// Verifying key compression via KZG commitments (O(n) → O(1)).
-pub mod key_compression;
-pub use self::key_compression::{
-    compress_vk, compression_stats, create_vk_opening, verify_with_compressed_vk,
-    CompressedVerifyingKey, VKOpeningProof,
-};
+// ─── Circuits ────────────────────────────────────────────────────────────────
 
-/// Ergonomic circuit builder SDK.
-pub mod circuit_builder;
-pub use self::circuit_builder::{BuiltCircuit, CircuitBuilder, CircuitStats, Wire};
-
-/// Authentication circuit: prove knowledge of secret with replay-resistant nullifier.
-/// Used by secure-sharing / login platforms. See [`auth::AuthCircuit`].
+/// Authentication circuit: knowledge of a secret with a replay-resistant nullifier.
 pub mod auth;
-pub use self::auth::{mimc_hash, mimc_round_constants, AuthCircuit, MIMC_ROUNDS};
+
+/// Circuit builder for small R1CS circuits.
+pub mod circuit_builder;
 
 /// Circuit library: Poseidon, Merkle trees, range checks.
 pub mod circuits;
-pub use self::circuits::{
-    poseidon_hash, MerkleProofCircuit, PoseidonHashCircuit, PoseidonParams, RangeCheckCircuit,
-};
 
-/// Recursive proof composition framework.
-pub mod recursion;
-pub use self::recursion::{
-    create_recursive_proof, verify_recursive_chain, CurvePair, RecursionConfig, RecursiveProof,
-};
+/// Serde compatibility helpers for arkworks types (feature: `serde`).
+#[cfg(feature = "serde")]
+pub mod serde_compat;
 
-/// ZK gadget library for composing circuits: range checks, Merkle proofs, Poseidon hashing,
-/// ECDSA/EdDSA signature verification, and recursive Groth16 proof verification gadgets.
-pub mod gadgets;
-pub use self::gadgets::{
-    EcdsaVerifyGadget, EddsaVerifyGadget, GadgetInfo, GadgetLibrary as ZkGadgetLibrary,
-    MemoryAccessGadget, MerkleProofGadget, PoseidonHashGadget, RangeCheckGadget,
-    RecursiveVerifierGadget,
-};
+// ─── Experimental (feature `experimental`; see crate docs) ───────────────────
 
-/// Transparent (ceremony-free) setup modes: KZG (trusted) vs hash-based transparent option.
-/// Allows deployments that cannot participate in a trusted setup ceremony.
-pub mod transparent;
-pub use self::transparent::{SetupMode, TransparentConfig, TransparentProofSize};
-
-/// Lasso generalized lookup argument — arbitrary function tables via sumcheck + MLE.
-/// Supports SHA-256, Keccak, AES S-box, and RISC-V VM opcode tables.
-/// O(n log n) prover, O(log n) verifier — strictly superior to Plookup for arbitrary tables.
-pub mod lasso;
-pub use self::lasso::{
-    prove_lasso, sumcheck_prove, sumcheck_verify, verify_lasso, LassoError, LassoProof, LassoTable,
-    MultilinearPoly, SumcheckProof, SumcheckRound,
-};
-
-/// Adaptive proving strategy — runtime circuit analyzer and dispatcher.
-/// Selects optimal FFT variant, MSM backend, and lookup argument without
-/// user code changes.  Expected 10–30% average speedup.
+/// Experimental: runtime strategy selection heuristics.
+#[cfg(feature = "experimental")]
 pub mod adaptive;
-pub use self::adaptive::{
-    AdaptiveDispatcher, CircuitProfile, FftVariant, LookupBackend, MsmBackend, ProverStrategy,
-};
 
-/// RISC-V zkVM constraint system — prove correct program execution in ZK.
-/// Builds R1CS from execution traces; integrates MemoryAccess and RangeCheck gadgets.
-/// Foundation for zkEVM and zkVM applications.
-pub mod zkvm;
-pub use self::zkvm::{
-    ProgramTrace, RegisterFile, RiscVOpcode, TraceBuilder, TraceStep, ZkvmConstraintBuilder,
-    ZkvmConstraintKind, ZkvmStats,
-};
+/// Experimental: FRI and IPA polynomial commitments. FRI does not check
+/// folding consistency, so it is not a low-degree test.
+#[cfg(feature = "experimental")]
+pub mod commitment;
 
-/// Multi-party proving (MPC-friendly) — N parties jointly prove without revealing witnesses.
-/// Uses additive secret sharing; Shamir t-of-N threshold scheme also supported.
+/// Experimental: folding / IVC. The decision predicate trusts a
+/// prover-supplied error vector.
+#[cfg(feature = "experimental")]
+pub mod folding;
+
+/// Experimental: custom gate constraint counts.
+#[cfg(feature = "experimental")]
+pub mod gates;
+
+/// Experimental: gadget descriptions (ECDSA, EdDSA, Merkle, ...).
+#[cfg(feature = "experimental")]
+pub mod gadgets;
+
+/// Experimental: Lasso-style sumcheck lookups (verifier sees all queries).
+#[cfg(feature = "experimental")]
+pub mod lasso;
+
+/// Experimental: Plookup / LogUp reference identities (verifier sees all queries).
+#[cfg(feature = "experimental")]
+pub mod lookup;
+
+/// Experimental: additive / Shamir witness sharing. Tags are unkeyed.
+#[cfg(feature = "experimental")]
 pub mod mpc;
-pub use self::mpc::{
-    aggregate_partial_proofs, reconstruct_witness, split_witness, AdditiveShare, MpcConfig,
-    MpcError, MpcScheme, MpcSession, MpcWitnessShare, PartialProofElement, ShamirShare,
-};
+
+/// Experimental: prover-optimization experiments (Dynark FFT, CSR, caches).
+#[cfg(feature = "experimental")]
+pub mod optimizations;
+
+/// Experimental: Plonkish constraint system lowered to R1CS.
+#[cfg(feature = "experimental")]
+pub mod plonkish;
+
+/// Experimental: hash-based "inner prover" stubs. **Forgeable; not post-quantum.**
+#[cfg(feature = "experimental")]
+pub mod pq_inner;
+
+/// Experimental: hash-linked proof log. Does not verify inner proofs.
+#[cfg(feature = "experimental")]
+pub mod recursion;
+
+/// Experimental: SAP naming wrapper; delegates to the QAP reduction.
+#[cfg(feature = "experimental")]
+pub mod sap;
+
+/// Experimental: streaming MSM and memory estimates.
+#[cfg(feature = "experimental")]
+pub mod streaming;
+
+/// Experimental: setup-mode descriptions; no transparent setup is implemented.
+#[cfg(feature = "experimental")]
+pub mod transparent;
+
+/// Experimental: RISC-V trace-to-constraint scaffolding.
+#[cfg(feature = "experimental")]
+pub mod zkvm;
 
 #[cfg(test)]
 mod test;
 
-/// Serde compatibility helpers for arkworks EC-parameterized types (feature: `serde`).
-#[cfg(feature = "serde")]
-pub mod serde_compat;
-
-pub use self::folding::{
-    compute_cross_term_vector, fold_prover_state, verify_decision_predicate, FoldingAccumulator,
-    FoldingEngine, FoldingInstance, ProverState, R1CSMatrices, IVC,
+pub use self::aggregation::{aggregate_proofs, verify_aggregated, AggregatedProof};
+pub use self::auth::{mimc_hash, mimc_round_constants, AuthCircuit, MIMC_ROUNDS};
+pub use self::batch::{
+    batch_prove, batch_verify, batch_verify_optimized, BatchConfig, BatchProofResult, BatchResult,
 };
-pub use self::kzg::{Commitment, Opening, UniversalSRS, KZG};
-pub use self::optimizations::{
-    parallel_msm, CosetDomainCache, CsrMatrix, MSMGPUHint, PolymathCompressor, ProverProfile,
+pub use self::circuit_builder::{BuiltCircuit, CircuitBuilder, CircuitStats, Wire};
+pub use self::circuits::{
+    poseidon_hash, MerkleProofCircuit, PoseidonHashCircuit, PoseidonParams, RangeCheckCircuit,
 };
-pub use self::plonkish::{
-    plonkish_to_r1cs_constraints, ConstraintType, CustomGateRegistry, LookupTable,
-    PlonkR1CSConstraint, PlonkSelectors, PlonkishConstraintSystem, PlonkishStats,
+pub use self::key_compression::{
+    compress_vk, compression_stats, create_vk_opening, verify_with_compressed_vk,
+    CompressedVerifyingKey, VKOpeningProof,
 };
-pub use self::pq_inner::{
-    aggregate_pq_proofs, prove_pq, verify_pq, BiniusProver, HybridProver, Plonky3Prover, PqConfig,
-    PqInnerProver, PqProof, PqScheme,
-};
-pub use self::sap::{R1CSToSAP, SAPInstance, SAPStats};
-pub use self::security::{
-    SEConfig, SecurityParams, SecurityReport, SecurityWrapper, SimExtractableProof,
-};
+pub use self::kzg::{Commitment, KzgError, Opening, UniversalSRS, KZG};
+pub use self::public_input_pok::{prove_public_input_pok, verify_public_input_pok, PublicInputPoK};
+pub use self::security::{SecurityParams, SecurityReport};
 pub use self::universal_setup::UniversalParams;
 pub use self::{data_structures::*, verifier::*};
 
@@ -303,6 +227,22 @@ use ark_snark::*;
 use ark_std::{marker::PhantomData, rand::RngCore, vec::Vec};
 use r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 
+/// Sample a uniformly random non-zero field element.
+///
+/// # Panics
+/// If `rng` returns zero eight times in a row. A working RNG does that with
+/// probability about 2⁻²⁰⁰⁰, so it means the entropy source is broken, and
+/// carrying on would produce predictable (and therefore leaked) secrets.
+pub(crate) fn nonzero_rand<F: ark_ff::Field, R: RngCore + ?Sized>(rng: &mut R) -> F {
+    for _ in 0..8 {
+        let x = F::rand(rng);
+        if !x.is_zero() {
+            return x;
+        }
+    }
+    panic!("RNG returned zero eight times in a row: the entropy source is broken");
+}
+
 /// The SNARK of [[Groth16]](https://eprint.iacr.org/2016/260.pdf).
 pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
     _p: PhantomData<(E, QAP)>,
@@ -311,7 +251,7 @@ pub struct Groth16<E: Pairing, QAP: R1CSToQAP = LibsnarkReduction> {
 impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
     type ProvingKey = ProvingKey<E>;
     type VerifyingKey = VerifyingKey<E>;
-    type Proof = SimExtractableProof<E>;
+    type Proof = Proof<E>;
     type ProcessedVerifyingKey = PreparedVerifyingKey<E>;
     type Error = SynthesisError;
 
@@ -330,11 +270,7 @@ impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
         circuit: C,
         rng: &mut R,
     ) -> Result<Self::Proof, Self::Error> {
-        let raw_proof = Self::create_random_proof_with_reduction(circuit, pk, rng)?;
-        let se_config = SEConfig::default(); // ROM blinding, near-zero overhead
-        Ok(security::make_sim_extractable(
-            raw_proof, pk, &se_config, rng,
-        ))
+        Self::create_random_proof_with_reduction(circuit, pk, rng)
     }
 
     fn process_vk(

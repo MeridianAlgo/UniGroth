@@ -89,6 +89,8 @@ r1cs = [
 print-trace = ["ark-std/print-trace"]
 serde = ["dep:serde", "std"]
 # UniGroth-specific features
+# Research scaffolds with known soundness gaps (see crate docs). Off by default.
+experimental = []
 universal = []  # Enable universal setup
 sap = []        # Enable SAP arithmetization
 gpu = []        # Enable GPU MSM dispatch via icicle (requires icicle crate)
@@ -119,7 +121,7 @@ required-features = ["std"]
 name = "lookup-benches"
 path = "benches/lookup_bench.rs"
 harness = false
-required-features = ["std"]
+required-features = ["std", "experimental"]
 
 [[bench]]
 name = "aggregation-benches"
@@ -131,19 +133,25 @@ required-features = ["std"]
 name = "commitment-benches"
 path = "benches/commitment_bench.rs"
 harness = false
-required-features = ["std"]
+required-features = ["std", "experimental"]
 
 [[bench]]
 name = "recursion-benches"
 path = "benches/recursion_bench.rs"
 harness = false
-required-features = ["std"]
+required-features = ["std", "experimental"]
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-incremental = true
+# Thin LTO keeps most of the speed at a fraction of the link time.
+lto = "thin"
 panic = 'abort'
+
+# Fully optimized builds for published binaries: `cargo build --profile dist`.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
 
 [profile.bench]
 opt-level = 3
@@ -161,8 +169,12 @@ panic = 'abort'
 opt-level = 3
 incremental = true
 debug-assertions = true
-debug = true
+# Line tables keep backtraces readable without full debug info.
+debug = "line-tables-only"
 
+# arkworks git dependencies are pinned by Cargo.lock (commit it; CI builds
+# with --locked). Adding `rev = ...` here instead splits the arkworks crates
+# into two copies, because they depend on each other by bare git URL.
 [patch.crates-io]
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }

@@ -305,11 +305,9 @@ Comparison of PQ proof sizes across all UniGroth proving modes:
 
 | Proof Type | Size | Quantum Resistant |
 |-----------|------|-------------------|
-| Classical Groth16 | 192 bytes | No |
-| Groth16 + ROM SE | 192-256 bytes | No |
-| Groth16 + BG18 SE | 288 bytes | No |
-| **Binius PQ (128-bit)** | **256 bytes** | **Yes** |
-| **Plonky3 PQ (128-bit)** | **512 bytes** | **Yes** |
+| Classical Groth16 (BLS12-381 / BN254) | 192 / 128 bytes | No |
+| `pq_inner` Binius scaffold | 256 bytes | No — forgeable, see `tests/red_team.rs` |
+| `pq_inner` Plonky3 scaffold | 512 bytes | No — forgeable, see `tests/red_team.rs` |
 | **Hybrid PQ (128-bit)** | **516 bytes** | **Yes** |
 | STARK (for reference) | 50,000-200,000 bytes | Yes |
 
@@ -377,7 +375,7 @@ PQ proofs compose naturally with other UniGroth features:
 |---------|---------------|
 | **Proof Aggregation** | `aggregate_pq_proofs()` for SHA-256 Merkle aggregation; also compatible with SnarkPack for classical outer aggregation |
 | **Folding / IVC** | PQ proofs can be embedded as witnesses in folding steps |
-| **Simulation-Extractability** | Outer Groth16 layer retains SE properties (BG18/ROM) |
+| **Simulation-Extractability** | Not provided: the outer Groth16 proof is rerandomizable |
 | **Solidity Verifier** | Hybrid scheme: on-chain verifier sees standard Groth16 proof |
 | **Streaming Prover** | PQ provers are memory-efficient (SHA-256 streaming) |
 | **Batch Proving** | Multiple PQ proofs can be generated in parallel |

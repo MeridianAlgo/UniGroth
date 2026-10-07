@@ -31,6 +31,7 @@ const digest = document.getElementById('digest');
 const verify = document.getElementById('verify');
 const tamper = document.getElementById('tamper');
 let storedCommitment = null;
+let salt = '';
 let revision = 0;
 
 function setStatus(state, message, kind = 'neutral') {
@@ -39,9 +40,9 @@ function setStatus(state, message, kind = 'neutral') {
   document.querySelector('.lab-output').dataset.status = kind;
 }
 
-async function hashInputs() {
-  // JSON encodes the two fields unambiguously, including delimiter characters.
-  const bytes = new TextEncoder().encode(JSON.stringify(['UNIGROTH-WEB-DEMO-v1', secret.value, statement.value]));
+async function hashInputs(withSalt = salt) {
+  // JSON encodes the fields unambiguously; the random salt makes guessed secrets unverifiable from the digest alone.
+  const bytes = new TextEncoder().encode(JSON.stringify(['UNIGROTH-WEB-DEMO-v2', withSalt, secret.value, statement.value]));
   const hash = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -50,8 +51,10 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   const current = ++revision;
   try {
-    const next = await hashInputs();
+    const nextSalt = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    const next = await hashInputs(nextSalt);
     if (current !== revision) return;
+    salt = nextSalt;
     storedCommitment = next;
     digest.textContent = storedCommitment;
     verify.disabled = false;

@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## Unreleased — red-team hardening and simplification
+
+- **Proof type (breaking)** — `Groth16::prove` returns a plain `Proof<E>` (128 B on BN254, down from 161 B). The `SimExtractableProof` wrapper, `SEConfig`, `make_sim_extractable`, `SecurityWrapper`, `verify_sim_extractable` and `prepare_verifying_key_with_delta` are removed: the wrapper's hash was never verified and its BG18 mode never verified, so it cost bytes and a SHA-256 per proof for no security. `PreparedVerifyingKey` drops the unused `delta_g1_prepared`.
+- **Subgroup-checked verification** — `proof_points_valid` checks A, B, C are non-identity, on the curve and in the prime-order subgroup. Single, batch and aggregate verifiers all run it; the single verifier overlaps it with the pairing.
+- **Batch verifier** — `batch_verify_optimized` now shares `aggregation::verify_batch`: challenges are a Fiat-Shamir hash of the VK, inputs and proofs mixed with RNG entropy, so a predictable RNG can no longer be used to cancel errors across proofs. Public inputs are folded into one MSM of size ℓ+1 instead of k separate input preparations.
+- **Prover** — removed the unreachable Dynark FFT branch from the QAP witness map and the dead `r = 0` branch.
+- **wasm-auth** — proofs are deserialized unchecked because the verifier performs the subgroup check, avoiding doing it twice.
+- New red-team tests: off-curve and off-subgroup points, and a batch-cancellation forgery against a predictable RNG.
+- **Universal setup rebuilt (breaking)** — the old `UniversalParams` stored α, β, γ in public fields (anyone holding it could forge proofs for every derived circuit), never used its SRS (keys were an ordinary trusted setup), and had an unverifiable `update`. It is now a BGM17-style ceremony: public Phase 1 parameters (`τⁱG`, `τⁱH`, `ατⁱG`, `βτⁱG`, `βH`), `contribute` / `verify_contribution` / `verify_transcript` with Schnorr proofs of knowledge, `from_transcript` for external Powers of Tau, and Phase 2 via `derive_unblinded_keys`, `contribute_delta`, `verify_keys`. `LagrangeBases` caches the per-size group FFTs (checked before use). `derive_keys` loses its QAP type parameter.
+- **KZG SRS** — `from_powers_of_tau` returned an SRS for an empty transcript with `max_degree = usize::MAX`, under which every polynomial committed to the identity. It now returns `Option` and checks structure with one multi-pairing; `update` returns a proof of knowledge checked by `verify_update`; `commit` bounds the degree by the actual number of powers; `verify` subgroup-checks the commitment and proof. **(breaking)**
+- **Trusted generator** — the τ-evaluation vectors (from which τ can be recovered) are zeroized instead of just freed.
+- **Ceremony hardening** — proofs of knowledge bind their context (phase, slot, circuit digest), use hedged nonces so a broken RNG cannot leak a contributor's secret, and random-beacon final steps exist for both phases (`contribute_from_beacon`, `contribute_delta_from_beacon`). All non-zero samplers panic after eight zero draws instead of looping forever on a dead RNG.
+- **Lookups** — Plookup/LogUp challenges are Fiat-Shamir derived inside the verifier; `prove_plookup` and the `verify_*` functions lose their β/γ parameters. A caller-chosen γ let LogUp accept values outside the table. **(breaking)**
+- **KZG** — `commit`/`open` return `Result<_, KzgError>` and `trim` returns `Option` instead of panicking. **(breaking)**
+- **wasm-auth** — `derive_secret(password, salt)` (Argon2id, 64 MiB, 3 passes) replaces the plain SHA-256 of the password; `prove`, `commitment`, `nullifier` take the derived secret. README has a threat model. **(breaking)**
+- **`experimental` feature** — folding, FRI/IPA, pq_inner, recursion, mpc, lookups, lasso, plonkish, gates, gadgets, zkvm, adaptive, streaming, optimizations, sap and transparent are off by default and no longer re-exported at the crate root. **(breaking)**
+- **Build** — CI uses `--locked` and also tests `--features experimental`; release builds use thin LTO (`--profile dist` for fat); the `compare` binary measures only code paths the library uses.
+
 ## UniGroth v0.8.0 (September 2026) — security release
 
 Breaking API changes are marked **(breaking)**.

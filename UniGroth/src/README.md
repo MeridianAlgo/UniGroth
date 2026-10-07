@@ -22,7 +22,7 @@ This directory contains the full UniGroth library implementation. Every module i
 | File | Purpose |
 |------|---------|
 | `kzg.rs` | KZG polynomial commitments: `commit`, `open`, `verify`, `batch_verify`, `update_srs` |
-| `universal_setup.rs` | `UniversalParams` — circuit-agnostic key derivation from powers-of-tau SRS |
+| `universal_setup.rs` | `UniversalParams` — verifiable Phase 1 powers of τ (α, β), Phase 2 δ contributions, key derivation and transcript checks |
 | `sap.rs` | Square Arithmetic Programs: R1CS → SAP reduction, gate counting |
 
 ### Advanced Arithmetization
@@ -44,7 +44,7 @@ This directory contains the full UniGroth library implementation. Every module i
 
 | File | Purpose |
 |------|---------|
-| `security.rs` | `SimExtractableProof<E>`, `SEConfig` (ROM/BG18), `SecurityReport`, Subversion ZK |
+| `security.rs` | `SecurityReport`, subversion-ZK rerandomization |
 | `public_input_pok.rs` | Schnorr proof-of-knowledge binding prover to their public input choices |
 
 ### Optimizations
@@ -88,7 +88,7 @@ This directory contains the full UniGroth library implementation. Every module i
 
 ## Security Properties Wired In
 
-- **Simulation-extractability** — default `prove()` calls `make_sim_extractable` (ROM blinding, near-zero overhead)
+- **Hardened verification** — every verifier subgroup-checks proof points (`proof_points_valid`)
 - **Circuit binding** — `circuit_bound_rand()` mixes SHA-256(vk) into randomness
 - **Toxic waste zeroing** — `alpha, beta, gamma, delta` zeroed with `black_box` after keygen
 - **Subversion ZK** — proof rerandomization available at any time

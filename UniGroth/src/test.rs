@@ -97,21 +97,8 @@ where
         )
         .unwrap();
 
-        // Rerandomize the inner groth16 proof, then wrap as SE proof for verification
-        let raw2 = Groth16::<E>::rerandomize_proof(&vk, &proof1.groth16_proof, &mut rng);
-        let raw3 = Groth16::<E>::rerandomize_proof(&vk, &raw2, &mut rng);
-
-        // Wrap rerandomized proofs as SE proofs (ROM blinding, no BG18 element)
-        let proof2 = crate::SimExtractableProof {
-            groth16_proof: raw2.clone(),
-            se_element: None,
-            proof_hash: crate::security::compute_proof_hash::<E>(&raw2),
-        };
-        let proof3 = crate::SimExtractableProof {
-            groth16_proof: raw3.clone(),
-            se_element: None,
-            proof_hash: crate::security::compute_proof_hash::<E>(&raw3),
-        };
+        let proof2 = Groth16::<E>::rerandomize_proof(&vk, &proof1, &mut rng);
+        let proof3 = Groth16::<E>::rerandomize_proof(&vk, &proof2, &mut rng);
 
         // Check correctness: a rerandomized proof validates when the original validates
         assert!(Groth16::<E>::verify_with_processed_vk(&pvk, &[c], &proof1).unwrap());

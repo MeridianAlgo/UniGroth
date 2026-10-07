@@ -96,7 +96,9 @@ impl<E: Pairing> FoldingAccumulator<E> {
         let acc_w = if instance.witness.is_empty() {
             None
         } else {
-            Some(KZG::commit(srs, &witness_poly))
+            // A witness too large for the SRS gets no commitment; the
+            // decision check then rejects the accumulator.
+            KZG::commit(srs, &witness_poly).ok()
         };
 
         Self {
@@ -216,7 +218,9 @@ impl<E: Pairing> FoldingEngine<E> {
         let new_w_commit = if new_instance.witness.is_empty() {
             E::G1Affine::zero()
         } else {
-            KZG::commit(&self.srs, &new_witness_poly).value
+            KZG::commit(&self.srs, &new_witness_poly)
+                .map_err(|_| FoldingError::SRSTooSmall)?
+                .value
         };
 
         let folded_w_value = match &acc.acc_w {
@@ -735,7 +739,9 @@ pub fn verify_decision_predicate<E: Pairing>(
     // commitment is a failure, not a pass.
     if !prover_state.folded_witness.is_empty() {
         let witness_poly = witness_to_poly::<E>(&prover_state.folded_witness)?;
-        let expected_commit = KZG::commit(srs, &witness_poly);
+        let Ok(expected_commit) = KZG::commit(srs, &witness_poly) else {
+            return Ok(false);
+        };
         match acc.acc_w {
             Some(ref stored_commit) if stored_commit.value == expected_commit.value => {},
             _ => return Ok(false),

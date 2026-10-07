@@ -38,15 +38,19 @@ jobs:
       working-directory: ./UniGroth
 
     - name: Run Build
-      run: cargo build --verbose
+      run: cargo build --locked --verbose
       working-directory: ./UniGroth
 
     - name: Run Clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --locked -- -D warnings
       working-directory: ./UniGroth
 
     - name: Run Tests
-      run: cargo test --workspace --verbose
+      run: cargo test --workspace --locked --verbose
+      working-directory: ./UniGroth
+
+    - name: Test experimental modules
+      run: cargo test --locked --features experimental
       working-directory: ./UniGroth
 
   js_tests:

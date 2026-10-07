@@ -256,7 +256,7 @@ mod tests {
         )
         .unwrap();
         let public_inputs = vec![x * x];
-        (rng, vk, se_proof.groth16_proof, public_inputs)
+        (rng, vk, se_proof, public_inputs)
     }
 
     #[test]
@@ -340,8 +340,8 @@ mod tests {
         )
         .unwrap();
 
-        let proof1 = se_proof1.groth16_proof;
-        let proof2 = se_proof2.groth16_proof;
+        let proof1 = se_proof1;
+        let proof2 = se_proof2;
         let public_inputs = vec![x * x];
 
         // Sanity: different randomness → different proof elements

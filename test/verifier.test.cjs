@@ -57,3 +57,18 @@ test('non-canonical or malformed encodings are rejected', () => {
     assert.strictEqual(UniGroth.verify(compiled, { ...proof, witness: proof.witness.slice(1) }).passed, false);
     assert.strictEqual(UniGroth.verify(compiled, null).passed, false);
 });
+
+test('mimc has no cube-root-of-unity collisions', () => {
+    // with x^3 rounds, hash(w*(x+c0)-c0) == hash(x) for a cube root of unity w
+    const { MIMC_CONSTANTS } = require('../src/circuit');
+    let w = 1n;
+    for (let g = 2n; w === 1n; g++) w = F.pow(g, (F.ORDER - 1n) / 3n);
+    const alt = F.sub(F.mul(w, F.add(SECRET, MIMC_CONSTANTS[0])), MIMC_CONSTANTS[0]);
+    assert.notStrictEqual(UniGroth.mimcHash(alt), HASH);
+});
+
+test('in-circuit hash matches native hash', () => {
+    const compiled = hashCircuit();
+    const w = compiled.circuit.computeWitness({ secret: SECRET, expectedHash: HASH });
+    assert.strictEqual(compiled.circuit.checkWitness(w).valid, true);
+});

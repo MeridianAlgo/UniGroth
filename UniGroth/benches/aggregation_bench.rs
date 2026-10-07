@@ -15,7 +15,7 @@ use ark_snark::SNARK;
 use ark_std::{rand::SeedableRng, time::Instant};
 use std::hint::black_box;
 
-use unigroth::{aggregate_proofs, verify_aggregated, Groth16, SimExtractableProof};
+use unigroth::{aggregate_proofs, verify_aggregated, Groth16, Proof};
 
 fn sep() {
     println!("  {}", "-".repeat(72));
@@ -74,7 +74,7 @@ fn bench_aggregation_vs_individual() {
         };
 
         // Generate N SE proofs via the standard prove path
-        let se_proofs: Vec<SimExtractableProof<Bls12_381>> = (0..n_proofs)
+        let se_proofs: Vec<Proof<Bls12_381>> = (0..n_proofs)
             .map(|_| {
                 Groth16::<Bls12_381>::prove(
                     &pk,
@@ -103,10 +103,7 @@ fn bench_aggregation_vs_individual() {
         let individual_us = start.elapsed().as_micros() as f64 / iters as f64;
 
         // Extract inner Proof<E> for aggregation
-        let inner_proofs: Vec<_> = se_proofs
-            .iter()
-            .map(|se| se.groth16_proof.clone())
-            .collect();
+        let inner_proofs: Vec<_> = se_proofs.iter().cloned().collect();
 
         // Aggregated: aggregate + verify_aggregated
         let start = Instant::now();
@@ -181,7 +178,7 @@ fn bench_aggregation_throughput() {
     .unwrap();
 
     for n_proofs in [4usize, 8, 16] {
-        let se_proofs: Vec<SimExtractableProof<Bls12_381>> = (0..n_proofs)
+        let se_proofs: Vec<Proof<Bls12_381>> = (0..n_proofs)
             .map(|_| {
                 Groth16::<Bls12_381>::prove(
                     &pk,
@@ -195,10 +192,7 @@ fn bench_aggregation_throughput() {
             })
             .collect();
 
-        let inner_proofs: Vec<_> = se_proofs
-            .iter()
-            .map(|se| se.groth16_proof.clone())
-            .collect();
+        let inner_proofs: Vec<_> = se_proofs.iter().cloned().collect();
         let public_inputs: Vec<Vec<Fr>> = (0..n_proofs).map(|_| vec![c_val]).collect();
         let iters = 10;
 

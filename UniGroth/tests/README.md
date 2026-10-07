@@ -17,8 +17,8 @@ This is the canonical "does it actually work on a real circuit" test.
 ### `phrase_test.rs` — Advanced Features (1 test)
 
 Exercises the full UniGroth feature set in a single pipeline:
-- Universal setup (KZG SRS + circuit-agnostic key derivation)
-- Simulation-extractable proving (ROM blinding)
+- Universal setup (Phase 1/Phase 2 ceremony, key derivation, transcript checks); adversarial cases in `red_team_universal.rs`
+- Subversion-ZK rerandomization and subgroup-checked verification
 - Proof aggregation (N-to-1 compression)
 - Folding/IVC step execution
 - VK compression and streaming prover
