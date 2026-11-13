@@ -57,6 +57,8 @@ pub const KDF_MEMORY_KIB: u32 = 64 * 1024;
 pub const KDF_ITERATIONS: u32 = 3;
 /// Minimum salt length in bytes; use a random per-user salt stored with the commitment.
 pub const MIN_SALT_LEN: usize = 16;
+/// Compressed BN254 Groth16 proof: G1 (32) + G2 (64) + G1 (32).
+pub const PROOF_LEN: usize = 128;
 
 /// Argon2id(password, salt) → canonical, non-zero BN254 scalar.
 fn derive_secret_fr(password: &[u8], salt: &[u8]) -> Result<Fr, &'static str> {
@@ -212,6 +214,19 @@ pub fn prove(pk_bytes: &[u8], secret: &[u8], nonce_bytes: &[u8]) -> Result<Vec<u
 
 // ─── Verify ─────────────────────────────────────────────────────────────────
 
+/// Parse a compressed proof of exactly [`PROOF_LEN`] bytes.
+///
+/// The length is checked because the reader ignores trailing bytes, which
+/// would give one proof many accepted encodings. Unchecked deserialization is
+/// safe here: decompression yields on-curve points and the verifier itself
+/// rejects identity and wrong-subgroup points.
+fn parse_proof(bytes: &[u8]) -> Result<Proof<Bn254>, &'static str> {
+    if bytes.len() != PROOF_LEN {
+        return Err("proof must be exactly 128 bytes");
+    }
+    Proof::<Bn254>::deserialize_compressed_unchecked(bytes).map_err(|_| "proof deserialize failed")
+}
+
 /// Verify a proof for `AuthCircuit`.
 ///
 /// All field-element arguments are 32 big-endian bytes (BN254 scalar field).
@@ -225,10 +240,7 @@ pub fn verify(
 ) -> Result<bool, JsValue> {
     let vk = VerifyingKey::<Bn254>::deserialize_compressed(vk_bytes)
         .map_err(|e| JsValue::from_str(&alloc::format!("vk deserialize: {e}")))?;
-    // Unchecked is safe here: decompression yields on-curve points and the
-    // verifier itself rejects identity and wrong-subgroup points.
-    let proof = Proof::<Bn254>::deserialize_compressed_unchecked(proof_bytes)
-        .map_err(|e| JsValue::from_str(&alloc::format!("proof deserialize: {e}")))?;
+    let proof = parse_proof(proof_bytes).map_err(JsValue::from_str)?;
 
     let public = [
         be_bytes_to_fr(commitment_bytes).map_err(JsValue::from_str)?,
@@ -290,6 +302,13 @@ mod tests {
         bad[31] ^= 1; // still canonical, different field element
         let ok2 = verify(&vk_bytes, proof, c, &bad, &nonce_bytes).unwrap();
         assert!(!ok2);
+
+        // The proof has one encoding: its exact 128 bytes, nothing appended.
+        assert!(parse_proof(proof).is_ok());
+        let padded = [proof, &[0u8][..]].concat();
+        assert!(Proof::<Bn254>::deserialize_compressed_unchecked(&padded[..]).is_ok());
+        assert!(parse_proof(&padded).is_err());
+        assert!(parse_proof(&proof[..127]).is_err());
     }
 
     #[test]

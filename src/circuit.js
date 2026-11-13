@@ -107,11 +107,14 @@ class Circuit {
         return this.mul(this.mul(x4, x2), x);
     }
 
-    // built-in mimc7 hash (zk-friendly algebraic hash, 91 rounds = ceil(log7 ORDER))
+    // built-in mimc7 hash (zk-friendly algebraic hash, 91 rounds = ceil(log7 ORDER)).
+    // the rounds alone are a permutation anyone can run backwards (take 7th roots,
+    // subtract the constants), so the input is added to the output (feed-forward):
+    // hash(x) = perm(x) + x has no such inverse.
     hash(input) {
         let x = input;
         for (let i = 0; i < MIMC_ROUNDS; i++) x = this.pow7(this.addConst(x, MIMC_CONSTANTS[i]));
-        return x;
+        return this.add(x, input);
     }
 
     // compute the full witness given input values

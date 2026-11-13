@@ -48,7 +48,7 @@ impl<E: Pairing> UniversalSRS<E> {
         let setup_time = start_timer!(|| format!("KZG Universal Setup (degree {})", max_degree));
 
         // Generate toxic waste
-        let mut tau = E::ScalarField::rand(rng);
+        let mut tau: E::ScalarField = crate::nonzero_rand(rng);
         let g = E::G1::rand(rng);
         let h = E::G2::rand(rng);
 
@@ -122,7 +122,12 @@ impl<E: Pairing> UniversalSRS<E> {
         {
             return false;
         }
-        // e(Σρⁱ·g[i+1], h₀) = e(Σρⁱ·g[i], h₁)  and  e(g₀, Σρⁱ·h[i+1]) = e(g₁, Σρⁱ·h[i])
+        // With k = n − 1 ratios per group:
+        //   e(Σρⁱ·g[i+1], h₀) = e(Σρⁱ·g[i], h₁)          (G1 powers, weights ρ⁰…ρᵏ⁻¹)
+        //   e(g₀, Σρᵏ⁺ⁱ·h[i+1]) = e(g₁, Σρᵏ⁺ⁱ·h[i])      (G2 powers, weights ρᵏ…ρ²ᵏ⁻¹)
+        // The two sets of weights must not overlap. Sharing a power of ρ
+        // between a G1 ratio and a G2 ratio lets an error in one cancel an
+        // error in the other for every ρ, with no secret knowledge needed.
         let mut buf = Vec::new();
         self.serialize_compressed(&mut buf)
             .expect("serializing to a Vec cannot fail");
@@ -135,18 +140,18 @@ impl<E: Pairing> UniversalSRS<E> {
                 .finalize();
             E::ScalarField::from_le_bytes_mod_order(&d)
         };
-        let mut w = Vec::with_capacity(n);
+        let k = n - 1;
+        let mut w = Vec::with_capacity(2 * k);
         let mut acc = E::ScalarField::one();
-        for _ in 0..n {
+        for _ in 0..2 * k {
             w.push(acc);
             acc *= rho;
         }
-        let k = n - 1;
         let g_hi = E::G1::msm_unchecked(&g[1..], &w[..k]);
         let g_lo = E::G1::msm_unchecked(&g[..k], &w[..k]);
-        let h_hi = E::G2::msm_unchecked(&h[1..], &w[..k]);
-        let h_lo = E::G2::msm_unchecked(&h[..k], &w[..k]);
-        let g1 = E::G1::normalize_batch(&[g_hi, -g_lo, g[0] * rho, -(g[1] * rho)]);
+        let h_hi = E::G2::msm_unchecked(&h[1..], &w[k..]);
+        let h_lo = E::G2::msm_unchecked(&h[..k], &w[k..]);
+        let g1 = E::G1::normalize_batch(&[g_hi, -g_lo, g[0].into_group(), -g[1].into_group()]);
         let g2 = E::G2::normalize_batch(&[h[0].into_group(), h[1].into_group(), h_hi, h_lo]);
         E::multi_pairing(g1, g2).is_zero()
     }
@@ -486,7 +491,7 @@ mod tests {
         let srs = UniversalSRS::<Bn254>::setup(max_degree, &mut rng);
 
         // Create multiple polynomials
-        let polys = vec![
+        let polys = [
             DensePolynomial::rand(5, &mut rng),
             DensePolynomial::rand(7, &mut rng),
             DensePolynomial::rand(3, &mut rng),
@@ -554,6 +559,38 @@ mod tests {
         let point = Fr::rand(&mut rng);
         let (value, proof) = KZG::open(&srs, &poly, &point).unwrap();
         assert!(KZG::verify(&srs, &commitment, &point, &value, &proof));
+    }
+
+    /// The G1 and G2 ratio checks were once folded with overlapping powers of
+    /// one challenge (ρⁱ and ρⁱ⁺¹), so an error in a G1 power could cancel an
+    /// error in a G2 power for every ρ. The attacker needs no secret.
+    #[test]
+    fn test_srs_with_cancelling_g1_g2_errors_is_rejected() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let srs = UniversalSRS::<Bn254>::setup(5, &mut rng);
+        assert!(srs.is_well_formed());
+
+        let eps = Fr::from(7u64);
+        let mut bad = srs.clone();
+        bad.powers_of_g[3] =
+            (srs.powers_of_g[3].into_group() - srs.powers_of_g[0] * eps).into_affine();
+        bad.powers_of_h[2] =
+            (srs.powers_of_h[2].into_group() + srs.powers_of_h[0] * eps).into_affine();
+        assert!(
+            !bad.is_well_formed(),
+            "malformed SRS passed the shape check"
+        );
+        assert!(
+            UniversalSRS::<Bn254>::from_powers_of_tau(bad.powers_of_g, bad.powers_of_h).is_none()
+        );
+
+        // An error in one group alone was always caught; keep it that way.
+        let mut bad_g = srs.clone();
+        bad_g.powers_of_g[4] = srs.powers_of_g[3];
+        assert!(!bad_g.is_well_formed());
+        let mut bad_h = srs.clone();
+        bad_h.powers_of_h[5] = srs.powers_of_h[4];
+        assert!(!bad_h.is_well_formed());
     }
 
     #[test]

@@ -28,8 +28,9 @@
 //!
 //! ## Deployment notes
 //!
-//! * The server must issue a fresh, unpredictable nonce per login and must
-//!   never issue nonce 0, since `H(s, 0)` is the commitment itself.
+//! * The server must issue a fresh, unpredictable nonce per login. Nonce 0 is
+//!   unprovable: the circuit enforces `nonce ≠ 0`, since `H(s, 0)` is the
+//!   commitment itself.
 //! * Store and deduplicate nullifiers as canonical field elements (or their
 //!   canonical 32-byte encoding); Groth16 proofs are rerandomizable, so never
 //!   deduplicate on proof bytes.
@@ -45,17 +46,34 @@ use ark_relations::{
     lc,
 };
 use ark_std::{vec, vec::Vec};
+use sha2::{Digest, Sha256};
 
 /// Number of MiMC rounds (matches `LongsightF322p3`).
 pub const MIMC_ROUNDS: usize = 322;
 
 /// Deterministic round-constant generator. Public, fixed across all parties.
 ///
-/// Constants are derived from `MiMC-c_{i} = F::from(i * 2654435761 + 1)` —
-/// a Knuth-multiplicative spread that never collides modulo the prime.
+/// Constant `i` is SHA-256 in counter mode over a domain tag and `i`, 64 bytes
+/// reduced modulo the field ("nothing up my sleeve", and statistically
+/// uniform). MiMC's analysis assumes random-looking constants; the earlier
+/// arithmetic progression `i·2654435761 + 1` was not that.
+///
+/// Changing these constants changes every commitment, nullifier and key of the
+/// auth circuit.
 pub fn mimc_round_constants<F: PrimeField>() -> Vec<F> {
     (0..MIMC_ROUNDS)
-        .map(|i| F::from((i as u64).wrapping_mul(2_654_435_761).wrapping_add(1)))
+        .map(|i| {
+            let mut wide = [0u8; 64];
+            for (block, half) in wide.chunks_mut(32).enumerate() {
+                let digest = Sha256::new()
+                    .chain_update(crate::config::DOMAIN_MIMC_CONSTANTS)
+                    .chain_update((i as u64).to_le_bytes())
+                    .chain_update([block as u8])
+                    .finalize();
+                half.copy_from_slice(&digest);
+            }
+            F::from_le_bytes_mod_order(&wide)
+        })
         .collect()
 }
 
@@ -232,6 +250,21 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for AuthCircuit<F> {
         let nonce_var =
             cs.new_input_variable(|| self.nonce.ok_or(SynthesisError::AssignmentMissing))?;
 
+        // ── nonce ≠ 0 ───────────────────────────────────────────────────
+        // H(s, 0) is the commitment, so a proof for nonce 0 would "spend" the
+        // commitment as a nullifier. nonce · nonce⁻¹ = 1 has no solution at 0.
+        let nonce_inv = self.nonce.map(|n| n.inverse());
+        let nonce_inv_var = cs.new_witness_variable(|| {
+            nonce_inv
+                .ok_or(SynthesisError::AssignmentMissing)?
+                .ok_or(SynthesisError::DivisionByZero)
+        })?;
+        cs.enforce_r1cs_constraint(
+            || lc!() + nonce_var,
+            || lc!() + nonce_inv_var,
+            || lc!() + Variable::One,
+        )?;
+
         // ── Private witness ─────────────────────────────────────────────
         let secret_var =
             cs.new_witness_variable(|| self.secret.ok_or(SynthesisError::AssignmentMissing))?;
@@ -336,6 +369,39 @@ mod tests {
         let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut r).unwrap();
         let ok = Groth16::<Bn254>::verify(&vk, &public, &proof).unwrap();
         assert!(!ok, "tampered nullifier must be rejected");
+    }
+
+    #[test]
+    fn zero_nonce_is_unprovable() {
+        use ark_relations::gr1cs::ConstraintSystem;
+        let constants = mimc_round_constants::<Fr>();
+        let secret = Fr::from(77u64);
+
+        // The honest prover cannot even build a witness for nonce 0.
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        let zero = AuthCircuit::new(secret, Fr::zero(), constants.clone());
+        assert_eq!(zero.nullifier, zero.commitment);
+        assert!(zero.generate_constraints(cs).is_err());
+
+        // A non-zero nonce satisfies the circuit.
+        let cs = ConstraintSystem::<Fr>::new_ref();
+        AuthCircuit::new(secret, Fr::from(5u64), constants)
+            .generate_constraints(cs.clone())
+            .unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn round_constants_are_hash_derived() {
+        let c = mimc_round_constants::<Fr>();
+        assert_eq!(c.len(), MIMC_ROUNDS);
+        assert_eq!(c, mimc_round_constants::<Fr>());
+        // No repeats, and not an arithmetic progression.
+        let mut sorted = c.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), MIMC_ROUNDS);
+        assert_ne!(c[2] - c[1], c[1] - c[0]);
     }
 
     #[test]

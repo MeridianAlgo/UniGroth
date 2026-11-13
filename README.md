@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tests-288%20Rust%20%2B%204%20JS-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-316%20Rust%20%2B%207%20JS-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/clippy-0%20warnings-brightgreen" alt="Clippy">
   <img src="https://img.shields.io/badge/rust-stable%201.70%2B-orange" alt="Rust">
   <img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue" alt="License">
@@ -99,7 +99,7 @@ let ok = verify_aggregated(&vk, &public_inputs_per_proof, &agg);
 
 The bundle is O(N): it stores all N proofs. It saves verifier time, not proof size.
 
-`batch_verify_optimized(&pvk, &proofs_and_inputs, &mut rng)` does the same with verifier-chosen randomness.
+`batch_verify_optimized(&pvk, &proofs_and_inputs, &mut rng)` does the same with verifier-chosen randomness. Both reject an empty batch: "nothing was checked" never reads as "all verified".
 
 ### Batch proving
 
@@ -127,16 +127,35 @@ let ok = verify_with_compressed_vk(&cvk, &opening, &proof, &public_inputs);
 
 - `PoseidonHashCircuit`, `MerkleProofCircuit`: Poseidon with every S-box constrained, Grain-LFSR round constants and MDS matrix.
 - `RangeCheckCircuit`: bit decomposition, limited below the field size so it cannot wrap.
-- `AuthCircuit`: MiMC commitment + nullifier for login / anti-replay (see [`wasm-auth`](UniGroth/wasm-auth/README.md) for browser proving).
+- `AuthCircuit`: MiMC commitment + nullifier for login / anti-replay, with hash-derived round constants and `nonce ≠ 0` enforced in the circuit (see [`wasm-auth`](UniGroth/wasm-auth/README.md) for browser proving).
 - `CircuitBuilder`: add / mul / assert / boolean / conditional select without writing raw R1CS.
 
 ### On-chain and browser verifiers
 
-`generate_solidity_verifier(&vk, "MyVerifier")` emits a BN254 contract using the EIP-196/197 precompiles; `generate_wasm_verifier(&vk, "my_circuit")` emits a wasm-bindgen crate. Names must be plain identifiers, and generated verifiers reject non-canonical inputs and identity points. Both check the classical Groth16 proof only.
+`generate_solidity_verifier(&vk, "MyVerifier")` emits a BN254 contract using the EIP-196/197 precompiles; `generate_wasm_verifier(&vk, "my_circuit")` emits a wasm-bindgen crate (feature `solidity`). Both check the classical Groth16 proof only.
+
+- Names must be plain identifiers, and the key must pass `verifying_key_valid` (the generators panic otherwise).
+- The contract requires public inputs below the scalar modulus, proof coordinates below the base-field modulus (one encoding per proof), non-identity proof points and points on their curve; the pairing precompile rejects G2 points outside the subgroup. Malformed calldata reverts, a wrong proof returns `false`.
+- `verifyProof(a, b, c, input)` takes `b` as `[[x.c1, x.c0], [y.c1, y.c0]]` (EIP-197 order, as in snarkjs calldata).
+- The WASM verifier takes exact-length compressed points and canonical 32-byte inputs.
+
+The generated contract is compiled with solc and executed in an EVM by `UniGroth/tests/evm/run.mjs` (also a CI job). It checks that real proofs are accepted, that a wrong input or a wrong proof point returns `false`, and that aliased inputs (`x + r`), non-canonical coordinates (`y + q`), identity points, off-curve points and off-subgroup G2 points revert:
+
+```bash
+cd UniGroth
+UNIGROTH_EVM_FIXTURE_DIR=tests/evm/fixture cargo test --features solidity --test solidity_verifier
+cd tests/evm && npm ci && node run.mjs fixture
+```
+
+Verification costs about 207k gas with two public inputs (solc 0.8.38, optimizer on, execution gas only). A malformed proof (non-canonical, identity or off-curve point) reverts for under 10k gas. A G2 point that is on the curve but outside the subgroup makes the pairing precompile fail, which burns the gas forwarded to it; that cost falls on whoever submits it.
+
+### Checking a verifying key
+
+Validated deserialization checks that key points are on the curve and in the subgroup, but it accepts the identity. A key with `δ·H = 0` or `γ·H = 0` drops a term from the verification equation. Call `verifying_key_valid(&vk)` once when a key arrives from outside (a registry, a config file, another party).
 
 ### Public-input proof of knowledge
 
-`prove_public_input_pok` / `verify_public_input_pok`: a Schnorr proof bound by Fiat-Shamir to one specific Groth16 proof.
+`prove_public_input_pok` / `verify_public_input_pok`: a Schnorr tag bound by Fiat-Shamir to one verifying key, one input vector and one Groth16 proof. It is a consistency check, **not authentication**: the "witness" is the public inputs, so anyone who can see a proof and its inputs can compute a valid tag. Groth16 itself already binds a proof to its inputs.
 
 ### KZG and IPA polynomial commitments
 
@@ -162,7 +181,9 @@ See [docs/post-quantum.md](docs/post-quantum.md) for the post-quantum roadmap.
 
 ## Security
 
-v0.8.0 is a security release. It fixes forgeable verifiers (aggregation, VK compression, the Poseidon and Merkle circuits, the SAP reduction, KZG batching, IPA, Lasso), a hardcoded setup seed in `auth_setup`, clock-seeded batch proving, and replay via non-canonical nullifier encodings in `wasm-auth`. Full list: [CHANGELOG](UniGroth/CHANGELOG.md).
+v0.9.0 follows three red-team passes. On top of v0.8.0 it fixes a KZG SRS check that accepted tampered transcripts, a Solidity generator that emitted unusable keys, and the remaining items in the [CHANGELOG](UniGroth/CHANGELOG.md); auth-circuit keys and commitments from v0.8.0 must be regenerated.
+
+v0.8.0 was a security release. It fixed forgeable verifiers (aggregation, VK compression, the Poseidon and Merkle circuits, the SAP reduction, KZG batching, IPA, Lasso), a hardcoded setup seed in `auth_setup`, clock-seeded batch proving, and replay via non-canonical nullifier encodings in `wasm-auth`. Full list: [CHANGELOG](UniGroth/CHANGELOG.md).
 
 Guarantees the core relies on:
 
@@ -170,13 +191,15 @@ Guarantees the core relies on:
 - Deserialization with validation enforces on-curve and subgroup checks.
 - Universal setup: Phase 1 and Phase 2 contributions carry Schnorr proofs of knowledge and are checked by `verify_transcript` / `verify_keys`; secure if one contributor per phase was honest.
 - Every verifier (single, batch, aggregate) rejects wrong input counts and identity, off-curve or wrong-subgroup proof points, even for proofs built in memory.
+- Verifying keys are trusted input to the verifiers. Check keys from outside with `verifying_key_valid`.
+- KZG / powers-of-τ transcripts are accepted only if every consecutive pair in G1 and in G2 has the same ratio τ (`UniversalSRS::is_well_formed`, `UniversalParams::is_well_formed`).
 - Setup trapdoors are zeroized on a best-effort basis; Rust does not guarantee that no copies remain.
 
 Report vulnerabilities privately through a GitHub security advisory on this repository.
 
 ## JavaScript reference implementation
 
-`src/` contains a small JavaScript R1CS toolkit (MiMC7 circuit builder, prover, verifier). **It is not zero-knowledge:** proofs carry the full witness, and the verifier re-checks every constraint. Use it to learn or debug circuits; use the Rust library, or `phrase.circom` with snarkjs, for private proofs. Run `npm test`.
+`src/` contains a small JavaScript R1CS toolkit (MiMC7 circuit builder with a feed-forward hash, prover, verifier). **It is not zero-knowledge:** proofs carry the full witness, and the verifier re-checks every constraint. Use it to learn or debug circuits; use the Rust library, or `phrase.circom` with snarkjs, for private proofs. Run `npm test`.
 
 ## Supported curves
 

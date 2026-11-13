@@ -42,7 +42,24 @@ impl<F: PrimeField> PoseidonParams<F> {
     /// rounds, with round constants and MDS matrix from the reference Grain
     /// LFSR generator. The x⁵ S-box requires gcd(5, p − 1) = 1, which holds
     /// for the BN254 and BLS12-381 scalar fields.
+    ///
+    /// Not interoperable with circomlib's Poseidon: the constants come from
+    /// arkworks' generator and the state layout is `[left, right, 0]` with
+    /// output `state[0]`, so the same inputs give a different digest there.
+    ///
+    /// # Panics
+    /// If 5 divides p − 1 (e.g. the BLS12-377 scalar field). x⁵ is then not a
+    /// permutation and the hash loses collision resistance, so the parameters
+    /// are refused rather than returned.
     pub fn default_2_to_1() -> Self {
+        let p_mod_5 = F::MODULUS
+            .to_bytes_be()
+            .iter()
+            .fold(0u32, |acc, b| (acc * 256 + u32::from(*b)) % 5);
+        assert!(
+            p_mod_5 != 1,
+            "x^5 Poseidon needs gcd(5, p - 1) = 1; this field needs a different S-box"
+        );
         let (full_rounds, partial_rounds) = (
             crate::config::POSEIDON_FULL_ROUNDS,
             crate::config::POSEIDON_PARTIAL_ROUNDS,

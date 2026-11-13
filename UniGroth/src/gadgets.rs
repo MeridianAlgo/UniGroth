@@ -1,8 +1,12 @@
-//! # ZK Gadget Library
+//! # ZK Gadget Library (cost models)
 //!
-//! High-level constraint gadgets for composing circuits in UniGroth.
+//! **These types generate no constraints.** Each one is a description of a
+//! gadget (constraint count, wire layout, a one-line summary) for sizing a
+//! circuit before it is written. Nothing here verifies a signature, a Merkle
+//! path or a proof. Real gadgets live in [`crate::circuits`], [`crate::auth`]
+//! and, with the `r1cs` feature, `crate::constraints`.
 //!
-//! Each gadget documents its constraint count, wire layout, and security model.
+//! Each entry documents its estimated constraint count and wire layout.
 //! Gadgets are composable: e.g. a `RecursiveVerifierGadget` internally uses
 //! `PoseidonHashGadget` for the Fiat-Shamir transcript.
 //!

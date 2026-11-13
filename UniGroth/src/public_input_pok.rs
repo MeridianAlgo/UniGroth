@@ -1,40 +1,35 @@
 //! # Proof of Knowledge for Public Inputs
 #![allow(missing_docs)]
 //!
-//! Adds a Schnorr-style PoK alongside the Groth16 proof to bind the prover
-//! to their specific public input values at proof-generation time.
+//! A Schnorr-style tag over `(verifying key, public inputs, Groth16 proof)`.
 //!
-//! ## Motivation
+//! ## What this is, and is not
 //!
-//! In vanilla Groth16, the verifier receives the proof and public inputs separately
-//! and simply checks the pairing equation. There is no cryptographic guarantee that
-//! the *prover* committed to those exact inputs when they computed the proof; an
-//! adversary who can influence which inputs the verifier uses could potentially
-//! substitute them post-hoc.
+//! Groth16 already binds a proof to its public inputs: changing any input
+//! makes the pairing check fail. This module adds nothing to that, and the
+//! tag is **not authentication**. The "witness" is the public-input vector,
+//! which the verifier (and everyone else) knows, so anyone who sees a proof
+//! and its inputs can compute a valid tag for it, including for a
+//! rerandomized copy of the proof. Do not use it for replay protection or to
+//! identify the prover; put a nonce or sender in the public inputs instead.
 //!
-//! This module adds a multi-scalar Schnorr PoK that forces the prover to commit
-//! to their input vector `{x₁, …, xₙ}` during proving, which the verifier can
-//! check alongside the Groth16 verification equation.
+//! It is kept as a consistency check for transports that carry the proof and
+//! the inputs separately, and as a reference Fiat-Shamir Schnorr protocol.
 //
 // Thank you Claude for teaching me ts. Thank you Ajak M., Akshath R., and Eshan K. to make sure the rust is valid and optimized.
 //!
-//!
-//!
-//!
 //! ## Protocol (Fiat-Shamir)
 //!
-//! **Statement**: `g_ic = γ₀ + Σ xᵢ · γᵢ` where `{γᵢ}` = `vk.gamma_abc_g1`
-//! **Witness**: `{x₁, …, xₙ}` — the public inputs
+//! **Statement**: `X = Σ xᵢ · γᵢ` where `{γᵢ}` = `vk.gamma_abc_g1[1..]`
 //!
-//! 1. Prover samples random `{rᵢ}`, computes commitment `R = Σ rᵢ · γᵢ₊₁`
-//! 2. Challenge `c = H("unigroth-pok-v1" || R || x₁ || … || xₙ || proof.a || proof.b || proof.c)`
+//! 1. Prover samples random `{rᵢ}`, computes commitment `R = Σ rᵢ · γᵢ`
+//! 2. Challenge `c = H(tag || vk || R || x₁ … xₙ || proof)`
 //! 3. Responses `sᵢ = rᵢ + c · xᵢ`
 //!
-//! **Verifier check**: `Σ sᵢ · γᵢ₊₁ == R + c · Σ xᵢ · γᵢ₊₁`
+//! **Verifier check**: `Σ sᵢ · γᵢ == R + c · X`
 //!
-//! Binding the challenge to the proof elements ties the PoK to a specific proof,
-//! preventing detachment and reuse with a different Groth16 proof.
-//! Imports
+//! The challenge covers the verifying key (so a tag cannot be moved to another
+//! key with the same bases), the inputs and the proof points.
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -43,13 +38,13 @@ use sha2::{Digest, Sha256};
 
 use crate::{Proof, VerifyingKey};
 
-/// Schnorr proof-of-knowledge binding the prover to their public input choices.
+/// Schnorr tag over a verifying key, public inputs and a Groth16 proof.
 /// Produced by [`prove_public_input_pok`] and checked by [`verify_public_input_pok`].
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PublicInputPoK<E: Pairing> {
     /// Commitment `R = Σ rᵢ · γᵢ₊₁` (G₁ element, one per public input)
     pub commitment: E::G1Affine,
-    /// Fiat-Shamir challenge `c = H(R, x₁…xₙ, proof.a, proof.b, proof.c)`
+    /// Fiat-Shamir challenge `c = H(tag, vk, R, x₁…xₙ, proof)`
     pub challenge: E::ScalarField,
     /// Responses `sᵢ = rᵢ + c · xᵢ` for each public input `xᵢ`
     pub responses: Vec<E::ScalarField>,
@@ -74,10 +69,10 @@ impl<'de, E: Pairing> ::serde::Deserialize<'de> for PublicInputPoK<E> {
     }
 }
 
-/// Generate a Schnorr PoK binding the prover to the given public inputs.
-/// Call after generating a Groth16 proof. The PoK is sent alongside the proof
-/// and allows the verifier to confirm the prover knew the exact public inputs
-/// `{xᵢ}` at proving time.
+/// Generate the Schnorr tag for `proof` and its public inputs.
+///
+/// See the module docs: anyone who knows the public inputs can produce this,
+/// so it authenticates nobody.
 /// # Panics
 /// Panics if `public_inputs.len() + 1 != vk.gamma_abc_g1.len()`.
 pub fn prove_public_input_pok<E: Pairing, R: Rng>(
@@ -105,7 +100,7 @@ where
     let commitment = E::G1::msm(bases, &blinding).unwrap().into_affine();
 
     // Step 3: Fiat-Shamir challenge
-    let challenge = fiat_shamir_challenge::<E>(&commitment, public_inputs, proof);
+    let challenge = fiat_shamir_challenge::<E>(vk, &commitment, public_inputs, proof);
 
     // Step 4: responses sᵢ = rᵢ + c · xᵢ
     let responses: Vec<E::ScalarField> = blinding
@@ -121,11 +116,10 @@ where
     }
 }
 
-/// Verify a Schnorr PoK alongside a Groth16 proof.
-/// Returns `true` iff the PoK is valid, meaning the prover demonstrably knew
-/// the exact public inputs `{xᵢ}` at the time the proof was generated.
-/// This check is independent of — and should be used *in addition to* —
-/// the standard Groth16 verification equation.
+/// Verify a Schnorr tag for `proof` and `public_inputs` under `vk`.
+///
+/// This does **not** verify the Groth16 proof; run the normal verifier too.
+/// A valid tag only shows that its author knew the public inputs.
 pub fn verify_public_input_pok<E: Pairing>(
     vk: &VerifyingKey<E>,
     public_inputs: &[E::ScalarField],
@@ -141,7 +135,7 @@ where
     }
 
     // Recompute challenge and reject immediately if it doesn't match.
-    let expected_challenge = fiat_shamir_challenge::<E>(&pok.commitment, public_inputs, proof);
+    let expected_challenge = fiat_shamir_challenge::<E>(vk, &pok.commitment, public_inputs, proof);
     if expected_challenge != pok.challenge {
         return false;
     }
@@ -158,10 +152,12 @@ where
     lhs == rhs
 }
 
-/// Compute the Fiat-Shamir challenge.
+/// Fiat-Shamir challenge `H(tag || vk || R || x₁ … xₙ || proof)`.
 ///
-/// `H("unigroth-pok-v1" || R || x₁ || … || xₙ || proof.a || proof.b || proof.c)`
+/// Every part is length-delimited by its canonical encoding (the input vector
+/// carries its length), so distinct statements never hash the same bytes.
 fn fiat_shamir_challenge<E: Pairing>(
+    vk: &VerifyingKey<E>,
     commitment: &E::G1Affine,
     public_inputs: &[E::ScalarField],
     proof: &Proof<E>,
@@ -169,36 +165,14 @@ fn fiat_shamir_challenge<E: Pairing>(
 where
     E::ScalarField: PrimeField,
 {
-    let mut hasher = Sha256::new();
-    hasher.update(b"unigroth-pok-v1");
-
     let mut buf = Vec::new();
-
-    // Commitment R
-    commitment.serialize_compressed(&mut buf).unwrap();
-    hasher.update(&buf);
-
-    // Public inputs x₁ … xₙ
-    for x in public_inputs {
-        buf.clear();
-        x.serialize_uncompressed(&mut buf).unwrap();
-        hasher.update(&buf);
-    }
-
-    // Proof elements — binds PoK to this specific proof
-    buf.clear();
-    proof.a.serialize_compressed(&mut buf).unwrap();
-    hasher.update(&buf);
-
-    buf.clear();
-    proof.b.serialize_compressed(&mut buf).unwrap();
-    hasher.update(&buf);
-
-    buf.clear();
-    proof.c.serialize_compressed(&mut buf).unwrap();
-    hasher.update(&buf);
-
-    let hash = hasher.finalize();
+    (vk, commitment, public_inputs, proof)
+        .serialize_compressed(&mut buf)
+        .expect("serializing to a Vec cannot fail");
+    let hash = Sha256::new()
+        .chain_update(crate::config::DOMAIN_PUBLIC_INPUT_POK)
+        .chain_update(&buf)
+        .finalize();
     E::ScalarField::from_le_bytes_mod_order(&hash)
 }
 
@@ -355,5 +329,22 @@ mod tests {
             !verify_public_input_pok::<Bn254>(&vk, &public_inputs, &proof2, &pok),
             "PoK tied to proof1 must not verify against proof2"
         );
+    }
+
+    /// Two keys can share their IC bases (same circuit, different δ from
+    /// another Phase 2). The tag must not carry over from one to the other.
+    #[test]
+    fn test_pok_is_bound_to_the_verifying_key() {
+        let (mut rng, vk, proof, public_inputs) = setup_prove(5);
+        let pok = prove_public_input_pok::<Bn254, _>(&vk, &public_inputs, &proof, &mut rng);
+        let mut other = vk.clone();
+        other.delta_g2 = (other.delta_g2 * Fr::from(3u64)).into();
+        assert_eq!(other.gamma_abc_g1, vk.gamma_abc_g1);
+        assert!(!verify_public_input_pok::<Bn254>(
+            &other,
+            &public_inputs,
+            &proof,
+            &pok
+        ));
     }
 }

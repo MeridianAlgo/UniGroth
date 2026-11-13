@@ -13,7 +13,7 @@ class UniGroth {
             zeroKnowledge: false,
             field: 'bn254-scalar',
             fieldOrder: F.ORDER.toString(),
-            hashFunction: 'mimc7-bn254-91r',
+            hashFunction: 'mimc7-bn254-91r-ff',
         };
     }
 
@@ -55,11 +55,13 @@ class UniGroth {
     // compute mimc hash outside of a circuit (for generating public inputs)
     static mimcHash(input) {
         const { MIMC_CONSTANTS, MIMC_ROUNDS } = require('./circuit');
-        let x = F.toBigInt(input);
+        const start = F.toBigInt(input);
+        let x = start;
         for (let i = 0; i < MIMC_ROUNDS; i++) {
             x = F.pow(F.add(x, MIMC_CONSTANTS[i]), 7n);
         }
-        return x;
+        // feed-forward: without it the rounds can be run backwards from the output
+        return F.add(x, start);
     }
 
     // utility: create a new circuit
