@@ -129,7 +129,7 @@ Server-side rules:
 | field elem   | 32 B       | canonical big-endian BN254 scalar (< r)   |
 | `secret`     | 32 B       | `derive_secret` output (Argon2id → BN254) |
 | `salt`       | ≥ 16 B     | random per user, stored with commitment   |
-| `nonce`      | 32 B       | canonical, non-zero BN254 scalar          |
+| `nonce`      | 32 B       | canonical, non-zero BN254 scalar (enforced in-circuit)|
 
 ## Soundness
 

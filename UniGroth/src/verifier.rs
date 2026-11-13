@@ -32,6 +32,25 @@ pub fn proof_points_valid<E: Pairing>(proof: &Proof<E>) -> bool {
     !proof.a.is_zero() && !proof.b.is_zero() && !proof.c.is_zero() && proof.check().is_ok()
 }
 
+/// Check that a verifying key is usable: it has the constant-term IC point,
+/// α, β, γ and δ are not the identity, and every point is on the curve and in
+/// the prime-order subgroup.
+///
+/// The verifiers do not run this on every call (a key is checked once, not
+/// per proof). Run it when a key arrives from outside: a key with `δ·H = 0`
+/// or `γ·H = 0` drops the `C` or public-input term from the pairing equation,
+/// so proofs under it say nothing about the statement. Validated
+/// deserialization covers the curve and subgroup checks but accepts identity
+/// points.
+pub fn verifying_key_valid<E: Pairing>(vk: &VerifyingKey<E>) -> bool {
+    !vk.gamma_abc_g1.is_empty()
+        && !vk.alpha_g1.is_zero()
+        && !vk.beta_g2.is_zero()
+        && !vk.gamma_g2.is_zero()
+        && !vk.delta_g2.is_zero()
+        && vk.check().is_ok()
+}
+
 impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// Prepare proof inputs for use with [`verify_proof_with_prepared_inputs`],
     /// wrt the prepared verification key `pvk` and instance public inputs.

@@ -28,6 +28,10 @@ pub const DOMAIN_AGGREGATE: &[u8] = b"unigroth-aggregate-v2";
 pub const DOMAIN_KZG_BATCH: &[u8] = b"unigroth-kzg-batch-v1";
 /// Domain tag for the IC-vector digest in `key_compression`.
 pub const DOMAIN_VK_COMPRESSION: &[u8] = b"unigroth-vk-compression-v2";
+/// Domain tag for the public-input Schnorr tag in `public_input_pok`.
+pub const DOMAIN_PUBLIC_INPUT_POK: &[u8] = b"unigroth-pok-v2";
+/// Domain tag for the MiMC round constants of the auth circuit.
+pub const DOMAIN_MIMC_CONSTANTS: &[u8] = b"unigroth-mimc-v2";
 /// Domain tag for the IPA transcript.
 pub const DOMAIN_IPA: &[u8] = b"unigroth-ipa-v2";
 /// Domain tag for Plookup / LogUp Fiat-Shamir challenges.
@@ -36,6 +40,11 @@ pub const DOMAIN_LOOKUP: &[u8] = b"unigroth-lookup-v1";
 pub const DOMAIN_LASSO: &[u8] = b"lasso-v2";
 /// Domain tag for recursive-chain entries.
 pub const DOMAIN_RECURSION_CHAIN: &[u8] = b"UniGroth-Proof-Commit-v2";
+
+/// Commit of `arkworks-rs/algebra` this crate is built and tested against
+/// (the one in `Cargo.lock`). Generated verifier crates pin it, so they do not
+/// build against whatever the repository's HEAD happens to be.
+pub const ARKWORKS_ALGEBRA_REV: &str = "598a5fbabc1903c7bab6668ef8812bfdf2158723";
 
 /// Public-input count at which the verifier switches from direct scalar
 /// multiplication to a Pippenger MSM for the input term.

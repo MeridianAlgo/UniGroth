@@ -264,9 +264,11 @@ where
                 g_ic += encoded_input_i;
                 input_len += 1;
             }
-            // Check that the input and the query in the verification are of the
-            // same length.
-            assert!(input_len == circuit_pvk.gamma_abc_g1.len() && public_inputs.next().is_none());
+            // The input and the query must have the same length. An error,
+            // not a panic: the caller may be synthesizing someone else's key.
+            if input_len != circuit_pvk.gamma_abc_g1.len() || public_inputs.next().is_some() {
+                return Err(SynthesisError::Unsatisfiable);
+            }
             g_ic
         };
 
@@ -288,7 +290,16 @@ where
         };
 
         let test = P::final_exponentiation(&test_exp)?;
-        test.is_eq(&circuit_pvk.alpha_g1_beta_g2)
+        // As in the native verifier: an identity A, B or C is never accepted.
+        // (Subgroup membership is enforced when the proof is allocated with
+        // `AllocVar`; `new_proof_unchecked` skips it and is for trusted proofs.)
+        let pairing_ok = test.is_eq(&circuit_pvk.alpha_g1_beta_g2)?;
+        Boolean::kary_and(&[
+            pairing_ok,
+            !proof.a.is_zero()?,
+            !proof.b.is_zero()?,
+            !proof.c.is_zero()?,
+        ])
     }
 
     #[tracing::instrument(target = "r1cs", skip(circuit_vk, x, proof))]
@@ -330,7 +341,7 @@ where
             let pvk = pvk.borrow();
             let alpha_g1_beta_g2 = P::GTVar::new_variable(
                 ark_relations::ns!(cs, "alpha_g1_beta_g2"),
-                || Ok(pvk.alpha_g1_beta_g2.clone()),
+                || Ok(pvk.alpha_g1_beta_g2),
                 mode,
             )?;
 
@@ -517,18 +528,18 @@ mod test {
         c.mul_assign(&b);
 
         let circ = Circuit {
-            a: Some(a.clone()),
-            b: Some(b.clone()),
+            a: Some(a),
+            b: Some(b),
             num_constraints: 100,
             num_variables: 25,
         };
 
         let (pk, vk) = TestSNARK::circuit_specific_setup(circ, &mut rng).unwrap();
 
-        let proof = TestSNARK::prove(&pk, circ.clone(), &mut rng).unwrap();
+        let proof = TestSNARK::prove(&pk, circ, &mut rng).unwrap();
 
         assert!(
-            TestSNARK::verify(&vk, &vec![c], &proof).unwrap(),
+            TestSNARK::verify(&vk, &[c], &proof).unwrap(),
             "The native verification check fails."
         );
 

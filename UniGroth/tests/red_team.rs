@@ -176,3 +176,57 @@ fn batch_weights_cannot_be_predicted_from_a_weak_rng() {
     let mut verifier_rng = StdRng::seed_from_u64(99);
     assert!(!batch_verify_optimized(&pvk, &items, &mut verifier_rng).unwrap());
 }
+
+#[test]
+fn empty_batches_are_not_vacuously_accepted() {
+    let (mut rng, _pk, pvk) = setup_square(41);
+    assert!(!batch_verify_optimized(&pvk, &[], &mut rng).unwrap());
+    assert!(!verify_aggregated(&pvk.vk, &[], &aggregate_proofs(&[])));
+}
+
+/// A key with δ·H = 0 or γ·H = 0 drops a term from the verification equation.
+/// Validated deserialization accepts the identity, so the key check must not.
+#[test]
+fn degenerate_verifying_keys_are_flagged() {
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use unigroth::{verifying_key_valid, VerifyingKey};
+
+    let (_rng, _pk, pvk) = setup_square(43);
+    let vk = pvk.vk;
+    assert!(verifying_key_valid(&vk));
+
+    for slot in 0..5 {
+        let mut bad = vk.clone();
+        match slot {
+            0 => bad.alpha_g1 = G1Affine::zero(),
+            1 => bad.beta_g2 = G2Affine::zero(),
+            2 => bad.gamma_g2 = G2Affine::zero(),
+            3 => bad.delta_g2 = G2Affine::zero(),
+            _ => bad.gamma_abc_g1.clear(),
+        }
+        let mut bytes = Vec::new();
+        bad.serialize_compressed(&mut bytes).unwrap();
+        let reloaded = VerifyingKey::<Bn254>::deserialize_compressed(&bytes[..]).unwrap();
+        assert!(!verifying_key_valid(&reloaded), "slot {slot}");
+    }
+
+    let mut off_subgroup = vk.clone();
+    off_subgroup.delta_g2 = g2_off_subgroup(&mut StdRng::seed_from_u64(5));
+    assert!(!verifying_key_valid(&off_subgroup));
+}
+
+/// `num_public_inputs` is attacker-controlled once a compressed key is
+/// deserialized; the length comparison must not overflow.
+#[test]
+fn compressed_key_with_absurd_input_count_is_rejected() {
+    use unigroth::{compress_vk, create_vk_opening, verify_with_compressed_vk};
+
+    let (mut rng, pk, pvk) = setup_square(47);
+    let x = Fr::from(8u64);
+    let proof = Groth16::<Bn254>::prove(&pk, Square(Some(x)), &mut rng).unwrap();
+    let opening = create_vk_opening(&pvk.vk);
+    let mut cvk = compress_vk(&pvk.vk);
+    assert!(verify_with_compressed_vk(&cvk, &opening, &proof, &[x * x]));
+    cvk.num_public_inputs = usize::MAX;
+    assert!(!verify_with_compressed_vk(&cvk, &opening, &proof, &[x * x]));
+}

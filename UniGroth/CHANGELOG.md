@@ -1,6 +1,36 @@
 # CHANGELOG
 
-## Unreleased — red-team hardening and simplification
+## UniGroth v0.9.0 (November 2026) — red-team hardening and simplification
+
+Breaking API and wire-format changes are marked **(breaking)**. Auth-circuit keys, commitments and nullifiers made with v0.8.0 do not work with v0.9.0.
+
+### Third red-team pass (verifier generators, SRS validation)
+
+- **KZG SRS validation (soundness)** — `UniversalSRS::is_well_formed` folded the G1 ratio checks with weights ρⁱ and the G2 ratio checks with ρⁱ⁺¹. Sharing powers let an error in a G1 power cancel an error in a G2 power for every ρ: `g[3] − ε·g[0]` together with `h[2] + ε·h[0]` passed `from_powers_of_tau` and `verify_update` with no secret knowledge, giving an SRS whose G1 powers are not powers of τ. The two checks now use disjoint powers (ρ⁰…ρᵏ⁻¹ and ρᵏ…ρ²ᵏ⁻¹). `UniversalParams::is_well_formed` (the Groth16 ceremony) was not affected: it already folds with an independent challenge.
+- **Solidity generator (broken output)** — coordinates were copied out of arkworks' uncompressed point bytes, whose top bits hold a sign flag. About half of all points got a y coordinate ≥ q, which the EVM precompiles reject, so most generated contracts could not verify any proof. Coordinates now come from the field elements. G2 array literals are cast to `uint256` (a coordinate below 2²⁴⁸ would have typed the array `uint248[2]`, a compile error).
+- **Solidity verifier hardening** — the contract now requires proof coordinates below q (previously `A.y + q` was accepted as a second encoding) and rejects identity proof points, as the README already claimed. Circuits without public inputs get `verifyProof(a, b, c)` instead of an invalid `uint256[0]` parameter.
+- **`verifying_key_valid`** — new check for keys from outside: IC present, α, β, γ, δ non-identity, all points in the subgroup. The Solidity and WASM generators refuse keys that fail it.
+- **WASM verifier generator** — exact-length proof points (no trailing bytes); identity key points are no longer emitted as all-zero bytes that fail to deserialize.
+- **Batch verification (breaking)** — `batch_verify_optimized` returns `Ok(false)` for an empty batch instead of `Ok(true)`, matching `verify_aggregated`.
+- **Public-input PoK (breaking)** — the challenge now covers the verifying key (tag `unigroth-pok-v2`); old tags no longer verify. The docs now say that the tag is not authentication: anyone who knows the public inputs can produce it.
+- **Key compression** — `verify_vk_opening` no longer overflows on a deserialized `num_public_inputs = usize::MAX`.
+- **Setup** — the trusted generator and `UniversalSRS::setup` draw non-zero trapdoors.
+- **Poseidon** — `PoseidonParams::default_2_to_1` panics for fields where 5 divides p − 1 (x⁵ is not a permutation there) instead of returning weak parameters.
+- **wasm-auth** — `verify` accepts only proofs of exactly 128 bytes.
+- New tests: SRS cancellation forgery, contract constants against the key, degenerate keys, empty batches, absurd compressed-key input count, PoK key binding. `tests/solidity_verifier.rs` writes EVM fixtures.
+- **EVM check** — `tests/evm/run.mjs` compiles the generated contracts with solc 0.8.38 and runs 20 cases in an EVM (`@ethereumjs/evm`): valid proofs accept; wrong inputs and proof points return `false`; aliased inputs, non-canonical coordinates, identity, off-curve and off-subgroup points revert. CI runs it.
+
+### Remaining open items closed
+
+- **Auth circuit (breaking)** — MiMC round constants are now SHA-256 derived (tag `unigroth-mimc-v2`) instead of the arithmetic progression `i·2654435761 + 1`, and the circuit enforces `nonce ≠ 0` itself (`H(s, 0)` is the commitment). Every auth key, commitment and nullifier changes: rerun `auth_setup` and re-register commitments.
+- **Solidity verifier** — proof points are checked to be on their curve in Solidity before the pairing precompile is called, so a malformed proof costs a few thousand gas instead of burning everything forwarded to a failing precompile. A G2 point on the curve but outside the subgroup is still rejected by the precompile.
+- **In-circuit verifier gadget** (`constraints`, feature `r1cs`) — an identity A, B or C is never accepted, and an input-length mismatch returns an error instead of panicking.
+- **Generated WASM verifier crate** — its arkworks dependencies are pinned to the commit this crate is tested against (`config::ARKWORKS_ALGEBRA_REV`, checked against `Cargo.lock` by a test).
+- **JS reference hash (breaking)** — `mimcHash` and `Circuit.hash` add the input to the output (feed-forward). The bare rounds were a permutation anyone could run backwards from the public hash to the secret.
+- **`gadgets`** (experimental) — documented as cost models that generate no constraints.
+- **Repo** — removed `UniGroth/.github/workflows/ci.yml`, which GitHub never ran; the root workflow is the CI.
+
+### Earlier passes
 
 - **Proof type (breaking)** — `Groth16::prove` returns a plain `Proof<E>` (128 B on BN254, down from 161 B). The `SimExtractableProof` wrapper, `SEConfig`, `make_sim_extractable`, `SecurityWrapper`, `verify_sim_extractable` and `prepare_verifying_key_with_delta` are removed: the wrapper's hash was never verified and its BG18 mode never verified, so it cost bytes and a SHA-256 per proof for no security. `PreparedVerifyingKey` drops the unused `delta_g1_prepared`.
 - **Subgroup-checked verification** — `proof_points_valid` checks A, B, C are non-identity, on the curve and in the prime-order subgroup. Single, batch and aggregate verifiers all run it; the single verifier overlaps it with the pairing.

@@ -16,32 +16,28 @@
 //! ```
 
 use ark_bn254::{Bn254, G1Affine, G2Affine};
-use ark_ec::AffineRepr;
 use ark_serialize::CanonicalSerialize;
 use ark_std::{format, string::String, vec::Vec};
 
 use crate::VerifyingKey;
 
-/// Serialize a G1 affine point to compressed hex bytes.
-fn g1_compressed_hex(p: &G1Affine) -> String {
-    if p.is_zero() {
-        return "vec![0u8; 32]".into();
-    }
+/// A point's compressed arkworks encoding as a `vec![…]` literal. The identity
+/// is encoded by arkworks too (infinity flag set); all-zero bytes would not
+/// deserialize.
+fn compressed_literal(p: &impl CanonicalSerialize) -> String {
     let mut buf = Vec::new();
-    p.serialize_compressed(&mut buf).unwrap();
+    p.serialize_compressed(&mut buf)
+        .expect("serializing to a Vec cannot fail");
     let hex: String = buf.iter().map(|b| format!("0x{:02x},", b)).collect();
     format!("vec![{}]", hex)
 }
 
-/// Serialize a G2 affine point to compressed hex bytes.
+fn g1_compressed_hex(p: &G1Affine) -> String {
+    compressed_literal(p)
+}
+
 fn g2_compressed_hex(p: &G2Affine) -> String {
-    if p.is_zero() {
-        return "vec![0u8; 64]".into();
-    }
-    let mut buf = Vec::new();
-    p.serialize_compressed(&mut buf).unwrap();
-    let hex: String = buf.iter().map(|b| format!("0x{:02x},", b)).collect();
-    format!("vec![{}]", hex)
+    compressed_literal(p)
 }
 
 /// Estimate the WASM binary size for a verifier with the given number of public inputs.
@@ -77,9 +73,11 @@ pub struct WasmSizeEstimate {
 /// It embeds the verifying key and exposes `verify_proof()` via wasm-bindgen.
 ///
 /// # Panics
-/// Panics if `circuit_name` is not a plain identifier or the key has no IC points.
+/// Panics if `circuit_name` is not a plain identifier or `vk` fails
+/// [`crate::verifying_key_valid`].
 pub fn generate_wasm_verifier(vk: &VerifyingKey<Bn254>, circuit_name: &str) -> String {
     crate::solidity::assert_identifier(circuit_name);
+    crate::solidity::assert_valid_vk(vk);
     let num_inputs = vk.gamma_abc_g1.len() - 1;
 
     let alpha_g1_bytes = g1_compressed_hex(&vk.alpha_g1);
@@ -88,10 +86,9 @@ pub fn generate_wasm_verifier(vk: &VerifyingKey<Bn254>, circuit_name: &str) -> S
     let delta_g2_bytes = g2_compressed_hex(&vk.delta_g2);
 
     let mut ic_entries = String::new();
-    for (i, point) in vk.gamma_abc_g1.iter().enumerate() {
+    for point in &vk.gamma_abc_g1 {
         let bytes = g1_compressed_hex(point);
         ic_entries.push_str(&format!("        ic_bytes.push({});\n", bytes));
-        let _ = i; // suppress warning
     }
 
     format!(
@@ -142,6 +139,11 @@ pub fn verify_proof(
     proof_c: &[u8],
     public_inputs: &[u8],
 ) -> bool {{
+    // Exact lengths: trailing bytes would give one proof many encodings.
+    if proof_a.len() != 32 || proof_b.len() != 64 || proof_c.len() != 32 {{
+        return false;
+    }}
+    // Validated deserialization: on-curve and prime-order subgroup.
     let a = match G1Affine::deserialize_compressed(proof_a) {{
         Ok(p) => p,
         Err(_) => return false,
@@ -237,10 +239,10 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ark-bn254 = {{ git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = ["curve"] }}
-ark-ec = {{ git = "https://github.com/arkworks-rs/algebra.git", default-features = false }}
-ark-ff = {{ git = "https://github.com/arkworks-rs/algebra.git", default-features = false }}
-ark-serialize = {{ git = "https://github.com/arkworks-rs/algebra.git", default-features = false }}
+ark-bn254 = {{ git = "https://github.com/arkworks-rs/algebra.git", rev = "{rev}", default-features = false, features = ["curve"] }}
+ark-ec = {{ git = "https://github.com/arkworks-rs/algebra.git", rev = "{rev}", default-features = false }}
+ark-ff = {{ git = "https://github.com/arkworks-rs/algebra.git", rev = "{rev}", default-features = false }}
+ark-serialize = {{ git = "https://github.com/arkworks-rs/algebra.git", rev = "{rev}", default-features = false }}
 ark-std = {{ version = "0.5.0", default-features = false }}
 wasm-bindgen = "0.2"
 
@@ -249,6 +251,7 @@ opt-level = "z"
 lto = true
 "#,
         circuit_name = circuit_name,
+        rev = crate::config::ARKWORKS_ALGEBRA_REV,
     )
 }
 
@@ -298,6 +301,19 @@ mod tests {
         assert!(src.contains("NUM_PUBLIC_INPUTS: usize = 1"));
         assert!(src.contains("deserialize_compressed"));
         assert!(src.contains("multi_miller_loop"));
+        assert!(src.contains("proof_b.len() != 64"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid verifying key")]
+    fn test_generators_reject_degenerate_key() {
+        let mut rng = make_rng();
+        let (_, mut vk) =
+            Groth16::<Bn254>::circuit_specific_setup(MulCircuit { a: None, b: None }, &mut rng)
+                .unwrap();
+        // δ·H = 0 removes the C term from the verification equation.
+        vk.delta_g2 = G2Affine::default();
+        generate_wasm_verifier(&vk, "degenerate");
     }
 
     #[test]
@@ -316,6 +332,13 @@ rustc = \"evil",
         assert!(toml.contains("my_circuit-verifier"));
         assert!(toml.contains("wasm-bindgen"));
         assert!(toml.contains("ark-bn254"));
+        // Every arkworks dependency is pinned to the commit in our Cargo.lock.
+        let rev = crate::config::ARKWORKS_ALGEBRA_REV;
+        assert_eq!(toml.matches(&format!("rev = \"{rev}\"")).count(), 4);
+        assert!(
+            include_str!("../Cargo.lock").contains(&format!("algebra.git#{rev}")),
+            "ARKWORKS_ALGEBRA_REV is out of date with Cargo.lock"
+        );
     }
 
     #[test]

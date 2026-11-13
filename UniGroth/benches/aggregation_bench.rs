@@ -103,7 +103,7 @@ fn bench_aggregation_vs_individual() {
         let individual_us = start.elapsed().as_micros() as f64 / iters as f64;
 
         // Extract inner Proof<E> for aggregation
-        let inner_proofs: Vec<_> = se_proofs.iter().cloned().collect();
+        let inner_proofs: Vec<_> = se_proofs.to_vec();
 
         // Aggregated: aggregate + verify_aggregated
         let start = Instant::now();
@@ -192,7 +192,7 @@ fn bench_aggregation_throughput() {
             })
             .collect();
 
-        let inner_proofs: Vec<_> = se_proofs.iter().cloned().collect();
+        let inner_proofs: Vec<_> = se_proofs.to_vec();
         let public_inputs: Vec<Vec<Fr>> = (0..n_proofs).map(|_| vec![c_val]).collect();
         let iters = 10;
 

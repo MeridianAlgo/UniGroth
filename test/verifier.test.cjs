@@ -67,6 +67,22 @@ test('mimc has no cube-root-of-unity collisions', () => {
     assert.notStrictEqual(UniGroth.mimcHash(alt), HASH);
 });
 
+test('mimc cannot be inverted by running the rounds backwards', () => {
+    const { MIMC_CONSTANTS, MIMC_ROUNDS } = require('../src/circuit');
+    // 7th root: x^(1/7) = x^d with 7*d = 1 mod (ORDER - 1)
+    const egcd = (a, b) => (b === 0n ? [1n, 0n] : (([x, y]) => [y, x - (a / b) * y])(egcd(b, a % b)));
+    const m = F.ORDER - 1n;
+    const d = ((egcd(7n, m)[0] % m) + m) % m;
+    const backwards = (y) => {
+        for (let i = MIMC_ROUNDS - 1; i >= 0; i--) y = F.sub(F.pow(y, d), MIMC_CONSTANTS[i]);
+        return y;
+    };
+    // the bare permutation is invertible: undoing the feed-forward by hand recovers the secret
+    assert.strictEqual(backwards(F.sub(HASH, SECRET)), SECRET);
+    // the published hash is not: without knowing the secret there is nothing to subtract
+    assert.notStrictEqual(backwards(HASH), SECRET);
+});
+
 test('in-circuit hash matches native hash', () => {
     const compiled = hashCircuit();
     const w = compiled.circuit.computeWitness({ secret: SECRET, expectedHash: HASH });

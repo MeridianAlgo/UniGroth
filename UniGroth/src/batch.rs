@@ -143,15 +143,20 @@ pub fn batch_verify<E: Pairing>(
 /// All proofs must be for the same verifying key.
 ///
 /// # Returns
-/// `Ok(true)` iff all k proofs verify, `Ok(false)` if any is invalid, and
-/// `Err` if any public-input vector has the wrong length.
+/// `Ok(true)` iff the batch is non-empty and all k proofs verify, `Ok(false)`
+/// if any is invalid or the batch is empty, and `Err` if any public-input
+/// vector has the wrong length.
+///
+/// An empty batch is rejected rather than vacuously accepted, matching
+/// [`crate::verify_aggregated`]: "nothing was checked" must not read as
+/// "everything verified" to a caller that lost its proofs along the way.
 pub fn batch_verify_optimized<E: Pairing>(
     pvk: &PreparedVerifyingKey<E>,
     proofs_and_inputs: &[(Proof<E>, Vec<E::ScalarField>)],
     rng: &mut impl Rng,
 ) -> R1CSResult<bool> {
     if proofs_and_inputs.is_empty() {
-        return Ok(true);
+        return Ok(false);
     }
     let expected_inputs = pvk.vk.gamma_abc_g1.len().saturating_sub(1);
     if proofs_and_inputs

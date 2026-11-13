@@ -23,10 +23,12 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     where
         C: ConstraintSynthesizer<E::ScalarField>,
     {
-        let alpha = E::ScalarField::rand(rng);
-        let beta = E::ScalarField::rand(rng);
-        let gamma = E::ScalarField::rand(rng);
-        let delta = E::ScalarField::rand(rng);
+        // Non-zero trapdoors: a zero α, β, γ or δ gives a degenerate key (the
+        // matching term drops out of the verification equation).
+        let alpha: E::ScalarField = crate::nonzero_rand(rng);
+        let beta: E::ScalarField = crate::nonzero_rand(rng);
+        let gamma: E::ScalarField = crate::nonzero_rand(rng);
+        let delta: E::ScalarField = crate::nonzero_rand(rng);
 
         let g1_generator = E::G1::rand(rng);
         let g2_generator = E::G2::rand(rng);

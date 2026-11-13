@@ -111,7 +111,8 @@ pub fn verify_vk_opening<E: Pairing>(
     cvk: &CompressedVerifyingKey<E>,
     opening: &VKOpeningProof<E>,
 ) -> bool {
-    opening.gamma_abc_g1.len() == cvk.num_public_inputs + 1
+    // `num_public_inputs` comes from a deserialized key: no overflow on usize::MAX.
+    cvk.num_public_inputs.checked_add(1) == Some(opening.gamma_abc_g1.len())
         && ic_digest::<E>(&opening.gamma_abc_g1) == cvk.ic_digest
 }
 
